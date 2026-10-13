@@ -38,7 +38,10 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     compile natively and pass tests against PS1 models; bindgen bindings with PS1-size
     asserts. Found: the game's `rand()` is the **BIOS** generator (A(2Fh)), now in
     `psyq::bios`; its initial seed is to be measured in S0.8 with the retail BIOS.
-    Remaining in S0.6: DW2-PC components against synthetic inputs, SDL3-rs vs winit/cpal.
+    **GTE ported** (`crates/backend`, `gte` module): DW2-PC's hardware model in Rust,
+    matching all 1,248 PCSX-Redux reference cases (13 command variants), plus RTPT (depth cue
+    for V2 only, as PCSX-Redux). Remaining in S0.6: GPU rasterizer, SPU/XA/MDEC decoders
+    (re-deriving their tables from psx-spx), SDL3-rs vs winit/cpal.
   - **S0.8 first slice done:** `docs/s08-oracle.md`, `oracle/probe-boot.lua`. Headless
     PCSX-Redux (`-cli -interpreter`) boots Ember's disc on Ember's retail BIOS; the BIOS
     `rand` state (RAM 0x9010) is 0 at boot and `psyq::bios` matches the emulator; two fresh
