@@ -31,7 +31,13 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     work (DW2-PC covers about a third of DW1's 175 SDK functions, little of libgs); the
     effect interpreter's 32-bit pointer tricks need widening; the save has no pointers;
     no overlay name clashes.
-- **Next:** S0.2's write-up (`docs/provenance.md`), S0.6 (Rust skeleton + DW2-PC pieces),
+  - **S0.6 first slice done** (reviews converged): Cargo workspace `crates/psyq`,
+    `crates/decomp-c`, `crates/dw1`. The decomp's `rng.c`, `math.c` and `file_table_us.c`
+    compile natively and pass tests against PS1 models; bindgen bindings with PS1-size
+    asserts. Found: the game's `rand()` is the **BIOS** generator (A(2Fh)), now in
+    `psyq::bios`; its initial seed is to be measured in S0.8 with the retail BIOS.
+    Remaining in S0.6: DW2-PC components against synthetic inputs, SDL3-rs vs winit/cpal.
+- **Next:** S0.2's write-up (`docs/provenance.md`), the rest of S0.6,
   S0.7 (libgs/TMD spike), S0.8 (oracle), S0.9 (go / no-go).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
@@ -181,7 +187,9 @@ crates/
   render/      wgpu on Metal: 1x faithful output first, then the extras
   pack/        pack builder (from Ember's .bin/.cue) and manifest
   oracle/      replay, canonical state schema, comparison tools
-  dw1/         the app: links everything, builds the game C through the `cc` crate
+  decomp-c/    the game C from decomp/, built by `cc` with the port's flags and a forced
+               `dw1_native.h`; bindgen bindings with PS1-size asserts
+  dw1/         the app: links everything
 oracle/        emulator-side scripts (PCSX-Redux Lua)
 docs/          spike reports, per-phase notes, reviews, the HTML guide at the end
 ```
@@ -343,7 +351,8 @@ scene run twice).
   rasterizer, compared with the emulator's frame. This is the biggest unknown DW2-PC
   doesn't cover.
 - **S0.8 Oracle bring-up:** PCSX-Redux running Ember's disc on this Mac, pinned per "The
-  oracle"; a Lua script that records pad input keyed by poll sequence and dumps the
+  oracle" (retail BIOS for replays: the game's `rand()` is BIOS A(2Fh), so the BIOS's seed
+  at boot is part of the game state; measure it, and check whether OpenBIOS matches); a Lua script that records pad input keyed by poll sequence and dumps the
   canonical state at a checkpoint; two fresh-process runs agree. Measure the field rate.
 - **S0.9 Go / no-go:** `docs/phase0-report.md`: each spike's result, the memory design and
   why, what DW2-PC covers and what's new, the riskiest unknowns left, and a

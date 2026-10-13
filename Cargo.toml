@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["crates/psyq", "crates/decomp-c", "crates/dw1"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/loafykitten/dw1-silicon"
+publish = false
+
+# The game C calls into Rust through `extern "C"`; a panic must never unwind into it.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

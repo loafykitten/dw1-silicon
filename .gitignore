@@ -22,3 +22,6 @@ cc_mips*.dll
 # Upstream reference clones (read-only, for surveys and reviews)
 ref/
 .venv/
+
+# Cargo
+/target/
