@@ -17,7 +17,9 @@
 --   DW1_CAPTURE_MAX=<n>         most calls recorded (default 400)
 --   DW1_CAPTURE_STATES=1        also write callNNNN_in.bin / callNNNN_out.bin (DW1STATE format,
 --                               see capture-libgs.lua; 2 MiB each)
---   DW1_CAPTURE_STOP=<vblank>   end the run here (default: at the window's end, or the last shot)
+--   DW1_CAPTURE_STOP=<vblank>   end the run here (default: after the window and the last shot),
+--                               once every recorded call has returned
+--   DW1_CAPTURE_GRACE=<n>       VBlanks to wait for those returns before failing (default 600)
 -- Writes calls.txt: "n vblank name a0 a1 a2 a3 sp ra v0" (v0 at return), and vram_<vblank>.bin
 -- (1 MiB) at every VBlank of the window.
 
@@ -72,7 +74,11 @@ do
     for name in pairs(wanted) do DW1ROUTE_FAIL('no symbol ' .. name) end
 end
 
-local STOP = num('DW1_CAPTURE_STOP', #funcs > 0 and FROM + WINDOW + 1 or (shotLast or FROM) + 1)
+-- Default end: after the window and the last screenshot, whichever is later.
+local STOP = num('DW1_CAPTURE_STOP', math.max(#funcs > 0 and FROM + WINDOW + 1 or 0, (shotLast or FROM) + 1))
+-- Calls still running when the run should end get this many VBlanks to return (a blocking
+-- CdReadSync can take a while); past that the capture fails rather than miss them.
+local RETURN_GRACE = num('DW1_CAPTURE_GRACE', 600)
 
 local function writeState(name)
     DW1ROUTE_WRITE(name, 'DW1STATE'
@@ -91,6 +97,12 @@ end
 local index = {}
 local vblank, calls, done = 0, 0, false
 local entryBps, pending, retired = {}, {}, {}
+
+local function pendingCount()
+    local n = 0
+    for _ in pairs(pending) do n = n + 1 end
+    return n
+end
 
 local function finish()
     if done then return end
@@ -141,5 +153,14 @@ KEEP_CAPTURE_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
         local v = PCSX.GPU.getVRAM()
         DW1ROUTE_WRITE(string.format('vram_%05d.bin', vblank), ffi.string(v.data, v.size))
     end
-    if vblank >= STOP then finish() end
+    if vblank >= STOP then
+        if pendingCount() == 0 then
+            finish()
+        elseif vblank >= STOP + RETURN_GRACE then
+            local left = {}
+            for n in pairs(pending) do left[#left + 1] = string.format('%04d', n) end
+            table.sort(left)
+            DW1ROUTE_FAIL('calls never returned: ' .. table.concat(left, ' '))
+        end
+    end
 end)

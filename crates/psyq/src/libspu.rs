@@ -33,6 +33,9 @@ pub const SPU_REV_DEPTHL: u32 = 1 << 1;
 pub const SPU_REV_DEPTHR: u32 = 1 << 2;
 pub const SPU_REV_DELAYTIME: u32 = 1 << 3;
 pub const SPU_REV_FEEDBACK: u32 = 1 << 4;
+/// Every reverb attribute (what a zero mask means).
+const REVERB_ALL: u32 =
+    SPU_REV_MODE | SPU_REV_DEPTHL | SPU_REV_DEPTHR | SPU_REV_DELAYTIME | SPU_REV_FEEDBACK;
 /// `SpuReverbAttr.mode` flag: clear the work area when the mode is set.
 pub const SPU_REV_MODE_CLEAR_WA: i32 = 0x100;
 /// Reverb modes are `0..SPU_REV_MODE_MAX`.
@@ -172,11 +175,11 @@ impl SpuState {
         }
     }
 
-    /// `SpuGetKeyStatus`: the status of the single voice in `voice_bit`.
-    /// [doc] -1 if the voice is incorrect; [guess] that includes zero or several bits set, and
-    /// bits above voice 23.
+    /// `SpuGetKeyStatus`: the status of the voice in `voice_bit`; with several bits set, the
+    /// lowest-numbered voice [doc: Psy-Q reference]. -1 if there's no valid voice [doc]: no bit
+    /// set, or the lowest above voice 23 [guess].
     pub fn key_status(&self, voice_bit: u32) -> i32 {
-        if voice_bit.count_ones() != 1 || voice_bit.trailing_zeros() as usize >= VOICES {
+        if voice_bit == 0 || voice_bit.trailing_zeros() as usize >= VOICES {
             return SPU_ERROR;
         }
         if self.voices[voice_bit.trailing_zeros() as usize].key_on {
@@ -205,32 +208,44 @@ impl SpuState {
     /// nothing is set), else 0. The "work area allocated with SpuMalloc" error needs SpuMalloc,
     /// which the game doesn't call.
     pub fn set_reverb_mode_param(&mut self, attr: &SpuReverbAttr) -> i32 {
+        // [doc] A zero mask selects every attribute.
+        let mask = if attr.mask == 0 {
+            REVERB_ALL
+        } else {
+            attr.mask
+        };
         let mode = attr.mode & 0xff;
-        if attr.mask & SPU_REV_MODE != 0 && !(0..SPU_REV_MODE_MAX).contains(&mode) {
+        if mask & SPU_REV_MODE != 0 && !(0..SPU_REV_MODE_MAX).contains(&mode) {
             return SPU_ERROR;
         }
-        if attr.mask & SPU_REV_MODE != 0 {
+        if mask & SPU_REV_MODE != 0 {
             self.reverb.mode = mode;
             if attr.mode & SPU_REV_MODE_CLEAR_WA != 0 {
                 self.clear_reverb_area(mode);
             }
         }
-        self.set_reverb_depth(attr);
-        if attr.mask & SPU_REV_DELAYTIME != 0 {
+        self.set_reverb_depth(&SpuReverbAttr { mask, ..*attr });
+        if mask & SPU_REV_DELAYTIME != 0 {
             self.reverb.delay = attr.delay;
         }
-        if attr.mask & SPU_REV_FEEDBACK != 0 {
+        if mask & SPU_REV_FEEDBACK != 0 {
             self.reverb.feedback = attr.feedback;
         }
         SPU_SUCCESS
     }
 
     /// `SpuSetReverbDepth`: the left/right depth the mask selects.
+    /// [doc] A zero mask selects both channels.
     pub fn set_reverb_depth(&mut self, attr: &SpuReverbAttr) {
-        if attr.mask & SPU_REV_DEPTHL != 0 {
+        let mask = if attr.mask == 0 {
+            REVERB_ALL
+        } else {
+            attr.mask
+        };
+        if mask & SPU_REV_DEPTHL != 0 {
             self.reverb.depth.left = attr.depth.left;
         }
-        if attr.mask & SPU_REV_DEPTHR != 0 {
+        if mask & SPU_REV_DEPTHR != 0 {
             self.reverb.depth.right = attr.depth.right;
         }
     }
@@ -338,9 +353,10 @@ mod tests {
         assert!(spu.key_on(10, KeyOn::default()));
         assert_eq!(spu.key_status(1 << 10), SPU_ON);
         assert_eq!(spu.key_status(1 << 11), SPU_OFF);
-        // Not a single voice of the 24.
+        // No valid voice.
         assert_eq!(spu.key_status(0), SPU_ERROR);
-        assert_eq!(spu.key_status(0b11), SPU_ERROR);
+        // Several bits: the lowest voice (10 is on, 11 off).
+        assert_eq!(spu.key_status(0b11 << 10), SPU_ON);
         assert_eq!(spu.key_status(1 << 24), SPU_ERROR);
         assert!(!spu.key_on(24, KeyOn::default()));
         assert!(spu.key_off(10));

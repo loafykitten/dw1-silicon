@@ -30,8 +30,9 @@ const PROG_ATTR_SIZE: usize = 16;
 const TONE_ATTR_SIZE: usize = 32;
 /// Entries in the sample size table that ends the VAB header.
 const VAG_TABLE_ENTRIES: usize = 256;
-/// `VabHdr.form`: "VABp".
-const VAB_FORM: [u8; 4] = *b"VABp";
+/// `VabHdr.form`: the word "VABp" in little-endian order, so the bytes read "pBAV" [obs: the
+/// disc's banks; psx-spx VH format].
+const VAB_FORM: [u8; 4] = *b"pBAV";
 
 /// `VabHdr` (libsnd.h), 32 bytes.
 #[repr(C)]
@@ -76,7 +77,7 @@ pub fn vh_size(programs: usize) -> usize {
 }
 
 /// The header's program count, if `head` begins with a valid-looking `VabHdr`. [doc] "the VAB
-/// header doesn't contain valid data" is an open failure; validity here is the "VABp" tag and
+/// header doesn't contain valid data" is an open failure; validity here is the "VABp" tag (bytes "pBAV") and
 /// counts within the format's limits (128 programs, 16 tones each, 256 samples) [guess].
 pub fn vh_program_count(head: &[u8]) -> Option<usize> {
     let hdr = head.get(..size_of::<VabHdr>())?;
@@ -571,7 +572,7 @@ mod tests {
     /// in bytes.
     fn make_vh(programs: u16, sizes: &[usize]) -> Vec<u8> {
         let mut vh = vec![0u8; vh_size(usize::from(programs))];
-        vh[..4].copy_from_slice(b"VABp");
+        vh[..4].copy_from_slice(b"pBAV");
         vh[18..20].copy_from_slice(&programs.to_le_bytes());
         vh[20..22].copy_from_slice(&(programs * 2).to_le_bytes());
         vh[22..24].copy_from_slice(&(sizes.len() as u16).to_le_bytes());
