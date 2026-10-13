@@ -50,8 +50,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     PCSX-Redux (`-cli -interpreter`) boots Ember's disc on Ember's retail BIOS; the BIOS
     `rand` state (RAM 0x9010) is 0 at boot and `psyq::bios` matches the emulator; two fresh
     runs are identical. **Redux is pinned to 26bfd693**: its PR #2283 (GTE write delay) breaks
-    Sony's `MulMatrix`, so every DW1 bone matrix was wrong (`docs/s08-oracle.md`; an upstream
-    issue is drafted, not filed: Ember's call). **New-game route**
+    Sony's `MulMatrix`, so most DW1 bone matrices were wrong (`docs/s08-oracle.md`; filed
+    upstream as grumpycoders/pcsx-redux#2322 on 2026-10-13; unpin once it's fixed). **New-game route**
     (`oracle/route-new-game.lua`, `docs/oracle-route.md`): deterministic inputs from boot to
     first gameplay with the tamer and Agumon on screen (VBlank 19400), milestone screenshots
     (`oracle/raw2png.py`), reproducible across runs. Real input replays keyed to pad polls

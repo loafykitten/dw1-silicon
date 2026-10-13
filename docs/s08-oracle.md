@@ -45,12 +45,15 @@ Redux writes its card files into the current directory, so each run gets a fresh
 instructions", merged 2026-10-12 as 54c357f7) makes an MTC2/CTC2/LWC2 value invisible to a GTE
 command in either of the next two instructions. Sony's `MulMatrix` (DW1's at 0x8009ADC0, used by
 `GsGetLws` through `GsMulCoord3`) writes VZ0 and issues MVMVA one `nop` later, so under #2283 each
-column is multiplied with the previous column's Z. Every bone matrix in the game came out wrong:
-in a capture at VBlank 14000 all 14 sampled parent-child products fit "MVMVA used the previous
-VZ0" exactly, and characters rendered as flat streaks or not at all. On 26bfd693 the same products
-are exact and the characters render. The game is correct on hardware, so #2283's delay is too long
-for this sequence (its PR notes the timing was fitted to one measured pair, SQR on IR1). Not
-reported upstream yet.
+column is multiplied with the previous column's Z. In the libgs captures (VBlank 14000), 92 of
+106 parent-child bone products were wrong on 5811e22 and all 106 fit "MVMVA used the previous
+VZ0" exactly, and characters rendered as flat streaks or not at all. On 26bfd693 all 183 are exact
+and the characters render. A standalone test EXE (VZ0 0x100 then 0x200, N nops, MVMVA) gives the
+new value at N=1 on 26bfd693 and the old one on 5811e22. The game is correct on hardware, so
+#2283's delay is too long for this sequence. Upstream's hardware test (nugget
+`tests/gte-store-delay`) does show the old value at N=1 for SQR reading IR1 and OP reading a
+control register, so the delay probably depends on when each command reads its operands.
+Reported as grumpycoders/pcsx-redux#2322 (2026-10-13); unpin once it's fixed.
 
 ## Results
 
