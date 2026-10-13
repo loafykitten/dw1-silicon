@@ -49,15 +49,23 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   - **S0.8 first slice done:** `docs/s08-oracle.md`, `oracle/probe-boot.lua`. Headless
     PCSX-Redux (`-cli -interpreter`) boots Ember's disc on Ember's retail BIOS; the BIOS
     `rand` state (RAM 0x9010) is 0 at boot and `psyq::bios` matches the emulator; two fresh
-    runs are identical. Real input replays and state dumps still to do.
+    runs are identical. **Redux is pinned to 26bfd693**: its PR #2283 (GTE write delay) breaks
+    Sony's `MulMatrix`, so every DW1 bone matrix was wrong (`docs/s08-oracle.md`; an upstream
+    issue is drafted, not filed: Ember's call). **New-game route**
+    (`oracle/route-new-game.lua`, `docs/oracle-route.md`): deterministic inputs from boot to
+    first gameplay with the tamer and Agumon on screen (VBlank 19400), milestone screenshots
+    (`oracle/raw2png.py`), reproducible across runs. Real input replays keyed to pad polls
+    and state dumps still to do.
+  - **S0.7 done:** `docs/s07-libgs-spike.md`. `oracle/capture-libgs.lua` records the machine
+    around every `GsSortObject4J` call in one frame (48 calls); a clean Rust
+    `psyq::libgs::sort_object4j` (lit GT3/GT4, from psx-spx and black-box captures) matches
+    all 48 exactly (7,246 packet words) and draws the same pixels through `backend::gpu`.
+    The rest of libgs is coverage: other primitive kinds and entry points, each needing a
+    capture of a scene that uses it.
 - **SDK rule set (Ember, 2026-10-13):** clean reimplementation of Sony's SDK (see Ground
   rules).
-  - **S0.7 planned:** `docs/s07-libgs-spike.md` (capture one `GsSortObject4J` call in the
-    emulator, reproduce its packets with a clean Rust libgs). A subagent is scripting the
-    emulator to the first gameplay frame (`oracle/route-new-game.lua`); headless screenshots
-    work (`oracle/raw2png.py`).
-- **Next:** the rest of S0.6,
-  S0.7 (libgs/TMD spike), S0.8 (oracle), S0.9 (go / no-go).
+- **Next:** the rest of S0.6 (SDL3-rs vs winit/cpal), the rest of S0.8 (replays, state
+  dumps, field rate), S0.9 (go / no-go report).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
   known-good redump of SLUS-01032, checked 2026-10-13); Ember's PS1 BIOS dump

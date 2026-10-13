@@ -8,11 +8,14 @@ why not the newer 5811e22), Ember's disc and BIOS.
 Headless, scripted, no computer use needed:
 
 ```
-cd captures/oracle-runs/<run>      # gitignored; Redux writes its config and card files here
-ref/pcsx-redux/pcsx-redux -cli -portable -interpreter -softgpu \
-    -bios scph1001.bin -iso "disc/Digimon World (USA).cue" \
-    -dofile oracle/probe-boot.lua -run > run.log 2>&1
+R=/Users/fenn/Developer/dw1-silicon
+mkdir -p "$R/captures/oracle-runs/<run>" && cd "$R/captures/oracle-runs/<run>"   # fresh; gitignored
+"$R/ref/pcsx-redux/pcsx-redux" -cli -portable -interpreter -softgpu \
+    -bios "$R/scph1001.bin" -iso "$R/disc/Digimon World (USA).cue" \
+    -dofile "$R/oracle/probe-boot.lua" -run > run.log 2>&1
 ```
+
+Redux writes its card files into the current directory, so each run gets a fresh one.
 
 - `-cli` runs without a window, prints Lua `print` and the game's own debug output to
   stdout; the script ends the run with `PCSX.quit`.

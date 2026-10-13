@@ -8,9 +8,10 @@ and open questions.
 
 - **Current status (2026-10-13, session 2):** Phase 0 under way, public repo
   `loafykitten/dw1-silicon` (branch `phase0`). Direction: hybrid (decomp C game + Rust for
-  everything new), full Rust as the endgame. Done: plan review, S0.1-S0.5, S0.6 first
-  slice (Cargo workspace builds decomp C), S0.8 first slice (headless PCSX-Redux probe; the
-  game's `rand()` is the BIOS generator, seed 0 at boot). Sony's SDK is reimplemented
+  everything new), full Rust as the endgame. Done: plan review, S0.1-S0.5, S0.7 (clean
+  Rust `GsSortObject4J` matches 48 captured calls), S0.6 emulation pieces (GTE, GPU,
+  decoders), S0.8 first slice (headless PCSX-Redux pinned to 26bfd693, new-game route to
+  gameplay; the game's `rand()` is the BIOS generator, seed 0 at boot). Sony's SDK is reimplemented
   clean (never translated from disassembly). PLAN.md's "Where things stand" is the
   handoff; keep it and this line current at the end of every session.
 - **Never commit disc data** (image, extracted files, assets, dumps, captures). They live
