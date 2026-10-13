@@ -13,8 +13,9 @@ pub trait Host: Send {
     /// `psyq::gpu` for the host to read.
     fn vblank(&mut self, vblank: u32);
     /// The controller state `PadRead` returns: pad 1 in bits 0-15, pad 2 in 16-31, a set bit
-    /// for each button held, in libetc's bit order.
-    fn pad(&mut self) -> u32;
+    /// for each button held, in libetc's bit order. `caller` is the return address into the
+    /// game code that called `PadRead` (replays check it).
+    fn pad(&mut self, caller: usize) -> u32;
 }
 
 struct Clock {
@@ -108,15 +109,29 @@ pub extern "C" fn PadInit(_mode: i32) {}
 /// high half, 1 = pressed]. DW1 passes 0 or 1; both read both pads [doc].
 #[unsafe(no_mangle)]
 pub extern "C" fn PadRead(_id: i32) -> u32 {
+    let caller = caller_address();
     let host = CLOCK.lock().unwrap().host.take();
     match host {
         Some(mut host) => {
-            let pad = host.pad();
+            let pad = host.pad(caller);
             CLOCK.lock().unwrap().host = Some(host);
             pad
         }
         None => 0,
     }
+}
+
+/// The return address into whatever called this function's caller (for `PadRead`: the game
+/// code), from the frame-pointer chain, which arm64 macOS always keeps.
+#[inline(never)]
+fn caller_address() -> usize {
+    unsafe extern "C" {
+        fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
+    }
+    // Not inlined, so frame [0] returns into PadRead and [1] into PadRead's caller.
+    let mut frames = [std::ptr::null_mut(); 3];
+    let n = unsafe { backtrace(frames.as_mut_ptr(), 3) };
+    if n >= 2 { frames[1] as usize } else { 0 }
 }
 
 #[cfg(test)]
@@ -130,7 +145,7 @@ mod tests {
         fn vblank(&mut self, vblank: u32) {
             self.0.lock().unwrap().push(vblank);
         }
-        fn pad(&mut self) -> u32 {
+        fn pad(&mut self, _caller: usize) -> u32 {
             0x0000_0800
         }
     }

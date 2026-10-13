@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 mod headless;
+mod replay;
 
 /// The disc's `.cue`: `DW1_DISC`, else `<workspace>/disc/Digimon World (USA).cue`.
 fn disc_path() -> PathBuf {

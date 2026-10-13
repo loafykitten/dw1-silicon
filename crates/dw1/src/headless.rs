@@ -5,14 +5,48 @@
 //! put side by side.
 //!
 //! Env: `DW1_SHOTS=first:last:step` (screenshots `shot_<vblank>.png`), `DW1_STOP_AT=<vblank>`
-//! (exit 0 there), `DW1_OUT=<dir>` (default `captures/native-runs/latest`).
+//! (exit 0 there), `DW1_OUT=<dir>` (default `captures/native-runs/latest`), `DW1_REPLAY=<file>`
+//! (pad input from an emulator replay, `oracle/replays/`; the run stops when it diverges or the
+//! recording ends).
 
 use std::path::PathBuf;
+
+use crate::replay::Replay;
 
 pub struct Headless {
     shots: Option<(u32, u32, u32)>,
     stop_at: Option<u32>,
     out: PathBuf,
+    replay: Option<Replay>,
+}
+
+/// The name of the function containing `addr` (the native game code is in this binary).
+fn function_name(addr: usize) -> String {
+    #[repr(C)]
+    struct DlInfo {
+        fname: *const std::ffi::c_char,
+        fbase: *mut std::ffi::c_void,
+        sname: *const std::ffi::c_char,
+        saddr: *mut std::ffi::c_void,
+    }
+    unsafe extern "C" {
+        fn dladdr(addr: *const std::ffi::c_void, info: *mut DlInfo) -> i32;
+    }
+    let mut info = DlInfo {
+        fname: std::ptr::null(),
+        fbase: std::ptr::null_mut(),
+        sname: std::ptr::null(),
+        saddr: std::ptr::null_mut(),
+    };
+    // The return address can sit just past a call at the very end of a function; look one
+    // byte back so it resolves to the caller.
+    let found = unsafe { dladdr((addr - 1) as *const _, &mut info) };
+    if found == 0 || info.sname.is_null() {
+        return format!("{addr:#x}");
+    }
+    unsafe { std::ffi::CStr::from_ptr(info.sname) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn env_num(name: &str) -> Option<u32> {
@@ -49,10 +83,18 @@ impl Headless {
                 std::process::exit(2);
             });
         }
+        let replay = std::env::var_os("DW1_REPLAY").map(|path| {
+            let symbols = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../decomp/config/us");
+            Replay::load(path.as_ref(), &symbols).unwrap_or_else(|e| {
+                eprintln!("dw1: {e}");
+                std::process::exit(2);
+            })
+        });
         Headless {
             shots,
             stop_at: env_num("DW1_STOP_AT"),
             out,
+            replay,
         }
     }
 
@@ -94,7 +136,21 @@ impl psyq::libetc::Host for Headless {
         }
     }
 
-    fn pad(&mut self) -> u32 {
-        0
+    fn pad(&mut self, caller: usize) -> u32 {
+        let Some(replay) = self.replay.as_mut() else {
+            return 0;
+        };
+        let name = function_name(caller);
+        match replay.poll(&name, psyq::libetc::vblank_count()) {
+            Ok(mask) => mask,
+            Err(e) => {
+                eprintln!("dw1: {e}");
+                if let Some(note) = replay.timing_note() {
+                    eprintln!("dw1: {note}");
+                }
+                let ok = replay.polls_done() == replay.polls.len();
+                std::process::exit(if ok { 0 } else { 1 });
+            }
+        }
     }
 }
