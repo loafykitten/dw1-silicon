@@ -147,6 +147,9 @@ unsafe extern "C" {
     // src/main/main.c: the game's main(), renamed by dw1_native.h.
     pub fn dw1_game_main() -> i32;
 
+    // src/mov/mov.c: plays a movie (0 = the intro) to its end or until Start; 1 if it ended.
+    pub fn MOV_playMovie(movie_id: i32) -> i32;
+
     // src/main/rng.c (declared with `long`, 32-bit in the native build)
     pub fn customRandom(min: i32, max: i32) -> i32;
     pub static mut CUSTOM_RNG_VAL1: u32;

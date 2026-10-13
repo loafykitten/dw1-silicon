@@ -46,7 +46,9 @@ pub const GS_FCALL_SLOTS: usize = 76;
 #[unsafe(no_mangle)]
 pub static mut GsFCALL4: [Option<unsafe extern "C" fn()>; GS_FCALL_SLOTS] = [None; GS_FCALL_SLOTS];
 
-/// libcd streaming: set when a streamed sector arrives; MOV polls and clears it.
+/// libcd streaming: the SDK sets it from the CD interrupt when it has a sector to process
+/// later, and MOV's MDEC callback then calls `StCdInterrupt` and clears it. Natively sectors are
+/// taken in when a call looks at the stream (`psyq::stream`), so it stays 0.
 #[unsafe(no_mangle)]
 pub static mut StCdIntrFlag: i32 = 0;
 

@@ -228,8 +228,9 @@ mod diff {
             } else {
                 rng.below(64)
             };
+            // (Version 3 is the Rust decoder's alone: DW2-PC's C does 1 and 2.)
             let version = if rng.one_in(30) {
-                rng.below(4)
+                rng.below(3)
             } else {
                 rng.range(1, 2)
             };

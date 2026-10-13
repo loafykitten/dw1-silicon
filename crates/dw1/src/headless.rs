@@ -5,13 +5,15 @@
 //! put side by side.
 //!
 //! Env: `DW1_SHOTS=first:last:step` (screenshots `shot_<vblank>.png`), `DW1_STOP_AT=<vblank>`
-//! (exit 0 there), `DW1_OUT=<dir>` (default `captures/native-runs/latest`).
+//! (exit 0 there), `DW1_OUT=<dir>` (default `captures/native-runs/latest`),
+//! `DW1_START_AT=<vblank>` (pad 1 holds Start from there on).
 
 use std::path::PathBuf;
 
 pub struct Headless {
     shots: Option<(u32, u32, u32)>,
     stop_at: Option<u32>,
+    start_at: Option<u32>,
     out: PathBuf,
 }
 
@@ -52,6 +54,7 @@ impl Headless {
         Headless {
             shots,
             stop_at: env_num("DW1_STOP_AT"),
+            start_at: env_num("DW1_START_AT"),
             out,
         }
     }
@@ -95,6 +98,9 @@ impl psyq::libetc::Host for Headless {
     }
 
     fn pad(&mut self) -> u32 {
-        0
+        match self.start_at {
+            Some(at) if psyq::libetc::vblank_count() >= at => 0x800,
+            _ => 0,
+        }
     }
 }

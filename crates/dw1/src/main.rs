@@ -59,6 +59,24 @@ fn main() {
         }
     }
     psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
+    // DW1_MOVIE=<id> plays one movie on its own (0 = the intro) and stops: the game's movie
+    // player, without the boot that precedes it in main().
+    if let Some(id) = std::env::var("DW1_MOVIE").ok().and_then(|v| v.parse().ok()) {
+        psyq::libetc::ResetCallback();
+        psyq::libgpu::ResetGraph(0);
+        psyq::libcd::CdInit();
+        let completed = unsafe { decomp_c::MOV_playMovie(id) };
+        eprintln!(
+            "dw1: movie {id} {} at vblank {}",
+            if completed == 1 {
+                "played to its end"
+            } else {
+                "was skipped"
+            },
+            psyq::libetc::vblank_count()
+        );
+        return;
+    }
     // The game's main() never returns on the PS1.
     let status = unsafe { decomp_c::dw1_game_main() };
     eprintln!("dw1: the game's main() returned {status}");

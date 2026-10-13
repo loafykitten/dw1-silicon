@@ -1,6 +1,6 @@
 //! libcd: the CD-ROM drive, as far as the game's file layer uses it (`CdInit`, `CdSearchFile`,
-//! `CdControl`/`CdControlB`, `CdRead`, `CdReadSync`, `CdIntToPos`, `CdPosToInt`). The movie
-//! streaming calls (`CdRead2`, `St*`) stay trapping stubs until the movie slice.
+//! `CdControl`/`CdControlB`, `CdRead`, `CdReadSync`, `CdIntToPos`, `CdPosToInt`), plus the movie
+//! streaming calls (`CdRead2`, `St*`), whose frame assembly and timing live in `stream`.
 //!
 //! How the game drives it (src/main/file.c, file_queue.c, script_interp.c, efe.c):
 //! `CdControl(CdlSetloc, &pos, NULL)` until it returns non-zero, then `CdRead(sectors, buf,
@@ -23,6 +23,8 @@ use std::ffi::{CStr, c_char};
 use std::sync::Mutex;
 
 use pack::{Disc, SECTOR_DATA};
+
+use crate::stream::Stream;
 
 /// `CdlLOC`: a position as BCD minute, second, frame, plus a track byte. [doc: libcd.h]
 #[repr(C)]
@@ -56,6 +58,8 @@ pub const CDL_SETMODE: u8 = 0x0e;
 /// Mode bit 5: deliver 2340 bytes a sector (everything after the sync bytes) instead of 2048.
 /// [doc: psx-spx "CDROM Control Commands", Setmode bit 5]
 pub const CDL_MODE_SIZE1: u8 = 0x20;
+/// Mode bit 7: double speed (150 sectors a second). [doc: psx-spx Setmode]
+pub const CDL_MODE_SPEED: u8 = 0x80;
 const WHOLE_SECTOR: usize = 2340;
 /// Where the user data starts in a raw sector, and where the post-sync part does.
 const DATA_OFFSET: usize = 24;
@@ -122,6 +126,8 @@ pub struct Drive {
     mode: u8,
     /// The sector the next read starts at (set by `Setloc`, advanced by reads).
     pos: i32,
+    /// The movie stream, once `StSetRing` has made one.
+    stream: Option<Stream>,
 }
 
 impl Drive {
@@ -130,13 +136,55 @@ impl Drive {
             disc,
             mode: 0,
             pos: 0,
+            stream: None,
         }
     }
 
-    /// `CdInit`: resets the drive to its power-on state (mode 0, at the start).
+    /// `CdInit`: resets the drive to its power-on state (mode 0, at the start, not reading).
+    /// The ring buffer the game set up for streaming stays [guess: `CdInit` is only called
+    /// before a movie's `StSetRing`].
     pub fn reset(&mut self) {
         self.mode = 0;
         self.pos = 0;
+        if let Some(s) = self.stream.as_mut() {
+            s.stop();
+        }
+    }
+
+    /// The movie stream, or a stop with a message when the game never called `StSetRing`.
+    fn stream_mut(&mut self, call: &str) -> Result<&mut Stream, DriveError> {
+        self.stream.as_mut().ok_or_else(|| {
+            DriveError::Disc(format!("{call} before StSetRing: there is no ring buffer"))
+        })
+    }
+
+    /// `CdRead2(mode)`: sets the mode and starts streaming from the `Setloc` position, at `now`
+    /// VBlanks. [doc: libcd; obs: MOV passes Stream|Speed|RT|Size1 after Setloc and Setmode]
+    pub fn start_stream(&mut self, mode: u8, now: u32) -> Result<(), DriveError> {
+        self.mode = mode;
+        let (lba, double) = (self.pos, mode & CDL_MODE_SPEED != 0);
+        let s = self.stream_mut("CdRead2")?;
+        s.clear_loss();
+        s.start(lba, now, double);
+        Ok(())
+    }
+
+    /// `StGetNext`: the next movie frame, with the VBlank to advance the clock to first.
+    pub fn poll_stream(
+        &mut self,
+        now: u32,
+    ) -> Result<Option<crate::stream::Delivered>, DriveError> {
+        let Drive { disc, stream, .. } = self;
+        let s = stream
+            .as_mut()
+            .ok_or_else(|| DriveError::Disc("StGetNext before StSetRing".into()))?;
+        let delivered = s.poll(now, &mut |lba, out| {
+            u32::try_from(lba).is_ok_and(|lba| disc.read_raw(lba, out).is_ok())
+        });
+        if let Some(lba) = s.next_lba() {
+            self.pos = lba;
+        }
+        Ok(delivered)
     }
 
     pub fn mode(&self) -> u8 {
@@ -166,7 +214,14 @@ impl Drive {
             CDL_SETMODE => self.mode = param[0],
             // [doc] These only change motor, audio or reading state, which a synchronous
             // drive with no audio doesn't have; they report status.
-            CDL_NOP | CDL_STANDBY | CDL_STOP | CDL_PAUSE | CDL_MUTE | CDL_DEMUTE => {}
+            // [doc] Pause (and Stop) end any read in progress, a movie stream included; the head
+            // stays where it is.
+            CDL_PAUSE | CDL_STOP => {
+                if let Some(s) = self.stream.as_mut() {
+                    s.stop();
+                }
+            }
+            CDL_NOP | CDL_STANDBY | CDL_MUTE | CDL_DEMUTE => {}
             other => return Err(DriveError::Unsupported(other)),
         }
         Ok(STATUS_IDLE)
@@ -198,6 +253,9 @@ impl Drive {
     pub fn read(&mut self, sectors: usize, mode: u8, out: &mut [u8]) -> Result<(), DriveError> {
         if mode != 0 {
             self.mode = mode;
+        }
+        if let Some(s) = self.stream.as_mut() {
+            s.stop(); // a data read replaces the stream
         }
         let size = self.sector_size(0);
         let start = if size == WHOLE_SECTOR {
@@ -388,6 +446,142 @@ pub unsafe extern "C" fn CdReadSync(_mode: i32, result: *mut u8) -> i32 {
         unsafe { result.write(STATUS_IDLE) };
     }
     0
+}
+
+// ---- movie streaming ----
+//
+// How MOV drives it (src/mov/mov.c): `MOV_startStream` calls `StSetRing(ring, 24)` and
+// `StSetStream(1, 1, -1, NULL, NULL)`, then `MOV_startRead` issues Setloc, Setmode and, after
+// `VSync(3)`, `CdRead2(Stream|Speed|RT|Size1)`, repeating until it returns 1. `MOV_readFrame`
+// polls `StGetNext(&bitstream, &header)` until it returns 0 (at most 2000 times), reads the
+// header's frame number, width and height, and `MOV_decodeFrame` frees the bitstream with
+// `StFreeRing` right after `DecDCTvlc2`. After a timeout `StGetBackloc(&loc)` says where to
+// restart. `MOV_playMovie` ends with `StUnSetRing` and `CdControlB(CdlPause)`.
+
+/// `CdRead2(mode)`: starts reading the sectors from the `Setloc` position as a stream, with
+/// `mode` (stream, double speed, whole sectors...); returns 1 when it started. [doc: libcd]
+#[unsafe(no_mangle)]
+pub extern "C" fn CdRead2(mode: i32) -> i32 {
+    let now = crate::libetc::vblank_count();
+    with_drive("CdRead2", |d| {
+        // The SDK's CdlModeStream (0x100) is above the drive's mode byte.
+        d.start_stream(mode as u8, now)?;
+        Ok(1)
+    })
+}
+
+/// `StSetRing(ring, sectors)`: gives the stream `sectors` sectors of ring buffer. Natively the
+/// frames are assembled in storage the stream owns, so `ring` is not touched. [doc: libcd]
+///
+/// # Safety
+/// `ring` is not dereferenced.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn StSetRing(_ring: *mut u32, sectors: u32) {
+    with_drive("StSetRing", |d| {
+        d.stream = Some(Stream::new(sectors as usize));
+        Ok(())
+    });
+}
+
+/// `StSetStream(mode, start_frame, end_frame, func1, func2)`: which frames to deliver. `mode`
+/// (24 or 16 bit MDEC output) and the two callbacks (ring overflow and end of stream) only
+/// matter to the SDK's own decoding path, which the game doesn't use; `end_frame` -1 means no
+/// end. [doc: libcd]
+#[unsafe(no_mangle)]
+pub extern "C" fn StSetStream(
+    _mode: u32,
+    start_frame: u32,
+    end_frame: u32,
+    _func1: Option<unsafe extern "C" fn()>,
+    _func2: Option<unsafe extern "C" fn()>,
+) {
+    with_drive("StSetStream", |d| {
+        let end = (end_frame != u32::MAX).then_some(end_frame);
+        d.stream_mut("StSetStream")?.set_range(start_frame, end);
+        Ok(())
+    });
+}
+
+/// `StUnSetRing()`: ends the stream and frees the ring. [doc: libcd]
+#[unsafe(no_mangle)]
+pub extern "C" fn StUnSetRing() {
+    with_drive("StUnSetRing", |d| {
+        d.stream = None;
+        Ok(())
+    });
+}
+
+/// `StGetNext(&bitstream, &header)`: 0 and the next frame's pointers, or 1 when none is ready.
+///
+/// Frames arrive on the virtual clock (`stream`): when none has arrived yet, the clock runs on
+/// to the VBlank its last sector arrives at (host VBlank callbacks included), so the caller's
+/// poll loop finds it on the first try; returns 1 only when no frame is coming (the drive
+/// stopped, or the read left the disc). [doc: libcd]
+///
+/// # Safety
+/// `addr` and `header` must be valid for a pointer write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn StGetNext(addr: *mut *const u8, header: *mut *const u8) -> i32 {
+    let now = crate::libetc::vblank_count();
+    // The clock advances after the drive lock is released: host callbacks run in there.
+    match with_drive("StGetNext", |d| d.poll_stream(now)) {
+        Some(f) => {
+            crate::libetc::advance_to(f.until);
+            unsafe {
+                addr.write(f.data);
+                header.write(f.header);
+            }
+            0
+        }
+        None => 1,
+    }
+}
+
+/// `StFreeRing(bitstream)`: gives a frame's space in the ring back. [doc: libcd]
+///
+/// # Safety
+/// `base` must be a pointer `StGetNext` returned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn StFreeRing(base: *const u8) {
+    with_drive("StFreeRing", |d| {
+        if !d.stream_mut("StFreeRing")?.free(base) {
+            eprintln!("psyq: StFreeRing: {base:p} isn't a frame StGetNext handed out");
+            std::process::abort();
+        }
+        Ok(())
+    });
+}
+
+/// `StGetBackloc(&loc)`: where to restart after a loss, as the position of the first sector of
+/// the first frame the game has not received, and that frame's number; 0 (and `loc` untouched)
+/// before any frame arrived. [doc: libcd, "frame number to resume from"]
+///
+/// # Safety
+/// `loc` must be valid for a `CdlLOC` write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn StGetBackloc(loc: *mut CdlLoc) -> i32 {
+    match with_drive("StGetBackloc", |d| {
+        Ok(d.stream_mut("StGetBackloc")?.backloc())
+    }) {
+        Some((lba, frame)) => {
+            unsafe { loc.write(int_to_pos(lba)) };
+            frame as i32
+        }
+        None => 0,
+    }
+}
+
+/// `StCdInterrupt()`: processes a sector-arrival interrupt the library had to defer; the game
+/// calls it from the MDEC callback when `StCdIntrFlag` is set. Sectors are taken in when a call
+/// looks at the stream and `StCdIntrFlag` stays 0, so there is nothing to do. [guess]
+#[unsafe(no_mangle)]
+pub extern "C" fn StCdInterrupt() {}
+
+/// The length in bytes of a frame `StGetNext` handed out, from its bitstream pointer, for
+/// `DecDCTvlc2` (which gets only the pointer).
+pub fn stream_frame_len(data: *const u8) -> Option<usize> {
+    let guard = DRIVE.lock().unwrap();
+    guard.as_ref()?.stream.as_ref()?.frame_len(data)
 }
 
 #[cfg(test)]

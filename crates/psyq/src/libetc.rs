@@ -62,6 +62,36 @@ pub extern "C" fn ResetCallback() -> i32 {
     0
 }
 
+/// Runs VBlanks, host callback included, until the counter reaches `target`; returns how many
+/// ran. The host runs without the lock held, so it may read the counter.
+fn run_until(target: u32) -> u32 {
+    let mut elapsed = 0;
+    loop {
+        let (vblank, host) = {
+            let mut c = CLOCK.lock().unwrap();
+            if c.vblank >= target {
+                return elapsed;
+            }
+            c.vblank += 1;
+            elapsed += 1;
+            (c.vblank, c.host.take())
+        };
+        if let Some(mut host) = host {
+            host.vblank(vblank);
+            CLOCK.lock().unwrap().host = Some(host);
+        }
+    }
+}
+
+/// Lets virtual time pass until VBlank `target` (a count as in [`vblank_count`]), running each
+/// VBlank's host callback, without a `VSync` wait: it doesn't move the point later
+/// `VSync(n)` calls count from. Does nothing when `target` has passed. For things that happen
+/// on the clock while the game polls instead of waiting, such as a streamed movie frame
+/// arriving (libcd `StGetNext`, docs/phase2-plan.md "Time"). Returns the VBlanks that ran.
+pub fn advance_to(target: u32) -> u32 {
+    run_until(target)
+}
+
 /// `VSync(mode)`: `mode` < 0 returns the VBlank count; 0 waits for the next VBlank; `n` > 0
 /// waits until `n` VBlanks have passed since the last wait [doc]. Here the game's code takes no
 /// time, so a wait always lasts exactly 1 or `n` VBlanks. Returns the horizontal blanks
@@ -79,23 +109,10 @@ pub extern "C" fn VSync(mode: i32) -> i32 {
             c.last_wait.wrapping_add(mode as u32).max(c.vblank + 1)
         }
     };
-    let mut elapsed = 0;
-    loop {
-        // The host runs without the lock held, so it may read the counter.
-        let (vblank, host) = {
-            let mut c = CLOCK.lock().unwrap();
-            if c.vblank >= target {
-                c.last_wait = c.vblank;
-                break;
-            }
-            c.vblank += 1;
-            elapsed += 1;
-            (c.vblank, c.host.take())
-        };
-        if let Some(mut host) = host {
-            host.vblank(vblank);
-            CLOCK.lock().unwrap().host = Some(host);
-        }
+    let elapsed = run_until(target);
+    {
+        let mut c = CLOCK.lock().unwrap();
+        c.last_wait = c.vblank;
     }
     (elapsed * HBLANKS_PER_FIELD) as i32
 }
@@ -151,5 +168,17 @@ mod tests {
         // A second ResetCallback (the SDK's own) doesn't restart the count.
         ResetCallback();
         assert_eq!(VSync(-1), 5);
+        // Advancing the clock without a wait runs the VBlanks (host callbacks included), does
+        // nothing for a time already past, and leaves `VSync(n)` counting from its last wait.
+        assert_eq!(advance_to(8), 3);
+        assert_eq!(advance_to(8), 0);
+        assert_eq!(advance_to(3), 0);
+        assert_eq!(*seen.lock().unwrap(), [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(
+            VSync(3),
+            263,
+            "3 since the last wait (5) had passed, so it waits one"
+        );
+        assert_eq!(VSync(-1), 9);
     }
 }
