@@ -169,5 +169,9 @@ constants, not from the game.
 - Where the game is at VBlanks 1393/1423 (probably the new-game intro), and getting further
   (the probe stops making progress after that; it needs menu-specific input).
 - `VSync(n)` timing against hardware (the field rate itself is measured, above).
-- Whether OpenBIOS's `rand` and boot state match (not done; only matters if we ever drop the
-  retail BIOS).
+- OpenBIOS as the oracle's BIOS: not run. From its source only
+  (`ref/pcsx-redux/src/mips/openbios/kernel/libcmisc.c:175-181`, at 26bfd693): `rand` uses
+  the same recurrence (`x * 1103515245 + 12345`, result `(x >> 16) & 0x7FFF`) and a zeroed
+  static seed, so it would also start at 0. But the state lives at a different address
+  than retail's 0x9010, and its boot path and timing differ. That only matters if we ever
+  drop the retail BIOS.

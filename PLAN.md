@@ -44,8 +44,11 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     `docs/backend-gpu.md` lists its differences from hardware to check in Redux) and **XA,
     MDEC, SPU** (`xa`, `mdec`, `spu`; every constant table re-derived from psx-spx or MPEG-1,
     none copied) ported, each bit-exact against DW2-PC's C on random inputs (test-only crates
-    `gpu-diff`, `decoder-diff`, ignored without `ref/DW2-PC`). Remaining in S0.6: SDL3-rs vs
-    winit/cpal.
+    `gpu-diff`, `decoder-diff`, ignored without `ref/DW2-PC`). **S0.6 done:** window, input and
+    audio through SDL3 (`sdl3` crate 0.20, static build), provisionally: chosen over
+    winit + cpal + gilrs after both spikes (`tools/spikes/s06/`, `docs/s06-platform.md`).
+    Gamepads, audio latency and 59.94 Hz pacing are still to check with Ember at the screen.
+    DW2-PC reuse decisions in `docs/dw2pc-reuse.md` (everything translated, nothing linked as C).
   - **S0.8 first slice done:** `docs/s08-oracle.md`, `oracle/probe-boot.lua`. Headless
     PCSX-Redux (`-cli -interpreter`) boots Ember's disc on Ember's retail BIOS; the BIOS
     `rand` state (RAM 0x9010) is 0 at boot and `psyq::bios` matches the emulator; two fresh
@@ -61,7 +64,10 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     (`docs/canonical-state.md`, 834 bytes) at 19 checkpoints; the record run and two fresh-process
     replays gave byte-identical dumps, and the debugger does not perturb the run. Field rate:
     564398 CPU cycles per VBlank = 60.009 Hz (Redux) vs 59.817 Hz on hardware, 0.32% shorter
-    (`docs/s08-oracle.md`). Also certified on booklab (M1). Not done: OpenBIOS.
+    (`docs/s08-oracle.md`). Also certified on booklab (M1, `~/Developer/dw1-oracle` there:
+    the pinned binary, BIOS, disc and `oracle/`; Homebrew capstone, freetype, ffmpeg, sdl3
+    installed for it), and tampered replays fail. OpenBIOS: from source only (same `rand`),
+    not run.
   - **S0.7 done:** `docs/s07-libgs-spike.md`. `oracle/capture-libgs.lua` records the machine
     around every `GsSortObject4J` call in one frame (48 calls); a clean Rust
     `psyq::libgs::sort_object4j` (lit GT3/GT4, from psx-spx and black-box captures) matches
@@ -70,7 +76,9 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     capture of a scene that uses it.
 - **SDK rule set (Ember, 2026-10-13):** clean reimplementation of Sony's SDK (see Ground
   rules).
-- **Next:** the rest of S0.6 (SDL3-rs vs winit/cpal), the rest of S0.8 (OpenBIOS check; optional), S0.9 (go / no-go report).
+- **S0.9:** `docs/phase0-report.md` recommends go. **Waiting on Ember's decision.**
+- **Next (if go):** Phase 1, main's C plus the `psyq` crate with trapping stubs builds and
+  links for arm64.
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
   known-good redump of SLUS-01032, checked 2026-10-13); Ember's PS1 BIOS dump
