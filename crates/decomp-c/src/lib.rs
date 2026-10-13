@@ -42,6 +42,19 @@ const _: () = {
     assert!(offset_of!(psyq::libcd::CdlLoc, track) == offset_of!(bindings::CdlLOC, track));
 };
 
+/// psyq's libmcrd `DirEntry` has the layout of `struct DIRENTRY` (native pointer included).
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    use psyq::libmcrd::DirEntry;
+    assert!(size_of::<DirEntry>() == size_of::<bindings::DIRENTRY>());
+    assert!(offset_of!(DirEntry, name) == offset_of!(bindings::DIRENTRY, name));
+    assert!(offset_of!(DirEntry, attr) == offset_of!(bindings::DIRENTRY, attr));
+    assert!(offset_of!(DirEntry, size) == offset_of!(bindings::DIRENTRY, size));
+    assert!(offset_of!(DirEntry, next) == offset_of!(bindings::DIRENTRY, next));
+    assert!(offset_of!(DirEntry, head) == offset_of!(bindings::DIRENTRY, head));
+    assert!(offset_of!(DirEntry, system) == offset_of!(bindings::DIRENTRY, system));
+};
+
 /// The SDK globals psyq defines in Rust have the layout the C headers declare.
 const _: () = {
     // libgpu/libgs structs psyq reads and writes.

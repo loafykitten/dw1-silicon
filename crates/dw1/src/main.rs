@@ -40,6 +40,24 @@ fn main() {
             std::process::exit(1);
         }
     }
+    // Memory cards: an image file per slot if given, else a fresh formatted card (the default).
+    for (slot, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
+        if let Some(path) = std::env::var_os(var) {
+            let card = std::fs::read(&path)
+                .ok()
+                .and_then(|b| psyq::libmcrd::Card::from_bytes(&b));
+            match card {
+                Some(card) => psyq::libmcrd::insert_card(slot, Some(card)),
+                None => {
+                    eprintln!(
+                        "dw1: {var}: {} is not a 128 KB card image",
+                        path.to_string_lossy()
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
     psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
     // The game's main() never returns on the PS1.
     let status = unsafe { decomp_c::dw1_game_main() };
