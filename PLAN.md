@@ -19,8 +19,10 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     binutils; `.venv/` with the decomp's Python requirements; dumpsxiso 2.20 in
     `~/.local/bin`; PCSX-Redux built from source at 5811e22 in `ref/pcsx-redux`; the
     decomp's container `dw-build`, linux/amd64 under OrbStack; Rust 1.99).
-  - **S0.2 running:** gpt-6.1-sol inventory of DW2-PC's provenance (session scratchpad;
-    rerun from the S0.2 brief if lost).
+  - **S0.2 done:** `docs/provenance.md` (full table in `docs/provenance/`). Eligible from
+    DW2-PC: GTE hardware model, software GPU, MDEC/SPU/XA decoders minus their literal
+    tables, CD/card/pad/VBlank/MDEC adapters, synthetic GTE test data. Not eligible: its
+    whole sound stack (translated from retail Psy-Q), libgs, most of libgte.
   - **S0.3 done:** dw_decomp is the `decomp/` submodule (Ember's fork
     `loafykitten/dw_decomp`, 09c174c, only `external/psyq_headers` initialized, local
     branch `dw1-native` not pushed); the disc is extracted to the gitignored
@@ -37,7 +39,12 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     asserts. Found: the game's `rand()` is the **BIOS** generator (A(2Fh)), now in
     `psyq::bios`; its initial seed is to be measured in S0.8 with the retail BIOS.
     Remaining in S0.6: DW2-PC components against synthetic inputs, SDL3-rs vs winit/cpal.
-- **Next:** S0.2's write-up (`docs/provenance.md`), the rest of S0.6,
+  - **S0.8 first slice done:** `docs/s08-oracle.md`, `oracle/probe-boot.lua`. Headless
+    PCSX-Redux (`-cli -interpreter`) boots Ember's disc on Ember's retail BIOS; the BIOS
+    `rand` state (RAM 0x9010) is 0 at boot and `psyq::bios` matches the emulator; two fresh
+    runs are identical. Real input replays and state dumps still to do.
+- **Open question 2 for Ember:** how we reimplement Sony SDK behaviour (below).
+- **Next:** the rest of S0.6,
   S0.7 (libgs/TMD spike), S0.8 (oracle), S0.9 (go / no-go).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
@@ -496,7 +503,14 @@ is what the Rust is checked against.
 
 ## Open questions for Ember
 
-None right now. Add them here as they come up.
+2. **How do we reimplement the Sony SDK?** (asked 2026-10-13) DW1 calls 175 SDK functions.
+   DW2-PC translated Sony's libsnd/libspu/libgs disassembly into C, which this repo's rules
+   exclude (`docs/provenance.md`). Recommended: reimplement from public documentation and
+   emulator observation, consulting the SDK disassembly in `decomp/asm/` only for narrow
+   questions (a constant, an argument order, whether a call blocks), never translating
+   routines line by line. Slower for libgs and the sound sequencer; keeps the public repo
+   clean. The alternative is DW2-PC's approach (translate the SDK), faster but carrying
+   Sony-derived code.
 
 ## Answered by Ember
 

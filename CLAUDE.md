@@ -8,10 +8,10 @@ and open questions.
 
 - **Current status (2026-10-13, session 2):** Phase 0 under way, public repo
   `loafykitten/dw1-silicon` (branch `phase0`). Direction: hybrid (decomp C game + Rust for
-  everything new), full Rust as the endgame. Done: plan review, S0.1 tools, S0.3 decomp
-  GCC build (`decomp/` submodule of Ember's fork), S0.4 memory design, S0.5 survey, S0.6
-  first slice (Cargo workspace builds decomp C; the game's `rand()` is the BIOS generator).
-  Next: S0.2 provenance, rest of S0.6, S0.7, S0.8. PLAN.md's "Where things stand" is the
+  everything new), full Rust as the endgame. Done: plan review, S0.1-S0.5, S0.6 first
+  slice (Cargo workspace builds decomp C), S0.8 first slice (headless PCSX-Redux probe; the
+  game's `rand()` is the BIOS generator, seed 0 at boot). Waiting on Ember: PLAN.md open
+  question 2 (how to reimplement the Sony SDK). PLAN.md's "Where things stand" is the
   handoff; keep it and this line current at the end of every session.
 - **Never commit disc data** (image, extracted files, assets, dumps, captures). They live
   under the gitignored `disc/`, `dumps/`, `build/`, `captures/`, `ref/`. Check
