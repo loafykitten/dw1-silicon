@@ -136,8 +136,10 @@ time, the pinned binary and flags above.
   GPU, this BIOS and disc) on two machines. Keying to polls does not make a replay independent
   of CPU timing: CD completion that crosses a VBlank, and the movie code's CPU-iteration limits
   (`MOV_decodeFrame`, `MOV_waitForFlip`), can change control flow, and a different emulator
-  build or core could diverge. The replay fails loudly on such a divergence rather than hiding
-  it.
+  build or core could diverge. A divergence that changes which code polls the pad, or how many
+  polls there are, fails the replay (exit 1). A shifted VBlank with the same polls is only
+  reported (`vblanks_aligned=NO`), and a change in game state alone shows up only when the
+  checkpoint dumps are compared with the recording's, which is a separate step.
 - **Hardening after review:** the run only exits 0 through the real completion path. At the end it
   checks that the debugger is still on, the entry and return breakpoints are enabled and no
   `PadRead` is pending; a Quitting event before completion exits 1; canonical dump writes check

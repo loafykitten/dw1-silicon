@@ -209,7 +209,9 @@ local function finish(v)
         nret = nret + 1
         if not bp:isEnabled() then return fail(string.format('return breakpoint %08x is gone', ra)) end
     end
-    if nret == 0 then return fail('no PadRead call was ever seen') end
+    -- Zero polls is fine for targets before the game first polls the pad (VBlank 1651 on the
+    -- new-game route); replay mode checks the poll count against the recording separately.
+    if nret == 0 then print('DW1REPLAY note: no PadRead call was seen before the target') end
     if pendingRa then return fail(string.format('PadRead (caller 0x%08x) still pending at the end', pendingRa)) end
     entryBp:remove()
     if MODE == 'record' then

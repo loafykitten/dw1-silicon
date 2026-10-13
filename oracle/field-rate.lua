@@ -17,7 +17,7 @@ end
 
 local raw = os.getenv('DW1RATE_VBLANKS') or '1000'
 local N = tonumber(raw)
-if not (N and N >= 1 and N == math.floor(N)) then
+if not (N and N >= 1 and N < math.huge and N == math.floor(N)) then
     die('DW1RATE_VBLANKS must be a positive integer, got ' .. raw)
     return
 end
