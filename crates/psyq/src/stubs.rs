@@ -24,10 +24,10 @@ stubs! {
 
 // libgs (its data globals are in `globals`).
 stubs! {
-    GsGetLs GsGetLw GsGetLws GsGetTimInfo
-    GsInitCoordinate2 GsLinkObject4 GsMapModelingData
+    GsGetLs GsGetLw GsGetLws
+
     GsMulCoord0 GsMulCoord3 GsSetAmbient GsSetFlatLight GsSetLightMatrix GsSetLightMode
-    GsSetLsMatrix GsSetNearClip GsSetProjection GsSetRefView2 GsSetView2
+    GsSetLsMatrix GsSetView2
     GsSortBoxFill GsSortFastSprite GsSortObject4J GsSortOt
     GsSortPoly GsSortSprite
 }

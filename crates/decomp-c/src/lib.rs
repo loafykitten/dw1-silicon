@@ -72,6 +72,26 @@ const _: () = {
     assert!(
         core::mem::offset_of!(psyq::libgs::GsOt, tag) == core::mem::offset_of!(bindings::GsOT, tag)
     );
+    assert!(size_of::<psyq::libgs::GsDobj2>() == size_of::<bindings::GsDOBJ2>());
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsDobj2, tmd)
+            == core::mem::offset_of!(bindings::GsDOBJ2, tmd)
+    );
+    assert!(size_of::<psyq::libgs::GsCoordinate2>() == size_of::<bindings::GsCOORDINATE2>());
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsCoordinate2, sup)
+            == core::mem::offset_of!(bindings::GsCOORDINATE2, super_)
+    );
+    assert!(size_of::<psyq::libgs::GsImage>() == size_of::<bindings::GsIMAGE>());
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsImage, clut)
+            == core::mem::offset_of!(bindings::GsIMAGE, clut)
+    );
+    assert!(size_of::<psyq::libgs::GsRview2>() == size_of::<bindings::GsRVIEW2>());
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsRview2, sup)
+            == core::mem::offset_of!(bindings::GsRVIEW2, super_)
+    );
     assert!(size_of::<psyq::globals::Matrix>() == size_of::<bindings::MATRIX>());
     assert!(
         core::mem::offset_of!(psyq::globals::Matrix, t)

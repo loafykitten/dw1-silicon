@@ -5,9 +5,15 @@
 //! reference, the details from emulator observation of DW1's own calls (captures `p2-init`,
 //! `p2-landing`, `p2-menu`, 2026-10-13). Rules are tagged `[doc]`, `[hdr]` or `[obs]`.
 
+mod model;
 mod sort4j;
+mod tim;
+mod view;
 
+pub use model::*;
 pub use sort4j::*;
+pub use tim::*;
+pub use view::*;
 
 use std::sync::Mutex;
 

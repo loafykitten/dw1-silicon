@@ -128,3 +128,40 @@ mod tests {
         assert!(ptr_of_link(0xFFFF_FFFF).is_null());
     }
 }
+
+// ---- 32-bit pointers inside loaded data ----
+//
+// Some PS1 data holds addresses in 32-bit fields: libgs maps a TMD file in place, replacing
+// its offsets with addresses (GsMapModelingData). Natively such a field holds 0x80000000 plus
+// the target's offset into the same `__DATA` window, so it still fits 32 bits and reads like a
+// KSEG0 address; every buffer it can point into (game statics, the heap arena, the PS1 RAM
+// stand-in) is in the window (docs/phase2-plan.md).
+
+/// The tag bit of an encoded 32-bit pointer.
+pub const PTR32_TAG: u32 = 0x8000_0000;
+
+/// `ptr` as a 32-bit pointer (stops the program if it's outside the window).
+pub fn ptr32_of(ptr: *const u8) -> u32 {
+    PTR32_TAG | link_of(ptr)
+}
+
+/// The native address of an encoded 32-bit pointer; null for 0.
+pub fn ptr_of_ptr32(value: u32) -> *mut u8 {
+    if value == 0 {
+        return std::ptr::null_mut();
+    }
+    let (start, _) = link_window();
+    (start + (value & !PTR32_TAG) as usize) as *mut u8
+}
+
+/// `dw1_ptr32_decode(v)` for the game C's reads of such fields.
+#[unsafe(no_mangle)]
+pub extern "C" fn dw1_ptr32_decode(value: u32) -> *mut u8 {
+    ptr_of_ptr32(value)
+}
+
+/// `dw1_ptr32_encode(p)` for the game C's writes of such fields.
+#[unsafe(no_mangle)]
+pub extern "C" fn dw1_ptr32_encode(p: *const u8) -> u32 {
+    ptr32_of(p)
+}
