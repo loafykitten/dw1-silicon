@@ -6,16 +6,16 @@ written in Rust (DW2-PC is the reference). **Read `PLAN.md` before doing anythin
 it's the handoff, with the goal, ground rules, sources, architecture, oracle, phases
 and open questions.
 
-- **Current status (2026-10-13, session 2):** Phase 0 done, go/no-go report
-  (`docs/phase0-report.md`, recommends go) waiting on Ember. Public repo
-  `loafykitten/dw1-silicon` (branch `phase0`). Direction: hybrid (decomp C game + Rust for
-  everything new), full Rust as the endgame. Done: plan review, S0.1-S0.5, S0.7 (clean
-  Rust `GsSortObject4J` matches 48 captured calls), S0.6 (GTE, GPU, decoders in Rust; SDL3
-  static for window/input/audio, provisional), S0.8 (headless PCSX-Redux pinned to 26bfd693, new-game route to
-  gameplay, pad replays and canonical state dumps byte-identical across fresh processes, field
-  rate 60.009 Hz measured; the game's `rand()` is the BIOS generator, seed 0 at boot). Sony's SDK is reimplemented
-  clean (never translated from disassembly). PLAN.md's "Where things stand" is the
-  handoff; keep it and this line current at the end of every session.
+- **Current status (2026-10-13, end of session 2):** Phase 0 done. The go/no-go report
+  (`docs/phase0-report.md`) recommends go; confirm Ember's go before starting Phase 1.
+  Public repo `loafykitten/dw1-silicon` (branch `phase0`). Direction: hybrid (decomp C game
+  + Rust for everything new), full Rust as the endgame. Done: plan review, S0.1-S0.8
+  (Rust GTE/GPU/decoders; clean Rust `GsSortObject4J` matches 48 captured calls; SDL3
+  provisionally for window/input/audio; PCSX-Redux oracle pinned to 26bfd693 because of
+  upstream bug #2322, with pad replays and state dumps certified byte-identical on this Mac
+  and booklab). Sony's SDK is reimplemented clean (never translated from disassembly).
+  PLAN.md's "Where things stand" is the handoff, including how to work with the oracle;
+  keep it and this line current at the end of every session.
 - **Never commit disc data** (image, extracted files, assets, dumps, captures). They live
   under the gitignored `disc/`, `dumps/`, `build/`, `captures/`, `ref/`. Check
   `git status` before every commit.

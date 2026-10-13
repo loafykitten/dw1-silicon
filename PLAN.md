@@ -5,8 +5,12 @@ same day after an adversarial review by GPT 6 Astra (high) (`docs/plan-review-1.
 whole before starting, and don't re-ask Ember anything answered here. Keep the
 "Where things stand" section current at the end of every session: it is the handoff.
 
-## Where things stand (2026-10-13, session 2): start here
+## Where things stand (2026-10-13, end of session 2): start here
 
+- **Phase 0 is done.** `docs/phase0-report.md` (the S0.9 go / no-go) recommends **go**.
+  Ember read the summary ("Perfect") but hasn't said go or no-go in so many words: confirm
+  before starting Phase 1. If go, Phase 1 is next: main's C plus the `psyq` crate with
+  trapping stubs builds and links for arm64, and every overlay's C compiles.
 - **Repo:** public at `github.com/loafykitten/dw1-silicon`, branch `phase0` (the only branch
   so far; `main` comes later by merge). Claude commits and pushes at its discretion.
 - **Plan:** reviewed adversarially (Astra, 19 findings, three blockers; a sample checked
@@ -14,71 +18,81 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 - **Direction (Ember, 2026-10-13):** a full Rust rewrite is the endgame, reached through a
   hybrid (decomp C game + Rust for everything new, then module-by-module migration with
   side-by-side checks); not Bevy. Goal, Architecture, S0.6 and Phase 10 say how.
-- **Phase 0 so far:**
-  - **S0.1 done:** tools in `docs/toolchain.md` (Homebrew cmake, ninja, SDL3, `gmake`, MIPS
+- **SDK rule set (Ember, 2026-10-13):** clean reimplementation of Sony's SDK (see Ground
+  rules).
+- **Phase 0 results** (each reviewed by gpt-6.1-sol until no finding was left):
+  - **S0.1:** tools in `docs/toolchain.md` (Homebrew cmake, ninja, SDL3, `gmake`, MIPS
     binutils; `.venv/` with the decomp's Python requirements; dumpsxiso 2.20 in
     `~/.local/bin`; PCSX-Redux built from source at 26bfd693 in `ref/pcsx-redux`; the
     decomp's container `dw-build`, linux/amd64 under OrbStack; Rust 1.99).
-  - **S0.2 done:** `docs/provenance.md` (full table in `docs/provenance/`). Eligible from
+  - **S0.2:** `docs/provenance.md` (full table in `docs/provenance/`). Eligible from
     DW2-PC: GTE hardware model, software GPU, MDEC/SPU/XA decoders minus their literal
     tables, CD/card/pad/VBlank/MDEC adapters, synthetic GTE test data. Not eligible: its
     whole sound stack (translated from retail Psy-Q), libgs, most of libgte.
-  - **S0.3 done:** dw_decomp is the `decomp/` submodule (Ember's fork
+  - **S0.3:** dw_decomp is the `decomp/` submodule (Ember's fork
     `loafykitten/dw_decomp`, 09c174c, only `external/psyq_headers` initialized, local
     branch `dw1-native` not pushed); the disc is extracted to the gitignored
     `decomp/disks/us/`; the GCC build passes (`docs/s03-decomp-gcc-build.md`).
-  - **S0.4 done:** `docs/memory.md`. Below 4 GB is impossible on arm64 macOS; design per
+  - **S0.4:** `docs/memory.md`. Below 4 GB is impossible on arm64 macOS; design per
     kind of reference; a fixed window at 0x1_8000_0000 is a measured fallback.
-  - **S0.5 done:** `docs/survey.md` and `docs/survey/`. The PS1 library layer is mostly new
-    work (DW2-PC covers about a third of DW1's 175 SDK functions, little of libgs); the
-    effect interpreter's 32-bit pointer tricks need widening; the save has no pointers;
-    no overlay name clashes.
-  - **S0.6 first slice done** (reviews converged): Cargo workspace `crates/psyq`,
-    `crates/decomp-c`, `crates/dw1`. The decomp's `rng.c`, `math.c` and `file_table_us.c`
-    compile natively and pass tests against PS1 models; bindgen bindings with PS1-size
-    asserts. Found: the game's `rand()` is the **BIOS** generator (A(2Fh)), now in
-    `psyq::bios`; its initial seed is to be measured in S0.8 with the retail BIOS.
-    **GTE ported** (`crates/backend`, `gte` module): DW2-PC's hardware model in Rust,
-    matching all 1,248 PCSX-Redux reference cases (13 command variants), plus RTPT (depth cue
-    for V2 only, as PCSX-Redux). **GPU** (`gpu`, DW2-PC's 1x software rasterizer;
-    `docs/backend-gpu.md` lists its differences from hardware to check in Redux) and **XA,
-    MDEC, SPU** (`xa`, `mdec`, `spu`; every constant table re-derived from psx-spx or MPEG-1,
-    none copied) ported, each bit-exact against DW2-PC's C on random inputs (test-only crates
-    `gpu-diff`, `decoder-diff`, ignored without `ref/DW2-PC`). **S0.6 done:** window, input and
-    audio through SDL3 (`sdl3` crate 0.20, static build), provisionally: chosen over
-    winit + cpal + gilrs after both spikes (`tools/spikes/s06/`, `docs/s06-platform.md`).
-    Gamepads, audio latency and 59.94 Hz pacing are still to check with Ember at the screen.
-    DW2-PC reuse decisions in `docs/dw2pc-reuse.md` (everything translated, nothing linked as C).
-  - **S0.8 first slice done:** `docs/s08-oracle.md`, `oracle/probe-boot.lua`. Headless
-    PCSX-Redux (`-cli -interpreter`) boots Ember's disc on Ember's retail BIOS; the BIOS
-    `rand` state (RAM 0x9010) is 0 at boot and `psyq::bios` matches the emulator; two fresh
-    runs are identical. **Redux is pinned to 26bfd693**: its PR #2283 (GTE write delay) breaks
-    Sony's `MulMatrix`, so most DW1 bone matrices were wrong (`docs/s08-oracle.md`; filed
-    upstream as grumpycoders/pcsx-redux#2322 on 2026-10-13; unpin once it's fixed). **New-game route**
-    (`oracle/route-new-game.lua`, `docs/oracle-route.md`): deterministic inputs from boot to
-    first gameplay with the tamer and Agumon on screen (VBlank 19400), milestone screenshots
-    (`oracle/raw2png.py`), reproducible across runs. **Replays, state dumps and field rate
-    done (session 2):** `oracle/replay.lua` records the game's `PadRead` results (7131 polls to
-    gameplay, `oracle/replays/new-game.txt`) and replays them with no pad overrides, failing on
-    divergence; `oracle/canonical-state.lua` writes the schema-v1 state dump
-    (`docs/canonical-state.md`, 834 bytes) at 19 checkpoints; the record run and two fresh-process
-    replays gave byte-identical dumps, and the debugger does not perturb the run. Field rate:
-    564398 CPU cycles per VBlank = 60.009 Hz (Redux) vs 59.817 Hz on hardware, 0.32% shorter
-    (`docs/s08-oracle.md`). Also certified on booklab (M1, `~/Developer/dw1-oracle` there:
-    the pinned binary, BIOS, disc and `oracle/`; Homebrew capstone, freetype, ffmpeg, sdl3
-    installed for it), and tampered replays fail. OpenBIOS: from source only (same `rand`),
-    not run.
-  - **S0.7 done:** `docs/s07-libgs-spike.md`. `oracle/capture-libgs.lua` records the machine
+  - **S0.5:** `docs/survey.md` and `docs/survey/`. The PS1 library layer is mostly new
+    work (DW2-PC has fewer than half of DW1's 175 SDK functions by name, little of libgs);
+    the effect interpreter's 32-bit pointer tricks need widening; the save has no
+    pointers; no overlay name clashes.
+  - **S0.6:** Cargo workspace `crates/psyq`, `crates/decomp-c`, `crates/dw1`. The decomp's
+    `rng.c`, `math.c` and `file_table_us.c` compile natively and pass tests against PS1
+    models; bindgen bindings with PS1-size asserts. The game's `rand()` is the **BIOS**
+    generator (A(2Fh)), in `psyq::bios`, seed 0 at boot (measured in S0.8). In
+    `crates/backend`: the **GTE** (DW2-PC's model in Rust; all 1,248 PCSX-Redux reference
+    cases, 13 command variants, plus RTPT, NCT, NCCS, NCCT, AVSZ3, AVSZ4), the **GPU**
+    (DW2-PC's 1x software rasterizer; `docs/backend-gpu.md` lists its differences from
+    hardware to check in Redux), **XA, MDEC, SPU** (every constant table re-derived from
+    psx-spx or MPEG-1), each bit-exact against DW2-PC's C (test-only crates `gpu-diff`,
+    `decoder-diff`, ignored without `ref/DW2-PC`). DW2-PC reuse: `docs/dw2pc-reuse.md`
+    (everything translated, nothing linked as C). **Window, input and audio: SDL3**
+    (`sdl3` crate 0.20, static build), provisionally, over winit + cpal + gilrs
+    (`tools/spikes/s06/`, `docs/s06-platform.md`); not in the app yet. Gamepads, audio
+    latency and 59.94 Hz pacing still need checking with Ember at the screen.
+  - **S0.7:** `docs/s07-libgs-spike.md`. `oracle/capture-libgs.lua` records the machine
     around every `GsSortObject4J` call in one frame (48 calls); a clean Rust
-    `psyq::libgs::sort_object4j` (lit GT3/GT4, from psx-spx and black-box captures) matches
-    all 48 exactly (7,246 packet words) and draws the same pixels through `backend::gpu`.
-    The rest of libgs is coverage: other primitive kinds and entry points, each needing a
-    capture of a scene that uses it.
-- **SDK rule set (Ember, 2026-10-13):** clean reimplementation of Sony's SDK (see Ground
-  rules).
-- **S0.9:** `docs/phase0-report.md` recommends go. **Waiting on Ember's decision.**
-- **Next (if go):** Phase 1, main's C plus the `psyq` crate with trapping stubs builds and
-  links for arm64.
+    `psyq::libgs::sort_object4j` (lit GT3/GT4 only, from psx-spx and black-box captures)
+    matches all 48 exactly (7,246 packet words) and draws the same pixels through
+    `backend::gpu`. The rest of libgs is coverage: other primitive kinds and entry points,
+    each needing a capture of a scene that uses it.
+  - **S0.8:** `docs/s08-oracle.md`. Headless PCSX-Redux (`-cli -interpreter -softgpu`) on
+    Ember's retail BIOS and disc. **Redux is pinned to 26bfd693**: PR #2283 (GTE write
+    delay) breaks Sony's `MulMatrix`, so most DW1 bone matrices come out wrong. Filed
+    upstream as grumpycoders/pcsx-redux#2322 (2026-10-13, from Ember's account, with an AI
+    disclosure line); `tools/redux-2322/` is the test for when to unpin. **New-game route**
+    (`oracle/route-new-game.lua`, `docs/oracle-route.md`): deterministic inputs from boot to
+    first gameplay with the tamer and Agumon on screen (VBlank 19400). **Replays:**
+    `oracle/replay.lua` records `PadRead` results (7,131 polls, `oracle/replays/new-game.txt`)
+    and replays them with no pad overrides, failing on a caller or poll-count divergence.
+    **State:** `oracle/canonical-state.lua`, schema v1 (`docs/canonical-state.md`, 834
+    bytes), dumped at 19 checkpoints. **Certified:** the recording, two fresh replays on this
+    Mac and one on booklab gave byte-identical dumps; tampered replays fail; the debugger
+    doesn't perturb the run. **Field rate:** 564,398 CPU cycles per VBlank = 60.009 Hz
+    (Redux) vs 59.817 Hz on hardware. OpenBIOS: same `rand` from its source, not run.
+- **Working with the oracle** (learned the hard way; details in `docs/s08-oracle.md`):
+  - Run **one emulator at a time** on a machine; concurrent runs stall at ~1% CPU.
+  - Use absolute paths and a fresh empty directory under `captures/oracle-runs/` per run
+    (Redux writes config and memory cards into the cwd).
+  - Don't pass `-debugger` (it slows everything). Breakpoints need
+    `PCSX.settings.emulator.Debug.Debug = true`, set from Lua when needed. Keep every
+    breakpoint handle referenced (they're deleted on GC).
+  - LuaJIT has about 2,000 ffi callbacks: never create a breakpoint per event. Make them
+    persistent and reuse them.
+  - After switching Redux commits, rebuild clean (`rm -rf objs/Release bins/Release`); an
+    incremental build hung in the BIOS.
+  - A full route or replay to gameplay takes about 385 s on this Mac and 389 s on booklab.
+- **booklab** (`ssh booklab`, M1): `~/Developer/dw1-oracle` holds the pinned Redux binary,
+  `scph1001.bin`, the disc (`disc/`), a copy of `oracle/` (refresh with
+  `rsync -a --delete oracle/ booklab:Developer/dw1-oracle/oracle/`) and `runs/`. Homebrew
+  capstone, freetype, ffmpeg and sdl3 were installed there for Redux. Check that nothing
+  else (Wrath-Rust) is running before using it.
+- **Helper tools:** `tools/oracle/dumpstate.py` (reads `DW1STATE` dumps from
+  `capture-libgs.lua`), `tools/oracle/dis.py` (small R3000 disassembler over a dump's RAM),
+  `tools/oracle/stalevz.py` (the #2322 bone-matrix check).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
   known-good redump of SLUS-01032, checked 2026-10-13); Ember's PS1 BIOS dump
