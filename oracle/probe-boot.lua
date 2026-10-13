@@ -3,8 +3,10 @@
 -- Boots the disc, taps Start/Cross on a fixed schedule to get past the title, and watches the
 -- BIOS random generator: rand() in DW1 is the SDK stub into BIOS A(2Fh), whose state lives in
 -- kernel RAM at 0x9010 (BIOS 0xBFC021F0: x = x * 0x41C64E6D + 0x3039). Each VBlank it reads the
--- state and, if it moved, counts how many rand() calls happened by stepping the generator. No
--- breakpoints (they slow the interpreter ~20x).
+-- state and, if it moved, infers how many rand() calls happened by stepping the generator. No
+-- breakpoints (they slow the interpreter ~20x). The counts assume only rand() changes the state
+-- (DW1 never calls srand, per docs/survey.md); exact invocation counts would need execution
+-- instrumentation.
 --
 -- Output lines start with "DW1PROBE". Env: DW1_PROBE_VBLANKS (default 7200).
 
@@ -38,6 +40,7 @@ local function step(x)
 end
 
 local vblanks, totalCalls, events = 0, 0, 0
+local incomplete = false
 local lastSeed = readSeed()
 local pad = PCSX.SIO0.slots[1].pads[1]
 local held = nil
@@ -62,8 +65,11 @@ KEEP_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
             n = n + 1
         end
         if x ~= seed then
-            out('seed jump vblank=%d from=0x%08x to=0x%08x (not reachable by rand steps)', vblanks,
-                lastSeed, seed)
+            -- Either more than MAX_STEPS calls in one VBlank or something other than rand wrote
+            -- the state; either way the running total is no longer exact.
+            incomplete = true
+            out('seed unresolved vblank=%d from=0x%08x to=0x%08x (not reached within %d steps)',
+                vblanks, lastSeed, seed, MAX_STEPS)
         else
             totalCalls = totalCalls + n
             events = events + 1
@@ -76,7 +82,8 @@ KEEP_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
 
     if vblanks % 600 == 0 then out('heartbeat vblank=%d total_rand=%d', vblanks, totalCalls) end
     if vblanks >= MAX_VBLANKS then
-        out('done vblanks=%d total_rand=%d initial_seed_seen=0x%08x', vblanks, totalCalls, INITIAL)
+        out('done vblanks=%d total_rand=%d%s initial_seed_seen=0x%08x', vblanks, totalCalls,
+            incomplete and ' (incomplete)' or '', INITIAL)
         PCSX.quit(0)
     end
 end)
