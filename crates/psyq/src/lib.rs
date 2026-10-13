@@ -6,11 +6,15 @@
 
 pub mod bios;
 pub mod globals;
+pub mod gpu;
 pub mod gte;
 pub mod libapi;
 pub mod libc;
 pub mod libcd;
+pub mod libetc;
+pub mod libgpu;
 pub mod libgs;
+pub mod libmcrd;
 pub mod libsnd;
 pub mod libspu;
 pub mod memory;

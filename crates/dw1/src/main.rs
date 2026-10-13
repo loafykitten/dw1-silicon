@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 
+mod headless;
+
 /// The disc's `.cue`: `DW1_DISC`, else `<workspace>/disc/Digimon World (USA).cue`.
 fn disc_path() -> PathBuf {
     std::env::var_os("DW1_DISC")
@@ -38,6 +40,7 @@ fn main() {
             std::process::exit(1);
         }
     }
+    psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
     // The game's main() never returns on the PS1.
     let status = unsafe { decomp_c::dw1_game_main() };
     eprintln!("dw1: the game's main() returned {status}");

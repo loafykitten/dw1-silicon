@@ -6,7 +6,40 @@
 use backend::gte::{ExecStatus, Gte};
 use std::sync::{LazyLock, Mutex};
 
-static GTE: LazyLock<Mutex<Gte>> = LazyLock::new(|| Mutex::new(Gte::new()));
+static GTE: LazyLock<Mutex<Gte>> = LazyLock::new(|| Mutex::new(at_game_start()));
+
+/// GTE control registers when the game's `main()` starts: what the retail BIOS (SCPH-1001,
+/// Ember's dump) leaves after drawing its boot logo [obs: PCSX-Redux, `p2-init` capture at
+/// the game's first call, 2026-10-13]. The game inherits them, so the native GTE starts there.
+const CONTROL_AT_GAME_START: [u32; 32] = [
+    0x00000FFB, 0xFFB7FF44, 0xF9CA0EBC, 0x063700AD, 0x00000EB7, 0x00000000, 0xFFFFFEAC, 0x00001700,
+    0x00000000, 0x00000FA0, 0x0000F060, 0x0000F060, 0x00000000, 0x00000640, 0x00000640, 0x00000640,
+    0x0BB80FA0, 0x0FA00FA0, 0x0FA00BB8, 0x0BB80FA0, 0x00000FA0, 0x00000000, 0x00000000, 0x00000000,
+    0x01400000, 0x00F00000, 0x00000400, 0xFFFFF9E9, 0x01400000, 0x00000155, 0x00000100, 0x00600000,
+];
+
+/// GTE data registers at the same moment [obs]. Registers 15 (SXYP, a mirror of SXY2) and
+/// 28..31 (IRGB/ORGB/LZCS/LZCR, views of other registers) aren't restored: writing them has
+/// side effects, and the emulator's array doesn't hold their hardware view.
+const DATA_AT_GAME_START: [u32; 28] = [
+    0x00000B50, 0x00000B50, 0xFDABFF8D, 0x0000FE51, 0xFDAB000A, 0x0000FDD4, 0x200808FF, 0x00000509,
+    0x000000A4, 0x0000104A, 0x00000082, 0x00000082, 0x0041012D, 0x0063012D, 0x00690146, 0x00000000,
+    0x00001441, 0x00001441, 0x00001486, 0x00001419, 0x200808FF, 0x200808FF, 0x200808FF, 0x00000000,
+    0xFFFFFCAE, 0x0000104A, 0x00000082, 0x00000082,
+];
+
+fn at_game_start() -> Gte {
+    let mut gte = Gte::new();
+    for (reg, &value) in CONTROL_AT_GAME_START.iter().enumerate() {
+        gte.ctc2(reg, value);
+    }
+    for (reg, &value) in DATA_AT_GAME_START.iter().enumerate() {
+        if reg != 15 {
+            gte.mtc2(reg, value);
+        }
+    }
+    gte
+}
 
 /// Runs `f` on the game's GTE. The game is single-threaded; the lock only keeps this sound.
 pub fn with<R>(f: impl FnOnce(&mut Gte) -> R) -> R {

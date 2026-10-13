@@ -19,10 +19,13 @@ impl Matrix {
     };
 }
 
-// libgs. The API reference calls GsIDMATRIX the unit matrix; the other two are set by the
-// view and light calls (GsSetRefView2, GsSetFlatLight...) before use.
+// libgs. GsIDMATRIX, the unit matrix, is set by GsInitGraph [obs: zero until then]; the other
+// two by the view and light calls (GsSetRefView2, GsSetFlatLight...) before use.
 #[unsafe(no_mangle)]
-pub static mut GsIDMATRIX: Matrix = Matrix::IDENTITY;
+pub static mut GsIDMATRIX: Matrix = Matrix {
+    m: [[0; 3]; 3],
+    t: [0; 3],
+};
 #[unsafe(no_mangle)]
 pub static mut GsWSMATRIX: Matrix = Matrix {
     m: [[0; 3]; 3],

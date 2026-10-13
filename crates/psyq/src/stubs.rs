@@ -10,16 +10,8 @@ use crate::trap::stubs;
 // libc: process exit (returns to the BIOS on the PS1). Renamed `dw1_exit` by dw1_native.h.
 stubs! { dw1_exit }
 
-// libetc: callbacks, VSync, pad.
-stubs! { ResetCallback VSync PadInit PadRead }
-
 // libgpu
-stubs! {
-    AddPrim ClearImage DrawSync GetClut GetTPage LoadClut LoadImage MoveImage OpenTIM
-    PutDispEnv PutDrawEnv ReadTIM ResetGraph SetDefDispEnv SetDispMask SetDrawLoad
-    SetDrawOffset SetGraphDebug SetLineF2 SetLineF3 SetLineF4 SetPolyF4 SetPolyFT3 SetPolyFT4
-    SetPolyG4 SetPolyGT4 SetSemiTrans StoreImage
-}
+stubs! { LoadClut OpenTIM ReadTIM SetDrawLoad }
 
 // libgte
 stubs! {
@@ -30,14 +22,14 @@ stubs! {
     rcos rsin
 }
 
-// libgs (data globals are in `libgs`).
+// libgs (its data globals are in `globals`).
 stubs! {
-    GsClearOt GsDefDispBuff GsDrawOt GsGetActiveBuff GsGetLs GsGetLw GsGetLws GsGetTimInfo
-    GsGetWorkBase GsInit3D GsInitCoordinate2 GsInitGraph GsLinkObject4 GsMapModelingData
+    GsGetLs GsGetLw GsGetLws GsGetTimInfo
+    GsInitCoordinate2 GsLinkObject4 GsMapModelingData
     GsMulCoord0 GsMulCoord3 GsSetAmbient GsSetFlatLight GsSetLightMatrix GsSetLightMode
-    GsSetLsMatrix GsSetNearClip GsSetOrign GsSetProjection GsSetRefView2 GsSetView2
-    GsSetWorkBase GsSortBoxFill GsSortClear GsSortFastSprite GsSortObject4J GsSortOt
-    GsSortPoly GsSortSprite GsSwapDispBuff
+    GsSetLsMatrix GsSetNearClip GsSetProjection GsSetRefView2 GsSetView2
+    GsSortBoxFill GsSortFastSprite GsSortObject4J GsSortOt
+    GsSortPoly GsSortSprite
 }
 
 // libgs: the TMD primitive handlers GsSortObject4J dispatches to through GsFCALL4.
@@ -61,5 +53,5 @@ stubs! { DecDCTin DecDCTout DecDCToutCallback DecDCTReset DecDCTvlc2 DecDCTvlcBu
 // libmcrd
 stubs! {
     MemCardAccept MemCardCreateFile MemCardDeleteFile MemCardExist MemCardFormat
-    MemCardGetDirentry MemCardInit MemCardReadFile MemCardStart MemCardSync MemCardWriteFile
+    MemCardGetDirentry MemCardReadFile MemCardSync MemCardWriteFile
 }

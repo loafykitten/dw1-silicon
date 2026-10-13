@@ -9,7 +9,9 @@ use psyq as _;
     non_camel_case_types,
     non_snake_case,
     non_upper_case_globals,
-    dead_code
+    dead_code,
+    clippy::all,
+    clippy::pedantic
 )]
 pub mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
@@ -42,6 +44,34 @@ const _: () = {
 
 /// The SDK globals psyq defines in Rust have the layout the C headers declare.
 const _: () = {
+    // libgpu/libgs structs psyq reads and writes.
+    assert!(size_of::<psyq::libgpu::Rect>() == size_of::<bindings::RECT>());
+    assert!(size_of::<psyq::libgpu::DrawEnv>() == size_of::<bindings::DRAWENV>());
+    assert!(
+        core::mem::offset_of!(psyq::libgpu::DrawEnv, dr_env)
+            == core::mem::offset_of!(bindings::DRAWENV, dr_env)
+    );
+    assert!(
+        core::mem::offset_of!(psyq::libgpu::DrawEnv, isbg)
+            == core::mem::offset_of!(bindings::DRAWENV, isbg)
+    );
+    assert!(size_of::<psyq::libgpu::DispEnv>() == size_of::<bindings::DISPENV>());
+    assert!(
+        core::mem::offset_of!(psyq::libgpu::DispEnv, isrgb24)
+            == core::mem::offset_of!(bindings::DISPENV, isrgb24)
+    );
+    assert!(size_of::<psyq::libgpu::DrOffset>() == size_of::<bindings::DR_OFFSET>());
+    assert!(size_of::<psyq::libgs::GsOt>() == size_of::<bindings::GsOT>());
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsOt, org) == core::mem::offset_of!(bindings::GsOT, org)
+    );
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsOt, point)
+            == core::mem::offset_of!(bindings::GsOT, point)
+    );
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsOt, tag) == core::mem::offset_of!(bindings::GsOT, tag)
+    );
     assert!(size_of::<psyq::globals::Matrix>() == size_of::<bindings::MATRIX>());
     assert!(
         core::mem::offset_of!(psyq::globals::Matrix, t)
