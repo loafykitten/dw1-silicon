@@ -49,9 +49,3 @@ stubs! {
 
 // libpress: the MDEC.
 stubs! { DecDCTin DecDCTout DecDCToutCallback DecDCTReset DecDCTvlc2 DecDCTvlcBuild }
-
-// libmcrd
-stubs! {
-    MemCardAccept MemCardCreateFile MemCardDeleteFile MemCardExist MemCardFormat
-    MemCardGetDirentry MemCardReadFile MemCardSync MemCardWriteFile
-}

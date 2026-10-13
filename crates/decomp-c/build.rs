@@ -58,6 +58,7 @@ const BOUND_HEADERS: &[&str] = &[
     "libsnd.h",
     "libspu.h",
     "libcd.h",
+    "kernel.h",
     "dw/params.h",
 ];
 
@@ -385,6 +386,7 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("SpuVolume")
         .allowlist_type("CdlLOC")
         .allowlist_type("CdlFILE")
+        .allowlist_type("DIRENTRY")
         .use_core()
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
     for header in BOUND_HEADERS {
