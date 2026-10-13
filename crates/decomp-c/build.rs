@@ -57,6 +57,7 @@ const BOUND_HEADERS: &[&str] = &[
     "libgs.h",
     "libsnd.h",
     "libspu.h",
+    "libcd.h",
     "dw/params.h",
 ];
 
@@ -373,6 +374,8 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("VabHdr")
         .allowlist_type("SpuReverbAttr")
         .allowlist_type("SpuVolume")
+        .allowlist_type("CdlLOC")
+        .allowlist_type("CdlFILE")
         .use_core()
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
     for header in BOUND_HEADERS {

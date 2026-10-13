@@ -1,0 +1,11 @@
+[package]
+name = "pack"
+description = "Reads the game disc image (cue/bin, MODE2/2352) and its ISO9660 file system"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sha1_smol = "1"

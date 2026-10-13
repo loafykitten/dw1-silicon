@@ -9,5 +9,6 @@ publish.workspace = true
 
 [dependencies]
 backend = { path = "../backend" }
+pack = { path = "../pack" }
 
 [dev-dependencies]

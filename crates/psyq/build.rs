@@ -1,10 +1,15 @@
 //! Sets `cfg(have_libgs_capture)` when the S0.7 libgs captures (gitignored, local only) exist:
 //! `DW1_LIBGS_CAPTURE`, default `<workspace>/captures/oracle-runs/libgs-pin`. Without them
 //! `tests/libgs_capture.rs` shows as an ignored placeholder.
+//!
+//! Also sets `cfg(have_disc)` (with `DW1_TEST_DISC` and `DW1_TEST_FILES`) when Ember's disc and
+//! the files dumpsxiso extracted from it exist, for `tests/libcd_disc.rs`; see
+//! `crates/pack/build.rs`.
 
 use std::path::{Path, PathBuf};
 
 fn main() {
+    disc();
     println!("cargo::rustc-check-cfg=cfg(have_libgs_capture)");
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-env-changed=DW1_LIBGS_CAPTURE");
@@ -25,5 +30,27 @@ fn main() {
             "cargo::warning=libgs captures not found ({}): tests/libgs_capture.rs will be ignored",
             dir.display()
         );
+    }
+}
+
+fn disc() {
+    println!("cargo::rustc-check-cfg=cfg(have_disc)");
+    println!("cargo::rerun-if-env-changed=DW1_DISC");
+    println!("cargo::rerun-if-env-changed=DW1_DISC_FILES");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let cue = std::env::var_os("DW1_DISC")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("disc/Digimon World (USA).cue"));
+    let files = std::env::var_os("DW1_DISC_FILES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("decomp/disks/us"));
+    println!("cargo::rerun-if-changed={}", cue.display());
+    println!("cargo::rerun-if-changed={}", files.display());
+    if cue.exists() && files.is_dir() {
+        println!("cargo::rustc-cfg=have_disc");
+        println!("cargo::rustc-env=DW1_TEST_DISC={}", cue.display());
+        println!("cargo::rustc-env=DW1_TEST_FILES={}", files.display());
+    } else {
+        println!("cargo::warning=disc not found: tests/libcd_disc.rs will be ignored");
     }
 }

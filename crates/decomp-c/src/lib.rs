@@ -27,6 +27,19 @@ const _: () = {
     assert!(core::mem::offset_of!(bindings::MATRIX, t) == 20);
 };
 
+/// psyq's libcd structs have the layout of Psy-Q's `CdlLOC` and `CdlFILE`.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    assert!(size_of::<psyq::libcd::CdlLoc>() == size_of::<bindings::CdlLOC>());
+    assert!(size_of::<psyq::libcd::CdlLoc>() == 4);
+    assert!(size_of::<psyq::libcd::CdlFile>() == size_of::<bindings::CdlFILE>());
+    assert!(size_of::<psyq::libcd::CdlFile>() == 24);
+    assert!(offset_of!(psyq::libcd::CdlFile, size) == offset_of!(bindings::CdlFILE, size));
+    assert!(offset_of!(psyq::libcd::CdlFile, name) == offset_of!(bindings::CdlFILE, name));
+    assert!(offset_of!(psyq::libcd::CdlLoc, sector) == offset_of!(bindings::CdlLOC, sector));
+    assert!(offset_of!(psyq::libcd::CdlLoc, track) == offset_of!(bindings::CdlLOC, track));
+};
+
 /// The SDK globals psyq defines in Rust have the layout the C headers declare.
 const _: () = {
     assert!(size_of::<psyq::globals::Matrix>() == size_of::<bindings::MATRIX>());

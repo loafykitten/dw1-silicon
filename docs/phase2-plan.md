@@ -52,7 +52,7 @@ TMD map, the file queue, fonts, scripts, UI, clock...), `loadTIMFile` twice, the
    missing-return functions whose callers use the value.
 2. **Heap and the first init calls:** the allocator; `ResetCallback`, `SetGraphDebug`,
    `PadInit`, `SsInit` and other calls that only set state. Check: `dw1` gets past them.
-3. **Disc:** `pack` crate; libcd (`CdInit`, `CdSearchFile`, `CdRead`, `CdReadSync`,
+3. **Disc (done 2026-10-13, see git log):** `pack` crate; libcd (`CdInit`, `CdSearchFile`, `CdRead`, `CdReadSync`,
    `CdControl`/`CdControlB`, `CdIntToPos`/`CdPosToInt`) with completions on the clock. Check:
    files the game reads match the extracted files byte for byte.
 4. **GPU and libgs 2D:** VRAM transfers (`LoadImage`, `StoreImage`, `MoveImage`,
