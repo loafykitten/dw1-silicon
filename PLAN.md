@@ -52,6 +52,10 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     runs are identical. Real input replays and state dumps still to do.
 - **SDK rule set (Ember, 2026-10-13):** clean reimplementation of Sony's SDK (see Ground
   rules).
+  - **S0.7 planned:** `docs/s07-libgs-spike.md` (capture one `GsSortObject4J` call in the
+    emulator, reproduce its packets with a clean Rust libgs). A subagent is scripting the
+    emulator to the first gameplay frame (`oracle/route-new-game.lua`); headless screenshots
+    work (`oracle/raw2png.py`).
 - **Next:** the rest of S0.6,
   S0.7 (libgs/TMD spike), S0.8 (oracle), S0.9 (go / no-go).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
