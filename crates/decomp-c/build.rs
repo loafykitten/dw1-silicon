@@ -60,6 +60,7 @@ const BOUND_HEADERS: &[&str] = &[
     "libcd.h",
     "kernel.h",
     "dw/params.h",
+    "dw/model.h",
 ];
 
 fn main() {
@@ -381,6 +382,8 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("GsCOORDINATE2")
         .allowlist_type("GsIMAGE")
         .allowlist_type("GsRVIEW2")
+        .allowlist_type("TMD_STRUCT")
+        .allowlist_type("TMDModel")
         .allowlist_type("VabHdr")
         .allowlist_type("SpuReverbAttr")
         .allowlist_type("SpuVolume")

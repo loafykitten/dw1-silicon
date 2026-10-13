@@ -11,7 +11,8 @@ use psyq as _;
     non_upper_case_globals,
     dead_code,
     clippy::all,
-    clippy::pedantic
+    clippy::pedantic,
+    unsafe_op_in_unsafe_fn
 )]
 pub mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
@@ -26,6 +27,9 @@ const _: () = {
     assert!(size_of::<bindings::VECTOR>() == 16);
     assert!(size_of::<bindings::SVECTOR>() == 8);
     assert!(size_of::<bindings::MATRIX>() == 32);
+    // A TMD object record and the model header keep the file layout (native libgs.h).
+    assert!(size_of::<bindings::TMD_STRUCT>() == 28);
+    assert!(core::mem::offset_of!(bindings::TMDModel, obj) == 12);
     assert!(core::mem::offset_of!(bindings::MATRIX, t) == 20);
 };
 

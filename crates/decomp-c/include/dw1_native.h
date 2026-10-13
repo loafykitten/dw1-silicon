@@ -45,6 +45,14 @@
 extern uint8_t dw1_ps1_ram[];
 #define DW1_PS1_ADDR(type, addr) ((type)(dw1_ps1_ram + ((uint32_t)(addr) & 0x1FFFFFu)))
 
+/*
+ * A mapped TMD record's address field (DW1_TMD_ADDR in the decomp, dw/types.h; the field
+ * itself on the PS1): natively a 32-bit encoded pointer (crates/psyq/src/memory.rs, native
+ * libgs.h), decoded to a native one.
+ */
+void *dw1_ptr32_decode(uint32_t value);
+#define DW1_TMD_ADDR(field) dw1_ptr32_decode(field)
+
 /* BIOS A(2Fh)/A(30h), reached through the SDK's libc stubs on the PS1. */
 #define rand dw1_bios_rand
 #define srand dw1_bios_srand

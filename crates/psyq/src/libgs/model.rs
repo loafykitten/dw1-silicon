@@ -62,11 +62,45 @@ pub unsafe extern "C" fn GsMapModelingData(p: *mut u32) {
     }
 }
 
+/// The number of packet words after a TMD primitive's header, from its flag and mode bytes
+/// [doc: psx-spx "TMD", packet data for polygons: the command/colour word, texture
+/// coordinates, extra colours for gradation or unlit Gouraud, then vertex and normal indices as
+/// halfwords padded to a word; obs: lit textured polygons have no command/colour word, and with
+/// that the rule gives the stored input length of all 82,359 primitives in the disc's TMDs].
+/// None for lines and sprites, which DW1's models don't use.
+pub fn primitive_words(flag: u8, mode: u8) -> Option<usize> {
+    if mode >> 5 != 1 {
+        return None;
+    }
+    let quad = mode & 0x08 != 0;
+    let textured = mode & 0x04 != 0;
+    let gouraud = mode & 0x10 != 0;
+    let lit = flag & 0x01 == 0;
+    let gradation = flag & 0x04 != 0;
+    let n = if quad { 4 } else { 3 };
+    let mut words = usize::from(!(lit && textured));
+    if textured {
+        words += n;
+    }
+    if gradation {
+        words += n - 1;
+    }
+    let mut halves = n;
+    if lit {
+        halves += if gouraud { n } else { 1 };
+    } else if gouraud && !gradation {
+        words += n - 1;
+    }
+    Some(words + halves.div_ceil(2))
+}
+
 /// `GsLinkObject4(tmd_base, objp, n)`: points `objp` at object `n` of the mapped TMD whose
 /// object table is at `tmd_base` [doc], and groups that object's primitives for
 /// `GsSortObject4J`: in the first primitive of each run with the same flag and mode bytes, the
 /// low halfword (olen, ilen) becomes the run's length [obs: the medal's 22 lit GT4 primitives
-/// gave 0x3C00080C -> 0x3C000016; the poop model's 1 + 8 gave two runs].
+/// gave 0x3C00080C -> 0x3C000016; the poop model's 1 + 8 gave two runs]. Primitive sizes come
+/// from their type ([`primitive_words`]), not the overwritten input length, so linking the
+/// same object again (the game does, every draw) finds the same runs.
 ///
 /// The game C calls this through the native `libgs.h`, which passes `tmd_base` at pointer
 /// width (`dw1_GsLinkObject4`; the PS1 prototype takes `unsigned long`).
@@ -85,8 +119,12 @@ pub unsafe extern "C" fn dw1_GsLinkObject4(tmd_base: usize, objp: *mut GsDobj2, 
             let kind = first.read() & 0xFFFF_0000;
             let mut run = 0u32;
             while left > 0 && prim.read() & 0xFFFF_0000 == kind {
-                let ilen = ((prim.read() >> 8) & 0xFF) as usize;
-                prim = prim.add(1 + ilen);
+                let header = prim.read();
+                let (flag, mode) = ((header >> 16) as u8, (header >> 24) as u8);
+                let Some(words) = primitive_words(flag, mode) else {
+                    crate::trap::unimplemented("GsLinkObject4 on a TMD line or sprite primitive");
+                };
+                prim = prim.add(1 + words);
                 run += 1;
                 left -= 1;
             }
@@ -115,7 +153,19 @@ mod tests {
     use super::*;
 
     /// A TMD in the link window: flags, one object, then the object table and its data.
-    static mut TMD: [u32; 32] = [0; 32];
+    static mut TMD: [u32; 64] = [0; 64];
+
+    #[test]
+    fn primitive_sizes_follow_the_disc() {
+        // Input lengths seen on the disc (see primitive_words).
+        for (flag, mode, ilen) in [
+            (0, 0x20, 3), (0, 0x24, 5), (0, 0x28, 4), (0, 0x2C, 7), (0, 0x34, 6), (0, 0x38, 5),
+            (0, 0x3C, 8), (1, 0x25, 6), (1, 0x2D, 7), (1, 0x35, 8), (1, 0x3D, 10), (1, 0x3F, 10),
+        ] {
+            assert_eq!(primitive_words(flag, mode), Some(ilen), "flag {flag} mode {mode:#x}");
+        }
+        assert_eq!(primitive_words(0, 0x40), None);
+    }
 
     #[test]
     fn mapping_and_linking_follow_the_captures() {
@@ -129,12 +179,12 @@ mod tests {
             {
                 t.add(i).write(w);
             }
-            // Primitives at table + 0x50 = word 22: a 2-word GT4-ish run of two (ilen 1), then
-            // one of another kind.
+            // Primitives at table + 0x50: two lit textured Gouraud quads (mode 3C, 8 words
+            // each), then a lit textured Gouraud triangle (mode 36... 34 family, 6 words).
             let p = t.add(2 + 0x50 / 4);
-            p.write(0x3C00_0101);
-            p.add(2).write(0x3C00_0101);
-            p.add(4).write(0x3600_0101);
+            p.write(0x3C00_080C);
+            p.add(9).write(0x3C00_080C);
+            p.add(18).write(0x3600_0609);
             GsMapModelingData(t);
             assert_eq!(t.read(), 1);
             let table = t.add(2).cast::<u8>();
@@ -154,8 +204,13 @@ mod tests {
             dw1_GsLinkObject4(t.add(2) as usize, &mut obj, 0);
             assert_eq!(obj.tmd, t.add(2));
             assert_eq!(p.read(), 0x3C00_0002);
-            assert_eq!(p.add(2).read(), 0x3C00_0101);
-            assert_eq!(p.add(4).read(), 0x3600_0001);
+            assert_eq!(p.add(9).read(), 0x3C00_080C);
+            assert_eq!(p.add(18).read(), 0x3600_0001);
+            // Linking again finds the same runs.
+            dw1_GsLinkObject4(t.add(2) as usize, &mut obj, 0);
+            assert_eq!(p.read(), 0x3C00_0002);
+            assert_eq!(p.add(9).read(), 0x3C00_080C);
+            assert_eq!(p.add(18).read(), 0x3600_0001);
         }
     }
 }

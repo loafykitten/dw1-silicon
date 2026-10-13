@@ -461,8 +461,11 @@ impl Controller {
         self.start(now, MC_FUNC_EXIST, r)
     }
 
-    /// `MemCardAccept`: checks the card is usable. Result 1 no card, 3 new card (once), 4
-    /// unformatted, else 0 [obs: the game treats 3 like 0 and 4 as "unformatted"].
+    /// `MemCardAccept`: checks the card is usable. Result 1 no card, 4 unformatted, 3 new card
+    /// (once), else 0 [obs: the game treats 3 like 0 and 4 as "unformatted"]. An unformatted
+    /// card reports 4 even on its first accept, which also uses up the new-card state [guess:
+    /// otherwise `isMemcardUnformatted` (main_menu.c) takes the 3 for success and the menu
+    /// skips its format prompt; review finding, GPT 6 Astra].
     pub fn accept(&mut self, now: u32, chan: i32) -> bool {
         let Some(s) = Self::slot_of(chan) else {
             return false;
@@ -473,11 +476,14 @@ impl Controller {
         let slot = &mut self.slots[s];
         let r = match &slot.card {
             None => MC_ERR_CARD_NOT_EXIST,
+            Some(c) if !c.is_formatted() => {
+                slot.new_card = false;
+                MC_ERR_NOT_FORMAT
+            }
             Some(_) if slot.new_card => {
                 slot.new_card = false;
                 MC_ERR_NEW_CARD
             }
-            Some(c) if !c.is_formatted() => MC_ERR_NOT_FORMAT,
             Some(_) => MC_ERR_NONE,
         };
         self.start(now, MC_FUNC_ACCEPT, r)
@@ -974,9 +980,10 @@ mod tests {
         m.insert(0, None);
         assert!(m.exist(8, 0));
         assert_eq!(m.sync(8, true), SyncState::Done { cmd: 1, result: 1 });
+        // A newly inserted unformatted card says so on its first accept, and after.
         m.insert(0, Card::from_bytes(&[0; CARD_SIZE]));
         assert!(m.accept(9, 0));
-        m.sync(9, true);
+        assert_eq!(m.sync(9, true), SyncState::Done { cmd: 2, result: 4 });
         assert!(m.accept(9, 0));
         assert_eq!(m.sync(9, true), SyncState::Done { cmd: 2, result: 4 });
     }
