@@ -55,6 +55,8 @@ const BOUND_HEADERS: &[&str] = &[
     "libgte.h",
     "libgpu.h",
     "libgs.h",
+    "libsnd.h",
+    "libspu.h",
     "dw/params.h",
 ];
 
@@ -368,6 +370,9 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("VECTOR")
         .allowlist_type("SVECTOR")
         .allowlist_type("_GsFCALL")
+        .allowlist_type("VabHdr")
+        .allowlist_type("SpuReverbAttr")
+        .allowlist_type("SpuVolume")
         .use_core()
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
     for header in BOUND_HEADERS {

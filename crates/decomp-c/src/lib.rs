@@ -42,6 +42,33 @@ const _: () = {
     );
 };
 
+/// The libsnd/libspu structs psyq mirrors have the layout the C headers declare.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    assert!(size_of::<psyq::libsnd::VabHdr>() == size_of::<bindings::VabHdr>());
+    assert!(offset_of!(psyq::libsnd::VabHdr, ps) == offset_of!(bindings::VabHdr, ps));
+    assert!(offset_of!(psyq::libsnd::VabHdr, ts) == offset_of!(bindings::VabHdr, ts));
+    assert!(offset_of!(psyq::libsnd::VabHdr, vs) == offset_of!(bindings::VabHdr, vs));
+    assert!(offset_of!(psyq::libsnd::VabHdr, reserved1) == offset_of!(bindings::VabHdr, reserved1));
+    assert!(size_of::<psyq::libspu::SpuVolume>() == size_of::<bindings::SpuVolume>());
+    assert!(size_of::<psyq::libspu::SpuReverbAttr>() == size_of::<bindings::SpuReverbAttr>());
+    assert!(
+        offset_of!(psyq::libspu::SpuReverbAttr, mode) == offset_of!(bindings::SpuReverbAttr, mode)
+    );
+    assert!(
+        offset_of!(psyq::libspu::SpuReverbAttr, depth)
+            == offset_of!(bindings::SpuReverbAttr, depth)
+    );
+    assert!(
+        offset_of!(psyq::libspu::SpuReverbAttr, delay)
+            == offset_of!(bindings::SpuReverbAttr, delay)
+    );
+    assert!(
+        offset_of!(psyq::libspu::SpuReverbAttr, feedback)
+            == offset_of!(bindings::SpuReverbAttr, feedback)
+    );
+};
+
 unsafe extern "C" {
     // src/main/main.c: the game's main(), renamed by dw1_native.h.
     pub fn dw1_game_main() -> i32;

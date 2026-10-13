@@ -10,5 +10,7 @@ pub mod gte;
 pub mod libapi;
 pub mod libc;
 pub mod libgs;
+pub mod libsnd;
+pub mod libspu;
 mod stubs;
 mod trap;

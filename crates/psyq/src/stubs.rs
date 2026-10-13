@@ -58,19 +58,6 @@ stubs! {
 // libpress: the MDEC.
 stubs! { DecDCTin DecDCTout DecDCToutCallback DecDCTReset DecDCTvlc2 DecDCTvlcBuild }
 
-// libspu
-stubs! {
-    SpuClearReverbWorkArea SpuGetKeyStatus SpuSetReverb SpuSetReverbDepth
-    SpuSetReverbModeParam SpuSetReverbVoice
-}
-
-// libsnd
-stubs! {
-    SsEnd SsInit SsQuit SsSeqClose SsSeqOpen SsSeqPlay SsSeqSetVol SsSeqStop SsSetMVol
-    SsSetTableSize SsSetTickMode SsStart SsUtAllKeyOff SsUtAutoVol SsUtGetVBaddrInSB
-    SsUtKeyOffV SsUtKeyOnV SsVabClose SsVabOpenHeadSticky SsVabTransBody SsVabTransCompleted
-}
-
 // libmcrd
 stubs! {
     MemCardAccept MemCardCreateFile MemCardDeleteFile MemCardExist MemCardFormat
