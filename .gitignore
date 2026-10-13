@@ -36,3 +36,6 @@ tools/spikes/s06/*/target/
 
 # Local working notes (agents)
 scratchpad/
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/

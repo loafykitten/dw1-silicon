@@ -36,6 +36,15 @@
  */
 #define NULL ((void *)0)
 
+/*
+ * Fixed PS1 RAM addresses (the decomp's DW1_PS1_ADDR, dw/types.h): buffers like
+ * GENERAL_BUFFER at 0x80010000, assets inside overlay images, the overlays' load addresses.
+ * They point into a 2 MB stand-in for PS1 RAM (crates/psyq/src/memory.rs), at the same
+ * offset; still a constant expression, so static initializers keep working.
+ */
+extern uint8_t dw1_ps1_ram[];
+#define DW1_PS1_ADDR(type, addr) ((type)(dw1_ps1_ram + ((uint32_t)(addr) & 0x1FFFFFu)))
+
 /* BIOS A(2Fh)/A(30h), reached through the SDK's libc stubs on the PS1. */
 #define rand dw1_bios_rand
 #define srand dw1_bios_srand
