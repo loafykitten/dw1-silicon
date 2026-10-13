@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 struct Tone { phase: f32, calls: u32 }
 impl AudioCallback<i16> for Tone {
     fn callback(&mut self, stream: &mut AudioStream, requested: i32) {
-        let n = (requested as usize) / 4; // stereo s16 frames
+        let n = (requested as usize) / 2; // `requested` counts i16 samples; 2 per stereo frame
         self.calls += 1;
-        if self.calls <= 5 { println!("audio callback #{}: requested {} bytes = {} frames = {:.2} ms", self.calls, requested, n, n as f64 / 44.1); }
+        if self.calls <= 5 { println!("audio callback #{}: requested {} samples = {} frames = {:.2} ms", self.calls, requested, n, n as f64 / 44.1); }
         let mut buf = Vec::with_capacity(n * 2);
         for _ in 0..n {
             let s = (self.phase * std::f32::consts::TAU).sin() * 0.25 * i16::MAX as f32;
@@ -61,12 +61,26 @@ fn main() {
 
     // gamepads
     let gp = sdl.gamepad().unwrap();
-    let ids = gp.gamepads().unwrap_or_default();
-    println!("gamepads found at startup: {}", ids.len());
+    match gp.mappings() {
+        Ok(m) => {
+            let mut by: std::collections::BTreeMap<String, usize> = Default::default();
+            for x in &m { *by.entry(x.rsplit("platform:").next().unwrap_or("?").trim_end_matches(',').to_string()).or_default() += 1; }
+            println!("SDL mapping list for this platform: {} total; by platform tag (last 'platform:' field): {:?}", m.len(), by);
+        }
+        Err(e) => println!("mapping list error: {e}"),
+    }
+    let ids = match gp.gamepads() {
+        Ok(v) => { println!("gamepads found at startup: {}", v.len()); v }
+        Err(e) => { println!("gamepad enumeration ERROR: {e}"); vec![] }
+    };
     let mut open = Vec::new();
     for id in ids {
         if let Ok(g) = gp.open(id) {
-            println!("gamepad: {:?} type {:?} rumble-capable: {}", g.name(), g.r#type(), true);
+            let rumble = unsafe {
+                let props = sdl3::sys::gamepad::SDL_GetGamepadProperties(g.raw());
+                sdl3::sys::properties::SDL_GetBooleanProperty(props, sdl3::sys::gamepad::SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false)
+            };
+            println!("gamepad: {:?} type {:?} rumble-capable: {}", g.name(), g.r#type(), rumble);
             open.push(g);
         }
     }
@@ -79,6 +93,14 @@ fn main() {
         .expect("audio stream");
     stream.resume().unwrap();
     println!("audio stream opened: 44100 Hz stereo s16 (callback/pull model)");
+    if let Some(id) = stream.device_id() {
+        unsafe {
+            let mut spec = std::mem::zeroed();
+            let mut frames = 0;
+            let ok = sdl3::sys::audio::SDL_GetAudioDeviceFormat(id.id(), &mut spec, &mut frames);
+            println!("audio DEVICE format (ok={ok}): {} Hz, {} ch, format {:?}, device buffer {} frames = {:.2} ms", spec.freq, spec.channels, spec.format, frames, frames as f64 * 1000.0 / spec.freq.max(1) as f64);
+        }
+    }
     let audio_start = Instant::now();
 
     let mut pump = sdl.event_pump().unwrap();
@@ -103,8 +125,7 @@ fn main() {
                 _ => {}
             }
         }
-        gfx.frame(t0.elapsed().as_secs_f64());
-        pacing.tick();
+        if gfx.frame(t0.elapsed().as_secs_f64()) { pacing.tick(); } else { pacing.skipped += 1; }
         frames += 1;
         if frames == 20 { pacing.ivs.clear(); } // drop warm-up
         if pacing.ivs.len() >= 300 && !reported {

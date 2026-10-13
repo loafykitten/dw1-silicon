@@ -22,7 +22,7 @@ fn start_audio() -> Option<cpal::Stream> {
     if let Ok(cfgs) = device.supported_output_configs() {
         for c in cfgs { println!("audio supported: {:?}", c); }
     }
-    let config = cpal::StreamConfig { channels: 2, sample_rate: 44100, buffer_size: cpal::BufferSize::Default };
+    let config = cpal::StreamConfig { channels: 2, sample_rate: std::env::var("S06_RATE").ok().and_then(|v| v.parse().ok()).unwrap_or(44100), buffer_size: cpal::BufferSize::Default };
     let mut phase = 0f32;
     let stream = device
         .build_output_stream(
@@ -43,14 +43,19 @@ fn start_audio() -> Option<cpal::Stream> {
         .map_err(|e| println!("build_output_stream failed: {e}"))
         .ok()?;
     stream.play().ok()?;
+    if let Ok(c) = device.default_output_config() {
+        println!("device config AFTER opening our 44100 stream: {} Hz, buffer range {:?}", c.sample_rate(), c.buffer_size());
+    }
     println!("audio stream opened: 44100 Hz stereo s16 (callback/pull model, native 44100 requested directly)");
     Some(stream)
 }
 
 struct App {
     t0: Instant,
-    window: Option<Arc<Window>>,
+    // Field order matters: `gfx` holds a surface made from raw handles, so it must drop
+    // before `window`.
     gfx: Option<gfx::Gfx>,
+    window: Option<Arc<Window>>,
     pacing: gfx::Pacing,
     frames: u32,
     reported: bool,
@@ -89,7 +94,9 @@ impl ApplicationHandler for App {
         self.audio = start_audio();
         self.audio_start = Instant::now();
         if let Some(gl) = &self.gilrs {
-            println!("gamepads found at startup: {}", gl.gamepads().count());
+            let n = gl.gamepads().count();
+            println!("gamepads found at startup: {}", n);
+            for (_, g) in gl.gamepads() { println!("gamepad {:?}: ff supported {}", g.name(), g.is_ff_supported()); }
         }
         self.window.as_ref().unwrap().request_redraw();
     }
@@ -107,8 +114,8 @@ impl ApplicationHandler for App {
                 if let Some(gl) = &mut self.gilrs {
                     while let Some(e) = gl.next_event() { println!("gamepad event: {:?}", e); }
                 }
-                if let Some(g) = &mut self.gfx { g.frame(self.t0.elapsed().as_secs_f64()); }
-                self.pacing.tick();
+                let ok = self.gfx.as_mut().map(|g| g.frame(self.t0.elapsed().as_secs_f64())).unwrap_or(false);
+                if ok { self.pacing.tick(); } else { self.pacing.skipped += 1; }
                 self.frames += 1;
                 if self.frames == 20 { self.pacing.ivs.clear(); }
                 if self.pacing.ivs.len() >= 300 && !self.reported {

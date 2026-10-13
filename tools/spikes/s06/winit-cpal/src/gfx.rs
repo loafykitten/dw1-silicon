@@ -65,10 +65,11 @@ impl Gfx {
         }
     }
 
-    pub fn frame(&mut self, t: f64) {
+    /// Returns true if a frame was acquired, drawn and presented.
+    pub fn frame(&mut self, t: f64) -> bool {
         let tex = match self.surface.get_current_texture() {
             CurrentSurfaceTexture::Success(t) | CurrentSurfaceTexture::Suboptimal(t) => t,
-            _ => return,
+            _ => return false,
         };
         let view = tex.texture.create_view(&Default::default());
         let mut enc = self.device.create_command_encoder(&Default::default());
@@ -92,13 +93,14 @@ impl Gfx {
         }
         self.queue.submit([enc.finish()]);
         self.queue.present(tex);
+        true
     }
 }
 
 /// Present-interval statistics in ms.
-pub struct Pacing { last: Option<std::time::Instant>, pub ivs: Vec<f64> }
+pub struct Pacing { last: Option<std::time::Instant>, pub ivs: Vec<f64>, pub skipped: u32 }
 impl Pacing {
-    pub fn new() -> Self { Pacing { last: None, ivs: vec![] } }
+    pub fn new() -> Self { Pacing { last: None, ivs: vec![], skipped: 0 } }
     pub fn tick(&mut self) {
         let now = std::time::Instant::now();
         if let Some(l) = self.last { self.ivs.push((now - l).as_secs_f64() * 1000.0); }
@@ -110,6 +112,6 @@ impl Pacing {
         let sd = (self.ivs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n).sqrt();
         let mx = self.ivs.iter().cloned().fold(0.0, f64::max);
         let mn = self.ivs.iter().cloned().fold(f64::MAX, f64::min);
-        format!("present interval over {} frames: mean {:.3} ms ({:.2} Hz), stddev {:.3} ms, min {:.3}, max {:.3}", self.ivs.len(), mean, 1000.0 / mean, sd, mn, mx)
+        format!("CPU-side present-return interval over {} successful presents ({} skipped acquisitions): mean {:.3} ms ({:.2} Hz), stddev {:.3} ms, min {:.3}, max {:.3}", self.ivs.len(), self.skipped, mean, 1000.0 / mean, sd, mn, mx)
     }
 }
