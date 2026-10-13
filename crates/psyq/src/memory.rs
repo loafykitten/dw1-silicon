@@ -107,7 +107,6 @@ pub extern "C" fn dw1_gpu_unlink(link: u32) -> *mut u32 {
     ptr_of_link(link)
 }
 
-
 // ---- 32-bit pointers inside loaded data ----
 //
 // Some PS1 data holds addresses in 32-bit fields: libgs maps a TMD file in place, replacing

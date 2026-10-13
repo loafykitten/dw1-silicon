@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 mod headless;
 mod replay;
+mod window;
 
 /// The disc's `.cue`: `DW1_DISC`, else `<workspace>/disc/Digimon World (USA).cue`.
 fn disc_path() -> PathBuf {
@@ -59,7 +60,21 @@ fn main() {
             }
         }
     }
-    psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
+    // Headless for the emulator-comparison runs (and `DW1_HEADLESS=1`); the window otherwise.
+    let headless = ["DW1_HEADLESS", "DW1_REPLAY", "DW1_SHOTS", "DW1_STOP_AT"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"));
+    if headless {
+        psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
+    } else {
+        match window::Window::new() {
+            Ok(w) => psyq::libetc::set_host(Box::new(w)),
+            Err(e) => {
+                eprintln!("dw1: cannot open the window: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
     // The game's main() never returns on the PS1.
     let status = unsafe { decomp_c::dw1_game_main() };
     eprintln!("dw1: the game's main() returned {status}");

@@ -13,3 +13,4 @@ decomp-c = { path = "../decomp-c" }
 pack = { path = "../pack" }
 png = "0.17"
 psyq = { path = "../psyq" }
+sdl3 = { version = "0.20.0", default-features = false, features = ["build-from-source-static", "unsafe_textures"] }
