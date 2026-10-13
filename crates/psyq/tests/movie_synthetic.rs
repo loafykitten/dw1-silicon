@@ -53,7 +53,7 @@ impl Host for Recorder {
     fn vblank(&mut self, vblank: u32) {
         self.0.lock().unwrap().push(vblank);
     }
-    fn pad(&mut self) -> u32 {
+    fn pad(&mut self, _caller: usize) -> u32 {
         0
     }
 }
