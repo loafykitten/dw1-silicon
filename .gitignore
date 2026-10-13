@@ -33,3 +33,6 @@ ref/
 
 # S0.6 spikes
 tools/spikes/s06/*/target/
+
+# Local working notes (agents)
+scratchpad/
