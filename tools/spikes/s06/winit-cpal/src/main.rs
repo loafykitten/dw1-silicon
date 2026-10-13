@@ -22,17 +22,18 @@ fn start_audio() -> Option<cpal::Stream> {
     if let Ok(cfgs) = device.supported_output_configs() {
         for c in cfgs { println!("audio supported: {:?}", c); }
     }
-    let config = cpal::StreamConfig { channels: 2, sample_rate: std::env::var("S06_RATE").ok().and_then(|v| v.parse().ok()).unwrap_or(44100), buffer_size: cpal::BufferSize::Default };
+    let rate: u32 = std::env::var("S06_RATE").ok().and_then(|v| v.parse().ok()).unwrap_or(44100);
+    let config = cpal::StreamConfig { channels: 2, sample_rate: rate, buffer_size: cpal::BufferSize::Default };
     let mut phase = 0f32;
     let stream = device
         .build_output_stream(
             config,
             move |data: &mut [i16], _| {
                 let n = CALLS.fetch_add(1, Ordering::Relaxed);
-                if n < 5 { println!("audio callback #{}: {} frames = {:.2} ms", n + 1, data.len() / 2, (data.len() / 2) as f64 / 44.1); }
+                if n < 5 { println!("audio callback #{}: {} frames = {:.2} ms", n + 1, data.len() / 2, (data.len() / 2) as f64 * 1000.0 / rate as f64); }
                 for f in data.chunks_mut(2) {
                     let s = (phase * std::f32::consts::TAU).sin() * 0.25 * i16::MAX as f32;
-                    phase = (phase + 440.0 / 44100.0).fract();
+                    phase = (phase + 440.0 / rate as f32).fract();
                     f[0] = s as i16;
                     f[1] = s as i16;
                 }
@@ -44,9 +45,9 @@ fn start_audio() -> Option<cpal::Stream> {
         .ok()?;
     stream.play().ok()?;
     if let Ok(c) = device.default_output_config() {
-        println!("device config AFTER opening our 44100 stream: {} Hz, buffer range {:?}", c.sample_rate(), c.buffer_size());
+        println!("device config AFTER opening our {} Hz stream: {} Hz, buffer range {:?}", rate, c.sample_rate(), c.buffer_size());
     }
-    println!("audio stream opened: 44100 Hz stereo s16 (callback/pull model, native 44100 requested directly)");
+    println!("audio stream opened: {} Hz stereo s16 (callback/pull model, rate requested directly)", rate);
     Some(stream)
 }
 

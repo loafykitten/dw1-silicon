@@ -91,8 +91,10 @@ pads more reliably because it is the reference consumer of that database. For DW
 pad, optional sticks, no rumble in the original) both are adequate on paper.
 
 Audio model. SDL3 offers a pull callback and a push `put_data` on a stream, with format and
-rate conversion included. cpal gives a raw pull callback at the device's rate and format,
-and any conversion is ours. For 44.1 kHz SPU output a ring buffer drained by the callback
+rate conversion included. cpal gives a raw pull callback. It sets the device to the
+requested rate when the device supports it and doesn't resample, so an unsupported rate means
+resampling ourselves; CoreAudio still converts between the callback's sample format and the
+hardware's. For 44.1 kHz SPU output a ring buffer drained by the callback
 works with either. SDL's buffer-size hint (`SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES`) and cpal's
 `BufferSize::Fixed` are requests, not guarantees; steady latency has to be checked on
 hardware after choosing one. Note that cpal changes the device's nominal sample rate
