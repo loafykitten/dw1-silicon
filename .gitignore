@@ -9,6 +9,8 @@ captures/
 *.img
 *.mcd
 *.pak
+# Ember's PS1 BIOS dump (repo root), for the oracle
+scph*.bin
 
 # Build output
 build/

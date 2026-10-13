@@ -41,7 +41,10 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   S0.7 (libgs/TMD spike), S0.8 (oracle), S0.9 (go / no-go).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
-  known-good redump of SLUS-01032, checked 2026-10-13); reference clones `ref/dw_decomp`
+  known-good redump of SLUS-01032, checked 2026-10-13); Ember's PS1 BIOS dump
+  `scph1001.bin` in the repo root (512 KB, SHA-1 `649895efd79d14790eabb362e94eb0622093dfb9`,
+  MD5 `dc2b9bf8da62ec93e868cfd29f0d067d`; kernel date 1994-09-22; exact revision to be read
+  from PCSX-Redux at first boot, S0.8), the oracle's retail BIOS; reference clones `ref/dw_decomp`
   (09c174c), `ref/DW2-PC` (2d491b5), `ref/pcsx-redux` (5811e22).
 
 ## Goal
@@ -516,3 +519,5 @@ None right now. Add them here as they come up.
   README section). Code adapted from DW2-PC notes its CC0 origin; don't copy code from
   GPL projects (PCSX-Redux, mkpsxiso) into this repo.
 - 2026-10-13: Claude commits and pushes as needed, at its discretion.
+- 2026-10-13: Ember supplied a retail BIOS dump (`scph1001.bin`, repo root, gitignored) for
+  the oracle.
