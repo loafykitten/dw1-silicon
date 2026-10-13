@@ -40,8 +40,12 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     `psyq::bios`; its initial seed is to be measured in S0.8 with the retail BIOS.
     **GTE ported** (`crates/backend`, `gte` module): DW2-PC's hardware model in Rust,
     matching all 1,248 PCSX-Redux reference cases (13 command variants), plus RTPT (depth cue
-    for V2 only, as PCSX-Redux). Remaining in S0.6: GPU rasterizer, SPU/XA/MDEC decoders
-    (re-deriving their tables from psx-spx), SDL3-rs vs winit/cpal.
+    for V2 only, as PCSX-Redux). **GPU** (`gpu`, DW2-PC's 1x software rasterizer;
+    `docs/backend-gpu.md` lists its differences from hardware to check in Redux) and **XA,
+    MDEC, SPU** (`xa`, `mdec`, `spu`; every constant table re-derived from psx-spx or MPEG-1,
+    none copied) ported, each bit-exact against DW2-PC's C on random inputs (test-only crates
+    `gpu-diff`, `decoder-diff`, ignored without `ref/DW2-PC`). Remaining in S0.6: SDL3-rs vs
+    winit/cpal.
   - **S0.8 first slice done:** `docs/s08-oracle.md`, `oracle/probe-boot.lua`. Headless
     PCSX-Redux (`-cli -interpreter`) boots Ember's disc on Ember's retail BIOS; the BIOS
     `rand` state (RAM 0x9010) is 0 at boot and `psyq::bios` matches the emulator; two fresh

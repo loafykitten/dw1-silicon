@@ -1,0 +1,14 @@
+[package]
+name = "decoder-diff"
+description = "Test-only: differential tests of backend::{xa, mdec, spu} against DW2-PC's xadec.c, mdec.c and psxspu.c"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+backend = { path = "../backend" }
+
+[build-dependencies]
+cc = "1"
