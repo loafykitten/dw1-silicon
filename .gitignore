@@ -30,3 +30,6 @@ ref/
 
 # Synthetic test data that is not from any disc (docs/provenance.md): allowed despite *.bin
 !crates/backend/tests/data/gte_ref.bin
+
+# S0.6 spikes
+tools/spikes/s06/*/target/

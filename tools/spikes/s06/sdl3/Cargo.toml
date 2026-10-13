@@ -1,0 +1,17 @@
+[package]
+name = "s06-sdl3"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+# default: link Homebrew's libSDL3 dynamically. Alternative: --features static
+default = ["sdl3/use-pkg-config"]
+static = ["sdl3/build-from-source-static"]
+
+[dependencies]
+sdl3 = { version = "0.20.0", default-features = false, features = ["raw-window-handle"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["metal", "wgsl", "std"] }
+pollster = "0.4"

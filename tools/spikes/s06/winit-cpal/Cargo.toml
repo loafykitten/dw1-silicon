@@ -1,0 +1,14 @@
+[package]
+name = "s06-winit-cpal"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+winit = "0.30.13"
+cpal = "0.18.2"
+gilrs = "0.11.2"
+wgpu = { version = "30.0.1", default-features = false, features = ["metal", "wgsl", "std"] }
+pollster = "0.4"
