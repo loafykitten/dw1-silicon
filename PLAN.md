@@ -2,45 +2,41 @@
 
 Handoff plan, written 2026-10-13 for whichever agent continues this work, and revised the
 same day after an adversarial review by GPT 6 Astra (high) (`docs/plan-review-1.md`). Read it
-whole before starting, and don't re-ask Fenn (Ember) anything answered here. Keep the
+whole before starting, and don't re-ask Ember anything answered here. Keep the
 "Where things stand" section current at the end of every session: it is the handoff.
 
 ## Where things stand (2026-10-13, session 2): start here
 
-- **Done:** the plan was reviewed adversarially (Astra, 19 findings, three blockers; Claude
-  checked a sample against the code and all held) and revised: this file. S0.4's core
-  question was measured early (see S0.4): arm64 macOS can't map below 4 GB, so DW2-PC's
-  low-memory trick doesn't carry over; a fixed window at 0x1_8000_0000 does map.
-- **Direction set (Fenn, 2026-10-13):** a full Rust rewrite is the endgame, reached through
-  a hybrid (decomp C game + Rust for everything new, then module-by-module migration with
+- **Repo:** public at `github.com/loafykitten/dw1-silicon`, branch `phase0` (the only branch
+  so far; `main` comes later by merge). Claude commits and pushes at its discretion.
+- **Plan:** reviewed adversarially (Astra, 19 findings, three blockers; a sample checked
+  against the code, all held; `docs/plan-review-1.md`) and revised: this file.
+- **Direction (Ember, 2026-10-13):** a full Rust rewrite is the endgame, reached through a
+  hybrid (decomp C game + Rust for everything new, then module-by-module migration with
   side-by-side checks); not Bevy. Goal, Architecture, S0.6 and Phase 10 say how.
-- **Reference clones** (gitignored, read-only, for surveys and reviews): `ref/dw_decomp`
-  (09c174c, 2026-10-10) and `ref/DW2-PC` (2d491b5, 2026-10-12).
-- **Fenn's disc is in `disc/`** (gitignored): `Digimon World (USA).bin` + `.cue` (one track,
-  MODE2/2352, raw sectors), and the original `.7z`. The `.bin`'s SHA-1 is
-  `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the known-good redump of SLUS-01032
-  (checked 2026-10-13).
-- **S0.1 done** except the first commit (waits for Fenn): `git init` on branch `phase0`
-  (no commits), tools installed and recorded in `docs/toolchain.md`: Homebrew cmake,
-  ninja, SDL3, GNU make (`gmake`), MIPS binutils; `.venv/` with the decomp's Python
-  requirements; dumpsxiso 2.20 in `~/.local/bin`; PCSX-Redux built from source at
-  5811e22 in `ref/pcsx-redux`; the decomp's dev container `dw-build` (linux/amd64, for
-  `mipsel-linux-gnu-gcc`) under OrbStack.
-- **S0.5 done:** `docs/survey.md` (summary and what it changes) and `docs/survey/` (the
-  three full gpt-6.1-sol reports with every file:line list). Headlines: the PS1 library
-  layer is mostly new work (DW2-PC covers about a third of the 175 SDK functions DW1
-  calls, little of libgs); the effect interpreter's 32-bit pointer tricks need mechanical
-  widening, not an address trick; the save has no pointers; no overlay name clashes.
-- **Decomp imported:** Fenn created the fork `loafykitten/dw_decomp`; it's the `decomp/`
-  submodule (09c174c) with only `external/psyq_headers` initialized, and local branch
-  `dw1-native` (not pushed). The disc is extracted to the gitignored `decomp/disks/us/`.
-  `README.md` has the credits; license MIT OR Apache-2.0.
-- **S0.3 done:** the decomp's GCC build passes in the `dw-build` container
-  (`docs/s03-decomp-gcc-build.md`); generated SDK assembly is now in the gitignored
-  `decomp/asm/us/`.
-- **S0.2 running:** gpt-6.1-sol inventory of DW2-PC's provenance (session scratchpad).
-- **Next:** S0.4's write-up (`docs/memory.md`, using the survey's counts),
-  S0.2 (DW2-PC provenance), S0.6 (Rust skeleton), S0.8 (oracle).
+- **Phase 0 so far:**
+  - **S0.1 done:** tools in `docs/toolchain.md` (Homebrew cmake, ninja, SDL3, `gmake`, MIPS
+    binutils; `.venv/` with the decomp's Python requirements; dumpsxiso 2.20 in
+    `~/.local/bin`; PCSX-Redux built from source at 5811e22 in `ref/pcsx-redux`; the
+    decomp's container `dw-build`, linux/amd64 under OrbStack; Rust 1.99).
+  - **S0.2 running:** gpt-6.1-sol inventory of DW2-PC's provenance (session scratchpad;
+    rerun from the S0.2 brief if lost).
+  - **S0.3 done:** dw_decomp is the `decomp/` submodule (Ember's fork
+    `loafykitten/dw_decomp`, 09c174c, only `external/psyq_headers` initialized, local
+    branch `dw1-native` not pushed); the disc is extracted to the gitignored
+    `decomp/disks/us/`; the GCC build passes (`docs/s03-decomp-gcc-build.md`).
+  - **S0.4 done:** `docs/memory.md`. Below 4 GB is impossible on arm64 macOS; design per
+    kind of reference; a fixed window at 0x1_8000_0000 is a measured fallback.
+  - **S0.5 done:** `docs/survey.md` and `docs/survey/`. The PS1 library layer is mostly new
+    work (DW2-PC covers about a third of DW1's 175 SDK functions, little of libgs); the
+    effect interpreter's 32-bit pointer tricks need widening; the save has no pointers;
+    no overlay name clashes.
+- **Next:** S0.2's write-up (`docs/provenance.md`), S0.6 (Rust skeleton + DW2-PC pieces),
+  S0.7 (libgs/TMD spike), S0.8 (oracle), S0.9 (go / no-go).
+- **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
+  MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
+  known-good redump of SLUS-01032, checked 2026-10-13); reference clones `ref/dw_decomp`
+  (09c174c), `ref/DW2-PC` (2d491b5), `ref/pcsx-redux` (5811e22).
 
 ## Goal
 
@@ -51,7 +47,7 @@ How it looks and plays may improve (resolution, no wobble, gamepads, saves as fi
 widescreen if it proves feasible), and every improvement is an option that says whether
 it's original or an addition, with the original picture available at 1x.
 
-**Endgame: the whole game in Rust** (Fenn, 2026-10-13), one uniform codebase that's easy to
+**Endgame: the whole game in Rust** (Ember, 2026-10-13), one uniform codebase that's easy to
 maintain and to mod (e.g. new digivolutions). We get there in stages, never by rewriting
 blind:
 1. **Hybrid:** the decomp's C runs the game unchanged in meaning; everything new (the PS1
@@ -69,7 +65,7 @@ GPU, not an ECS game; rendering is `wgpu` on Metal.
 
 ## Ground rules
 
-- **The repo is public** (Fenn, 2026-10-13): `loafykitten/dw1-silicon` on GitHub, like
+- **The repo is public** (Ember, 2026-10-13): `loafykitten/dw1-silicon` on GitHub, like
   pf-wotr-silicon. Everything committed must be safe to publish: the port reads all game
   data from a pack built on the player's machine from their own disc, checked against a
   manifest of hashes (DW2-PC's design). Never commit or upload anything from the disc,
@@ -86,12 +82,12 @@ GPU, not an ECS game; rendering is `wgpu` on Metal.
   (`host/overlay.c`, `psyq/snd_hw.c`, `configs/USA/include_bin.txt`) and third-party
   components with their own licenses. Nothing from either tree enters this repo except
   through S0.2's import allowlist. Keep the licenses and credit both projects.
-- **Never modify Fenn's disc image.** Read it; build derived files from it elsewhere.
+- **Never modify Ember's disc image.** Read it; build derived files from it elsewhere.
 - **Git:** commit on a work branch, never directly on `main`. Since 2026-10-13 Claude
-  commits and pushes at its own discretion (Fenn handed it over). Still check
+  commits and pushes at its own discretion (Ember handed it over). Still check
   `git status` for disc data before every commit.
 - Ask before anything outward-facing (issues or PRs upstream, publishing, Discord).
-- **Model routing** (Fenn's global CLAUDE.md, revised 2026-10-13 to match Wrath-Rust):
+- **Model routing** (Ember's global CLAUDE.md, revised 2026-10-13 to match Wrath-Rust):
   - Claude implements, in the main session or through **Sonnet** subagents for large or
     parallel work, escalating to **Opus 5.5 (high)** only when Sonnet's work is bad or it
     can't solve the task. At most 3 implementation subagents at once, and every brief says
@@ -107,13 +103,13 @@ GPU, not an ECS game; rendering is `wgpu` on Metal.
     prompt. **Computer use** (driving an emulator, comparing screenshots) goes to
     gpt-6.1-sol (high) through the `codex-computer-use` skill, or GPT 6 Astra (high) when
     it's particularly complex or Sol isn't good enough at it. Never Haiku.
-- **Machines:** this Mac is the main one. **booklab** (`ssh booklab`, an M1 Fenn keeps for
+- **Machines:** this Mac is the main one. **booklab** (`ssh booklab`, an M1 Ember keeps for
   this) is available whenever parallel work helps: long emulator recordings, a second
   oracle run to certify replays, builds while this Mac runs the game. Its setup notes are
   in `~/Developer/Wrath-Rust/docs/booklab.md`; don't disturb Wrath-Rust's work on it
   (check what's running first). Never use it for timing comparisons against this Mac.
-- **Testing split:** agents get scenes running and prove them against the oracle; Fenn
-  plays. Fenn makes fixture saves by playing, and is the judge of "plays right".
+- **Testing split:** agents get scenes running and prove them against the oracle; Ember
+  plays. Ember makes fixture saves by playing, and is the judge of "plays right".
 
 ## Sources (checked 2026-10-13; corrected after review 1)
 
@@ -167,7 +163,7 @@ GPU, not an ECS game; rendering is `wgpu` on Metal.
     DW2-specific retail addresses and extracted data.
 - **Digimon World Recompiled** (ethan4love, GitLab `psx-recomp-port`): a Windows-only
   static recompilation, not from the decomp. Useful only as a behaviour reference.
-- **Wrath-Rust** (`~/Developer/Wrath-Rust`): Fenn's other port. Process lessons taken from
+- **Wrath-Rust** (`~/Developer/Wrath-Rust`): Ember's other port. Process lessons taken from
   it are under "Process".
 
 ## Architecture (proposed; the spikes decide)
@@ -183,7 +179,7 @@ crates/
   backend/     PS1 GPU (software first), GTE model, SPU, XA, MDEC
   host/        window, input, audio, card files, pack, deterministic clock for replays
   render/      wgpu on Metal: 1x faithful output first, then the extras
-  pack/        pack builder (from Fenn's .bin/.cue) and manifest
+  pack/        pack builder (from Ember's .bin/.cue) and manifest
   oracle/      replay, canonical state schema, comparison tools
   dw1/         the app: links everything, builds the game C through the `cc` crate
 oracle/        emulator-side scripts (PCSX-Redux Lua)
@@ -279,7 +275,7 @@ comparisons.
 
 ## Phases
 
-Each phase ends with a short report in `docs/` and a check-in with Fenn. Phase 0 ends
+Each phase ends with a short report in `docs/` and a check-in with Ember. Phase 0 ends
 with a go / no-go. Every runnable phase's gate includes: named fixtures, expected
 checkpoints equal to the oracle, no unexpected stub calls (unimplemented SDK functions trap
 and log), bounded completion (no hangs on CD/SPU/movie waits), and re-entry tested (the
@@ -288,7 +284,7 @@ scene run twice).
 ### Phase 0: setup and risk spikes
 
 - **S0.1 Tools and repo:** `git init` on a work branch (first commit: PLAN.md, CLAUDE.md,
-  `.gitignore`, `docs/`, when Fenn says so). Homebrew `cmake`, `ninja`, `sdl3`, `make`
+  `.gitignore`, `docs/`, when Ember says so). Homebrew `cmake`, `ninja`, `sdl3`, `make`
   (GNU make 4.3+), `python3` with the decomp's `requirements.txt` in a venv; MIPS
   binutils/GCC, or the decomp's dev container under OrbStack (`linux/amd64`); PCSX-Redux
   for this Mac; `dumpsxiso`/`mkpsxiso`. Codex CLI works with `-m gpt-6.1-sol`. Record
@@ -307,14 +303,14 @@ scene run twice).
   `make TOOLCHAIN=gcc`, first through the dev container, then natively if the tools allow.
   It's a compile/link regression check for `DW1_NATIVE` changes, nothing more. No
   `cc_mips.dll`, so no matching build or `make compare`; if one turns out to be needed,
-  ask Fenn, and don't fetch the compiler from an unofficial source.
-- **S0.4 Memory representation:** measured 2026-10-13 on macOS 27.0, Apple clang 21.0.0:
-  `MAP_FIXED` at 0x100000, 0x10000000 and 0x80000000 fails; a hint below 4 GB is ignored;
-  `-pagezero_size 0x100000` (with or without `-image_base`) is SIGKILLed at exec;
-  `MAP_FIXED` 64 MB at 0x1_8000_0000 succeeds with the executable at 0x1_00xx_xxxx (test
-  code in the session scratchpad; recreate it under `tools/spikes/`). Still to do: the
-  checks listed under Architecture item 3, then `docs/memory.md` with the design per kind
-  of reference and the count of sites each touches (from S0.5).
+  ask Ember, and don't fetch the compiler from an unofficial source.
+- **S0.4 Memory representation:** done 2026-10-13, `docs/memory.md`, spikes in
+  `tools/spikes/s04/`. Below 4 GB is impossible (MAP_FIXED fails, a small page zero is
+  killed at exec); a fixed window at 0x1_8000_0000 maps (200/200 runs; executable base
+  slides within 0x1_0009_8000 to 0x1_04FF_4000). Design: native pointers for native
+  objects, fixed-width disk/save records, widen 32-bit pointer storage to `intptr_t`, a
+  2 MB PS1 RAM arena for fixed addresses and overlays, side tables for TMD mapping and EFE
+  buffers, offset-based GPU packet links; the window is a measured fallback only.
 - **S0.5 Survey of the decomp** (gpt-6.1-sol, read-only, in bulk; Claude checks samples).
   Output: `docs/survey.md` with counts and file:line lists:
   - **SDK surface:** every SDK function and global called, directly or through dispatch
@@ -342,16 +338,16 @@ scene run twice).
   packet rasterizer, SPU, XA and MDEC with Apple clang against synthetic inputs, and
   decide each: translate to Rust now, or link as C for now. Output:
   `docs/dw2pc-reuse.md`.
-- **S0.7 libgs/TMD spike:** one DW1 model, extracted locally from Fenn's disc, through
+- **S0.7 libgs/TMD spike:** one DW1 model, extracted locally from Ember's disc, through
   model mapping, animation, lighting, sorting and packet generation into the software
   rasterizer, compared with the emulator's frame. This is the biggest unknown DW2-PC
   doesn't cover.
-- **S0.8 Oracle bring-up:** PCSX-Redux running Fenn's disc on this Mac, pinned per "The
+- **S0.8 Oracle bring-up:** PCSX-Redux running Ember's disc on this Mac, pinned per "The
   oracle"; a Lua script that records pad input keyed by poll sequence and dumps the
   canonical state at a checkpoint; two fresh-process runs agree. Measure the field rate.
 - **S0.9 Go / no-go:** `docs/phase0-report.md`: each spike's result, the memory design and
   why, what DW2-PC covers and what's new, the riskiest unknowns left, and a
-  recommendation. Fenn decides.
+  recommendation. Ember decides.
 
 ### Phase 1: main compiles and links natively
 
@@ -376,7 +372,7 @@ emulator's at 1x and a replay reaches the main menu with no stub trapped.
 
 Raw card images from PCSX-Redux / DuckStation read as-is (tested formats only), DW1's save
 parsed against its retail layout (`main_menu.c:88`, checksums over 0x4E4 and 0xA00 bytes
-at 5004), checksum rejection. Nothing writes yet. Done when one of Fenn's fixture saves
+at 5004), checksum rejection. Nothing writes yet. Done when one of Ember's fixture saves
 loads and the canonical state after load equals the emulator's. From here on, fixtures
 can start any replay.
 
@@ -399,7 +395,7 @@ surviving the swap.
 
 SPU and the sequencer at its tick mode (`SsSetTickMode(SS_TICK240)`), reverb, XA streams,
 MDEC movies at full quality. Done when event timing and durations match the emulator
-(measured) and Fenn says they sound right.
+(measured) and Ember says they sound right.
 
 ### Phase 7: saving
 
@@ -419,7 +415,7 @@ and scripted cameras first, and pillarbox wherever more picture can't be shown f
 
 ### Phase 9: the long tail and a full playthrough
 
-Fenn plays start to finish (with fixture saves along the way); bugs go to `docs/bugs.md`
+Ember plays start to finish (with fixture saves along the way); bugs go to `docs/bugs.md`
 with save and repro. Then packaging (`.app` that runs on a Mac without Homebrew,
 first-run pack build, settings) and the deliverable: a self-contained HTML guide
 (`docs/guide.html`) on installing, building and playing. This is the first release: a
@@ -445,7 +441,7 @@ is what the Rust is checked against.
    large change of direction (e.g. after the go / no-go).
 2. **The handoff lives in this file.** At the end of each session, update "Where things
    stand" (date, session number, what's done, what's next, with links to the phase doc)
-   and the status line in `CLAUDE.md`. Record Fenn's answers with dates under "Answered".
+   and the status line in `CLAUDE.md`. Record Ember's answers with dates under "Answered".
 3. **Small bounded slices.** Each implementation slice has a brief (goal, files, the
    oracle check that proves it, "don't spawn sub-agents"), gets implemented, reviewed by
    Sol until no finding is left, and verified against the oracle before it counts.
@@ -477,7 +473,7 @@ is what the Rust is checked against.
    bugs. Pinning and fresh-process certification (S0.8) come before trusting a replay.
 7. **Sixteen overlay files**, more than twice DW2's seven, and DW1's script engine and care
    simulation run on a clock, so timing bugs can hide for hours of play.
-8. **The long tail:** bugs only a full playthrough finds. Fenn's playthrough is the last
+8. **The long tail:** bugs only a full playthrough finds. Ember's playthrough is the last
    gate, and DW2-PC hasn't had one either.
 9. **The C↔Rust boundary:** layout mismatches between C structs and their Rust mirrors,
    callbacks re-entering C, panics unwinding across `extern "C"`. Mitigation: generated
@@ -486,15 +482,15 @@ is what the Rust is checked against.
     evaluation order, RNG call order). Mitigation: side-by-side differential runs before
     each switch, explicit `wrapping_*`/fixed-width types mirroring the C.
 
-## Open questions for Fenn
+## Open questions for Ember
 
 None right now. Add them here as they come up.
 
-## Answered by Fenn
+## Answered by Ember
 
-- 2026-10-13: go ahead with the port; project lives in `~/Developer/dw1-silicon`; Fenn
+- 2026-10-13: go ahead with the port; project lives in `~/Developer/dw1-silicon`; Ember
   owns the game and has time to test.
-- 2026-10-13: the disc is Fenn's US image, now in `disc/` (redump-verified).
+- 2026-10-13: the disc is Ember's US image, now in `disc/` (redump-verified).
 - 2026-10-13: no `cc_mips.dll`; use the GCC build (see S0.3).
 - 2026-10-13: subagents as in Wrath-Rust (Sonnet first, Opus on escalation); reviews and
   computer use through Codex, Sol (high), Astra (high) for particularly complex work.
@@ -505,7 +501,7 @@ None right now. Add them here as they come up.
   digivolutions), reached through a hybrid first: decomp C for the game, Rust for
   everything new, then module-by-module migration. Not Bevy.
 - 2026-10-13: dw_decomp comes in as a fork, `loafykitten/dw_decomp`, added as a git
-  submodule at `decomp/`, with port changes on a branch in the fork (Fenn creates the fork;
+  submodule at `decomp/`, with port changes on a branch in the fork (Ember creates the fork;
   Claude Code's auto mode won't). Credit upstream projects in the README.
 - 2026-10-13: this repo is licensed MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`,
   README section). Code adapted from DW2-PC notes its CC0 origin; don't copy code from
