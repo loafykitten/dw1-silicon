@@ -11,6 +11,10 @@
 //! same bits as on the PS1. Results follow psx-spx: 44-bit MAC accumulation with overflow flags,
 //! IR / colour / SZ / SXY saturation, the UNR divide, and FLAG bit 31 as the error summary.
 //!
+//! NCT, NCCS, NCCT, AVSZ3 and AVSZ4 are also from psx-spx (the lighting family shares NCS's
+//! two matrix steps; NCCx then multiplies by RGBC). NCDS/NCDT and the other colour commands are
+//! not modelled.
+//!
 //! Not ported: DW2-PC's PG.2 precise-projection hook and matrix hooks (host-side extras that
 //! never change the hardware view), and `Lwc2`/`Swc2` (a caller does `mtc2(reg, word)`).
 
@@ -80,6 +84,11 @@ pub mod cmd {
     pub const RTPT: u32 = 0x4A28_0030;
     pub const NCLIP: u32 = 0x4B40_0006;
     pub const NCS: u32 = 0x4AC8_041E;
+    pub const NCT: u32 = 0x4AD8_0420;
+    pub const NCCS: u32 = 0x4B08_041B;
+    pub const NCCT: u32 = 0x4B18_043F;
+    pub const AVSZ3: u32 = 0x4B58_002D;
+    pub const AVSZ4: u32 = 0x4B68_002E;
     pub const fn mvmva(sf: u32, mx: u32, v: u32, cv: u32, lm: u32) -> u32 {
         0x4A40_0012 | (sf << 19) | (mx << 17) | (v << 15) | (cv << 13) | (lm << 10)
     }
@@ -507,18 +516,53 @@ impl Gte {
         }
     }
 
-    fn op_ncs(&mut self, sf: bool, lm: bool) {
+    /// NCS / NCCS body for normal `v` (0..2): `LLM * N`, then `BK << 12 + LCM * IR`, optionally
+    /// scaled by RGBC (`color`: NCCx), then a colour FIFO push (psx-spx "GTE Color Calculation
+    /// Commands").
+    fn light_vertex(&mut self, v: usize, sf: bool, lm: bool, color: bool) {
         let shift = if sf { 12 } else { 0 };
         let bk = [self.c[creg::RBK], self.c[creg::GBK], self.c[creg::BBK]];
-        let v0 = [self.vx(0), self.vy(0), self.vz(0)];
-        self.mul_mat_vec(creg::LLM0, None, v0, shift, lm);
+        let n = [self.vx(v), self.vy(v), self.vz(v)];
+        self.mul_mat_vec(creg::LLM0, None, n, shift, lm);
         let ir = [
             self.d[dreg::IR1] as i16,
             self.d[dreg::IR2] as i16,
             self.d[dreg::IR3] as i16,
         ];
         self.mul_mat_vec(creg::LCM0, Some(bk), ir, shift, lm);
+        if color {
+            let rgbc = self.d[dreg::RGBC] as u32;
+            for i in 0..3 {
+                let c = i64::from((rgbc >> (8 * i)) & 0xFF);
+                let m = (c * i64::from(self.d[dreg::IR1 + i])) << 4;
+                self.set_mac_ir(i + 1, m, shift, lm);
+            }
+        }
         self.push_rgb_from_mac();
+    }
+
+    /// AVSZ3 / AVSZ4: OTZ = ZSF * (sum of the newest 3 or 4 SZ) / 4096, saturated to 16 bits.
+    fn op_avsz(&mut self, quad: bool) {
+        let sz = |g: &Self, i: usize| i64::from(g.d[dreg::SZ0 + i]);
+        let (zsf, sum) = if quad {
+            (
+                self.c[creg::ZSF4],
+                sz(self, 0) + sz(self, 1) + sz(self, 2) + sz(self, 3),
+            )
+        } else {
+            (self.c[creg::ZSF3], sz(self, 1) + sz(self, 2) + sz(self, 3))
+        };
+        let mac0 = i64::from(zsf) * sum;
+        self.set_mac0(mac0);
+        let mut otz = mac0 >> 12;
+        if otz < 0 {
+            otz = 0;
+            self.flag |= F_SZ;
+        } else if otz > 0xFFFF {
+            otz = 0xFFFF;
+            self.flag |= F_SZ;
+        }
+        self.d[dreg::OTZ] = otz as i32;
     }
 
     fn op_gpf(&mut self, sf: bool, lm: bool) {
@@ -554,7 +598,21 @@ impl Gte {
             }
             0x12 => self.op_mvmva(op, sf, lm),
             0x1E => {
-                self.op_ncs(sf, lm);
+                self.light_vertex(0, sf, lm, false);
+                ExecStatus::Done
+            }
+            0x1B => {
+                self.light_vertex(0, sf, lm, true);
+                ExecStatus::Done
+            }
+            0x20 | 0x3F => {
+                for v in 0..3 {
+                    self.light_vertex(v, sf, lm, op & 0x3F == 0x3F);
+                }
+                ExecStatus::Done
+            }
+            0x2D | 0x2E => {
+                self.op_avsz(op & 0x3F == 0x2E);
                 ExecStatus::Done
             }
             0x3D => {

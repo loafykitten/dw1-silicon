@@ -14,7 +14,7 @@ Recorded 2026-10-13 on the main Mac (macOS 27.0, Apple Silicon).
 | MIPS binutils | GNU Binutils 2.47 (`mipsel-linux-gnu-*`) | Homebrew `mipsel-linux-gnu-binutils` |
 | Python | 3.14.8, venv at `.venv/` (gitignored) with dw_decomp's `requirements.txt` (splat64 0.50.0, spimdisasm 1.42.4, rabbitizer 1.16.2) | Homebrew `python@3.14` |
 | dumpsxiso / mkpsxiso | 2.20 | built from source (Lameguy64/mkpsxiso tag v2.20), installed to `~/.local/bin` |
-| PCSX-Redux | commit `5811e223d3c3` (2026-10-13) | built from source in `ref/pcsx-redux` (`make`); deps from its `install-brew-dependencies.sh`: capstone 5.0.9, curl 8.22.0, ffmpeg 9.0.2, freetype 2.14.3, libuv 1.53.0, pkgconf 3.0.8, zlib 1.3.2 |
+| PCSX-Redux | commit `26bfd693` (2026-10-12; not newer, see `docs/s08-oracle.md`) | built from source in `ref/pcsx-redux` (`make`); deps from its `install-brew-dependencies.sh`: capstone 5.0.9, curl 8.22.0, ffmpeg 9.0.2, freetype 2.14.3, libuv 1.53.0, pkgconf 3.0.8, zlib 1.3.2 |
 | Rust | rustc / cargo 1.99.0, rustup 1.29.1 | rustup (already installed) |
 | Codex CLI | 0.162.1; `-m gpt-6.1-sol` answers | Homebrew |
 

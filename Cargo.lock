@@ -186,6 +186,9 @@ dependencies = [
 [[package]]
 name = "psyq"
 version = "0.1.0"
+dependencies = [
+ "backend",
+]
 
 [[package]]
 name = "quote"

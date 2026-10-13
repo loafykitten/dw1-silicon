@@ -6,3 +6,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[dependencies]
+backend = { path = "../backend" }
+
+[dev-dependencies]

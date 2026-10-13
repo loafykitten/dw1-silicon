@@ -17,7 +17,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 - **Phase 0 so far:**
   - **S0.1 done:** tools in `docs/toolchain.md` (Homebrew cmake, ninja, SDL3, `gmake`, MIPS
     binutils; `.venv/` with the decomp's Python requirements; dumpsxiso 2.20 in
-    `~/.local/bin`; PCSX-Redux built from source at 5811e22 in `ref/pcsx-redux`; the
+    `~/.local/bin`; PCSX-Redux built from source at 26bfd693 in `ref/pcsx-redux`; the
     decomp's container `dw-build`, linux/amd64 under OrbStack; Rust 1.99).
   - **S0.2 done:** `docs/provenance.md` (full table in `docs/provenance/`). Eligible from
     DW2-PC: GTE hardware model, software GPU, MDEC/SPU/XA decoders minus their literal
@@ -64,7 +64,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   `scph1001.bin` in the repo root (512 KB, SHA-1 `649895efd79d14790eabb362e94eb0622093dfb9`,
   MD5 `dc2b9bf8da62ec93e868cfd29f0d067d`; kernel date 1994-09-22; exact revision to be read
   from PCSX-Redux at first boot, S0.8), the oracle's retail BIOS; reference clones `ref/dw_decomp`
-  (09c174c), `ref/DW2-PC` (2d491b5), `ref/pcsx-redux` (5811e22).
+  (09c174c), `ref/DW2-PC` (2d491b5), `ref/pcsx-redux` (26bfd693).
 
 ## Goal
 

@@ -5,3 +5,4 @@
 //! integer types where the PS1 used `long`.
 
 pub mod bios;
+pub mod libgs;
