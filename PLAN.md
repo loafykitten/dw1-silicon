@@ -7,6 +7,23 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-13, session 3): start here
 
+- **Phase 2 is in progress** (`docs/phase2-plan.md` is its plan and status). The native boot
+  runs `main()` through the heap, sound init, the whole display setup, CD and card init, the
+  game's own initialisers and the 3D setup, and stops at the first libgte call
+  (`RotMatrixZYX`). Done: the prototype audit (`docs/abi-audit-calls.md`), heap, disc
+  (`crates/pack`, libcd), silent sound, memory cards, the GPU layer (libgpu, libgs buffers,
+  ordering tables, `GsSortClear`; packet links as data-segment offsets), libgs model mapping,
+  the virtual clock and pads, the headless host (PNG shots, emulator replays with caller
+  checks), fixed PS1 addresses and 32-bit in-data pointers (design in the plan), 558
+  pointer-truncating casts fixed in the fork (MIPS build byte-identical). In flight at the
+  end of the session: libgte fitted against the emulator, the movie (streaming + MDEC), the
+  SDL3 window; GPT 6 Astra reviewing the GPU/memory work. Then: the 2D sorts (`GsSortSprite`
+  and friends, from captures), the gate (landing screen vs Redux, replay to the main menu).
+  - **Emulator tools added:** `oracle/capture-calls.lua` (record chosen SDK calls with full
+    machine state; `tools/oracle/calldiff.py` shows what each changed) and
+    `oracle/call-sdk.lua` (run SDK functions on chosen inputs). Timeline of the route at boot:
+    the game's `main()` starts at Redux VBlank 1144 (native VBlank 0), the intro movie plays
+    ~1454-1800, the landing screen ~1825-1925, the main menu from ~2050.
 - **Phase 1 is done** (`docs/phase1-report.md`). All 119 US game C files (main, SHOP, all 15
   overlays) compile with Apple clang and link whole into `dw1`, with every SDK call resolved
   (187 trapping stubs in `crates/psyq/src/stubs.rs`). `cargo run -p dw1` runs the game's own
