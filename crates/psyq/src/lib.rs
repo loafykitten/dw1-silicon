@@ -7,6 +7,7 @@
 pub mod bios;
 pub mod globals;
 pub mod gte;
+pub mod libapi;
 pub mod libc;
 pub mod libgs;
 mod stubs;

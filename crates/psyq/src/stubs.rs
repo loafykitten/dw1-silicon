@@ -7,9 +7,6 @@
 
 use crate::trap::stubs;
 
-// libapi: the PS1 heap.
-stubs! { InitHeap3 malloc3 free3 }
-
 // libc: process exit (returns to the BIOS on the PS1). Renamed `dw1_exit` by dw1_native.h.
 stubs! { dw1_exit }
 
