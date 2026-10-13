@@ -7,10 +7,11 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-13, end of session 2): start here
 
-- **Phase 0 is done.** `docs/phase0-report.md` (the S0.9 go / no-go) recommends **go**.
-  Ember read the summary ("Perfect") but hasn't said go or no-go in so many words: confirm
-  before starting Phase 1. If go, Phase 1 is next: main's C plus the `psyq` crate with
-  trapping stubs builds and links for arm64, and every overlay's C compiles.
+- **Phase 0 is done, and Ember said go (2026-10-13).** `docs/phase0-report.md` is the S0.9
+  report. The go covers the plan as written: the hybrid first (decomp C running natively,
+  Rust for everything around it), then module-by-module migration to Rust. **Next: Phase
+  1.** Main's C plus the `psyq` crate with trapping stubs builds and links for arm64, and
+  every overlay's C compiles.
 - **Repo:** public at `github.com/loafykitten/dw1-silicon`, branch `phase0` (the only branch
   so far; `main` comes later by merge). Claude commits and pushes at its discretion.
 - **Plan:** reviewed adversarially (Astra, 19 findings, three blockers; a sample checked

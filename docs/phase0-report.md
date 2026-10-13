@@ -5,6 +5,9 @@ native app, built from the decomp's C with the PS1 libraries replaced by Rust, a
 against the original game? This report gives each spike's answer, what's still risky,
 and a recommendation. Ember decides.
 
+**Decision (Ember, 2026-10-13): go.** It covers the plan as written: the hybrid first, then
+the module-by-module move to Rust.
+
 ## Recommendation: go
 
 None of the spikes found a blocker. The two things most likely to sink the project both

@@ -6,8 +6,8 @@ written in Rust (DW2-PC is the reference). **Read `PLAN.md` before doing anythin
 it's the handoff, with the goal, ground rules, sources, architecture, oracle, phases
 and open questions.
 
-- **Current status (2026-10-13, end of session 2):** Phase 0 done. The go/no-go report
-  (`docs/phase0-report.md`) recommends go; confirm Ember's go before starting Phase 1.
+- **Current status (2026-10-13, end of session 2):** Phase 0 done; Ember said go
+  (2026-10-13, `docs/phase0-report.md`). Next: Phase 1 (main's C links natively).
   Public repo `loafykitten/dw1-silicon` (branch `phase0`). Direction: hybrid (decomp C game
   + Rust for everything new), full Rust as the endgame. Done: plan review, S0.1-S0.8
   (Rust GTE/GPU/decoders; clean Rust `GsSortObject4J` matches 48 captured calls; SDL3
