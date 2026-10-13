@@ -49,9 +49,9 @@ stubs! {
     GsTMDfastTNF4 GsTMDfastTNG3 GsTMDfastTNG4
 }
 
-// libcd, with the movie streaming calls (data globals are in `libcd`).
+// libcd's movie streaming calls (the rest is in `libcd`; its data global is in `globals`).
 stubs! {
-    CdControl CdControlB CdInit CdIntToPos CdPosToInt CdRead CdRead2 CdReadSync CdSearchFile
+    CdRead2
     StCdInterrupt StFreeRing StGetBackloc StGetNext StSetRing StSetStream StUnSetRing
 }
 

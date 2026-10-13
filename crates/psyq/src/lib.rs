@@ -9,6 +9,7 @@ pub mod globals;
 pub mod gte;
 pub mod libapi;
 pub mod libc;
+pub mod libcd;
 pub mod libgs;
 mod stubs;
 mod trap;

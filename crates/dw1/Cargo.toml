@@ -9,3 +9,5 @@ publish.workspace = true
 
 [dependencies]
 decomp-c = { path = "../decomp-c" }
+pack = { path = "../pack" }
+psyq = { path = "../psyq" }

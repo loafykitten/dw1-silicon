@@ -55,6 +55,7 @@ const BOUND_HEADERS: &[&str] = &[
     "libgte.h",
     "libgpu.h",
     "libgs.h",
+    "libcd.h",
     "dw/params.h",
 ];
 
@@ -368,6 +369,8 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("VECTOR")
         .allowlist_type("SVECTOR")
         .allowlist_type("_GsFCALL")
+        .allowlist_type("CdlLOC")
+        .allowlist_type("CdlFILE")
         .use_core()
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
     for header in BOUND_HEADERS {
