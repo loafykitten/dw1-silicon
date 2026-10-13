@@ -7,7 +7,7 @@
 //! Env: `DW1_SHOTS=first:last:step` (screenshots `shot_<vblank>.png`), `DW1_STOP_AT=<vblank>`
 //! (exit 0 there), `DW1_OUT=<dir>` (default `captures/native-runs/latest`), `DW1_REPLAY=<file>`
 //! (pad input from an emulator replay, `oracle/replays/`; the run stops when it diverges or the
-//! recording ends).
+//! recording ends), `DW1_START_AT=<vblank>` (without a replay, pad 1 holds Start from there on).
 
 use std::path::PathBuf;
 
@@ -16,6 +16,7 @@ use crate::replay::Replay;
 pub struct Headless {
     shots: Option<(u32, u32, u32)>,
     stop_at: Option<u32>,
+    start_at: Option<u32>,
     out: PathBuf,
     replay: Option<Replay>,
 }
@@ -93,6 +94,7 @@ impl Headless {
         Headless {
             shots,
             stop_at: env_num("DW1_STOP_AT"),
+            start_at: env_num("DW1_START_AT"),
             out,
             replay,
         }
@@ -138,7 +140,10 @@ impl psyq::libetc::Host for Headless {
 
     fn pad(&mut self, caller: usize) -> u32 {
         let Some(replay) = self.replay.as_mut() else {
-            return 0;
+            return match self.start_at {
+                Some(at) if psyq::libetc::vblank_count() >= at => 0x800,
+                _ => 0,
+            };
         };
         let name = function_name(caller);
         match replay.poll(&name, psyq::libetc::vblank_count()) {

@@ -61,9 +61,16 @@ fn main() {
         }
     }
     // Headless for the emulator-comparison runs (and `DW1_HEADLESS=1`); the window otherwise.
-    let headless = ["DW1_HEADLESS", "DW1_REPLAY", "DW1_SHOTS", "DW1_STOP_AT"]
-        .iter()
-        .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"));
+    let headless = [
+        "DW1_HEADLESS",
+        "DW1_REPLAY",
+        "DW1_SHOTS",
+        "DW1_STOP_AT",
+        "DW1_START_AT",
+        "DW1_MOVIE",
+    ]
+    .iter()
+    .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"));
     if headless {
         psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
     } else {
@@ -74,6 +81,24 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+    // DW1_MOVIE=<id> plays one movie on its own (0 = the intro) and stops: the game's movie
+    // player, without the boot that precedes it in main().
+    if let Some(id) = std::env::var("DW1_MOVIE").ok().and_then(|v| v.parse().ok()) {
+        psyq::libetc::ResetCallback();
+        psyq::libgpu::ResetGraph(0);
+        psyq::libcd::CdInit();
+        let completed = unsafe { decomp_c::MOV_playMovie(id) };
+        eprintln!(
+            "dw1: movie {id} {} at vblank {}",
+            if completed == 1 {
+                "played to its end"
+            } else {
+                "was skipped"
+            },
+            psyq::libetc::vblank_count()
+        );
+        return;
     }
     // The game's main() never returns on the PS1.
     let status = unsafe { decomp_c::dw1_game_main() };

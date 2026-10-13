@@ -93,6 +93,8 @@ TMD map, the file queue, fonts, scripts, UI, clock...), `loadTIMFile` twice, the
 6c. **libgte (in progress):** all 29 functions, fitted against `oracle/call-sdk.lua`.
 7. **The intro movie:** MOV's streaming reads (`St*`), the MDEC calls (`DecDCT*`), XA
    skipped silently. Check: it plays to the end and skips on Start.
+   **Done 2026-10-13** (`docs/phase2-movie.md`): all four movies play through `MOV_playMovie`
+   to their last frame, and Start skips.
 8. **The gate:** the landing screen at 1x against Redux's frame; the `new-game` replay from
    boot to the main menu with no trap and the S0.8 checkpoints on the way equal. Re-entry: back
    to the landing screen and through again.

@@ -278,6 +278,45 @@ impl Bits<'_> {
     }
 }
 
+/// A version 3 DC code: the difference (times 4) from the last DC of the same kind. A size
+/// category as in MPEG-1's `dct_dc_size_luminance` / `_chrominance` (unary-ish prefix), then
+/// that many bits, the first of which is 1 for a positive difference. `None` for the unused
+/// codes. [doc: psx-spx "CDROM File Video BS Compression DC Values", DC v3]
+///
+/// Luma: `100` 0, `00` 1, `01` 2, `101` 3, `110` 4, `1110` 5, ... `1111110` 8.
+/// Chroma: `00` 0, `01` 1, `10` 2, `110` 3, `1110` 4, ... `11111110` 8.
+fn dc_diff_v3(b: &mut Bits, luma: bool) -> Option<i32> {
+    let size = match (b.get(2), luma) {
+        (0b00, true) => 1,
+        (0b01, true) => 2,
+        (0b10, true) => 3 * b.get(1),
+        (0b00, false) => 0,
+        (0b01, false) => 1,
+        (0b10, false) => 2,
+        (_, luma) => {
+            // "11" and then one more 1 for each category above the first coded this way.
+            let mut size = if luma { 4 } else { 3 };
+            while b.get(1) == 1 {
+                size += 1;
+            }
+            size
+        }
+    };
+    if size > 8 {
+        return None;
+    }
+    if size == 0 {
+        return Some(0);
+    }
+    let bits = b.get(size) as i32;
+    let diff = if bits >= 1 << (size - 1) {
+        bits
+    } else {
+        bits - ((1 << size) - 1)
+    };
+    Some(diff * 4)
+}
+
 /// Why [`vlc`] refused a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VlcError {
@@ -290,7 +329,8 @@ pub enum VlcError {
 /// Decodes one STR frame to MDEC run-length codes. `bs` is the frame: an 8-byte header
 /// (run-length size in words, 0x3800, quantiser scale, version), then the bitstream. Writes
 /// `out[0] = 0x3800_nnnn` (nnnn = words that follow) and the run-length halfwords (two per word,
-/// low half first); returns the words written. Versions 1 and 2. On error `out[0]` holds an empty
+/// low half first); returns the words written. Versions 1, 2 and 3 (3 codes the DC values as
+/// differences, [`dc_diff_v3`]). On error `out[0]` holds an empty
 /// stream (`0x3800_0000`) and the rest of `out` is untouched.
 pub fn vlc(bs: &[u8], out: &mut [u32]) -> Result<usize, VlcError> {
     let hb = |i: usize| u32::from(bs.get(i).copied().unwrap_or(0));
@@ -303,8 +343,7 @@ pub fn vlc(bs: &[u8], out: &mut [u32]) -> Result<usize, VlcError> {
     if let Some(w) = out.first_mut() {
         *w = 0x3800_0000;
     }
-    if magic != 0x3800 || (version != 1 && version != 2) || q > 63 || words as usize + 1 > out.len()
-    {
+    if magic != 0x3800 || !(1..=3).contains(&version) || q > 63 || words as usize + 1 > out.len() {
         return Err(VlcError::BadHeader);
     }
     let lut = ac_lut();
@@ -317,11 +356,28 @@ pub fn vlc(bs: &[u8], out: &mut [u32]) -> Result<usize, VlcError> {
         have: 0,
     };
 
+    let mut block = 0usize; // 0 = Cr, 1 = Cb, 2..=5 = Y1..Y4, as the MDEC wants them
+    let mut dc_pred = [0i32; 3]; // version 3: the last Cr, Cb and Y DC values
     while n < want {
-        let dc = b.get(10);
-        if dc == 0x1FF {
-            break; // end of frame
-        }
+        let dc = if version == 3 {
+            if b.peek16() >> 6 == 0x3FF {
+                break; // end of frame
+            }
+            let class = block.min(2);
+            let Some(diff) = dc_diff_v3(&mut b, class == 2) else {
+                return Err(VlcError::BadStream);
+            };
+            dc_pred[class] += diff;
+            // Newer decoders wrap the running value within the 10-bit field [doc: psx-spx].
+            (dc_pred[class] & 0x3FF) as u32
+        } else {
+            let dc = b.get(10);
+            if dc == 0x1FF {
+                break; // end of frame
+            }
+            dc
+        };
+        block = (block + 1) % 6;
         o[n] = (q << 10 | dc) as u16;
         n += 1;
         loop {
@@ -738,8 +794,77 @@ mod tests {
         let mut bs = [0u8; 16];
         bs[2] = 0x00;
         bs[3] = 0x38;
-        bs[6] = 3; // version
+        bs[6] = 4; // version
         assert_eq!(vlc(&bs, &mut out), Err(VlcError::BadHeader));
+    }
+
+    #[test]
+    fn version_3_dc_values_are_differences() {
+        // One macroblock at quantiser 1. Cr and Cb: difference 0 (chroma `00`). Y1: luma `00s`
+        // with s = 1, +1*4. Y2: the same again, 8. Y3: `01sn` with s = 0, n = 0: -3*4, so
+        // -4 (a 10-bit wrap: 3FCh). Y4: `101snn` = `111`: +7*4, so 24. Then end of frame.
+        let mut bits = String::new();
+        for code in ["00", "00", "001", "001", "0100", "101111"] {
+            bits += code;
+            bits += "10"; // EOB
+        }
+        bits += "1111111111";
+        while !bits.len().is_multiple_of(16) {
+            bits.push('0');
+        }
+        let mut bs = vec![32, 0, 0x00, 0x38, 1, 0, 3, 0];
+        for ch in bits.as_bytes().chunks(16) {
+            let w = ch.iter().fold(0u16, |a, &c| a << 1 | u16::from(c - b'0'));
+            bs.extend_from_slice(&w.to_le_bytes());
+        }
+        let mut stream = vec![0u32; 33];
+        assert_eq!(vlc(&bs, &mut stream), Ok(33));
+        let halves: Vec<u16> = stream[1..]
+            .iter()
+            .flat_map(|w| [*w as u16, (*w >> 16) as u16])
+            .collect();
+        let expected = [
+            0x400, 0xFE00, 0x400, 0xFE00, 0x404, 0xFE00, 0x408, 0xFE00, 0x7FC, 0xFE00, 0x418,
+            0xFE00,
+        ];
+        assert_eq!(&halves[..12], &expected);
+        assert!(halves[12..].iter().all(|&h| h == 0xFE00));
+    }
+
+    #[test]
+    fn version_3_dc_size_categories() {
+        let bits = |s: &str| {
+            let mut v: Vec<u8> = Vec::new();
+            let mut padded = s.to_string();
+            while !padded.len().is_multiple_of(16) {
+                padded.push('0');
+            }
+            for ch in padded.as_bytes().chunks(16) {
+                let w = ch.iter().fold(0u16, |a, &c| a << 1 | u16::from(c - b'0'));
+                v.extend_from_slice(&w.to_le_bytes());
+            }
+            v
+        };
+        let decode = |s: &str, luma| {
+            let data = bits(s);
+            let mut b = Bits {
+                data: &data,
+                pos: 0,
+                buf: 0,
+                have: 0,
+            };
+            dc_diff_v3(&mut b, luma)
+        };
+        // Largest chroma and luma categories (8 bits), positive and negative.
+        assert_eq!(decode("11111110111111111", false), Some(255 * 4));
+        assert_eq!(decode("11111110000000000", false), Some(-255 * 4));
+        assert_eq!(decode("11111101000000000", true), Some(128 * 4));
+        assert_eq!(decode("11111100000000000", true), Some(-255 * 4));
+        // Zero differences and the unused codes.
+        assert_eq!(decode("100", true), Some(0));
+        assert_eq!(decode("00", false), Some(0));
+        assert_eq!(decode("111111110", true), None);
+        assert_eq!(decode("111111110", false), None);
     }
 
     #[test]

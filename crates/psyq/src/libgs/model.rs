@@ -159,10 +159,24 @@ mod tests {
     fn primitive_sizes_follow_the_disc() {
         // Input lengths seen on the disc (see primitive_words).
         for (flag, mode, ilen) in [
-            (0, 0x20, 3), (0, 0x24, 5), (0, 0x28, 4), (0, 0x2C, 7), (0, 0x34, 6), (0, 0x38, 5),
-            (0, 0x3C, 8), (1, 0x25, 6), (1, 0x2D, 7), (1, 0x35, 8), (1, 0x3D, 10), (1, 0x3F, 10),
+            (0, 0x20, 3),
+            (0, 0x24, 5),
+            (0, 0x28, 4),
+            (0, 0x2C, 7),
+            (0, 0x34, 6),
+            (0, 0x38, 5),
+            (0, 0x3C, 8),
+            (1, 0x25, 6),
+            (1, 0x2D, 7),
+            (1, 0x35, 8),
+            (1, 0x3D, 10),
+            (1, 0x3F, 10),
         ] {
-            assert_eq!(primitive_words(flag, mode), Some(ilen), "flag {flag} mode {mode:#x}");
+            assert_eq!(
+                primitive_words(flag, mode),
+                Some(ilen),
+                "flag {flag} mode {mode:#x}"
+            );
         }
         assert_eq!(primitive_words(0, 0x40), None);
     }

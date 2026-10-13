@@ -12,3 +12,4 @@ backend = { path = "../backend" }
 pack = { path = "../pack" }
 
 [dev-dependencies]
+png = "0.17"

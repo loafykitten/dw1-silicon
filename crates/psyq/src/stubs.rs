@@ -40,12 +40,3 @@ stubs! {
     GsTMDfastTF4NL GsTMDfastTG3L GsTMDfastTG3NL GsTMDfastTG4L GsTMDfastTG4NL GsTMDfastTNF3
     GsTMDfastTNF4 GsTMDfastTNG3 GsTMDfastTNG4
 }
-
-// libcd's movie streaming calls (the rest is in `libcd`; its data global is in `globals`).
-stubs! {
-    CdRead2
-    StCdInterrupt StFreeRing StGetBackloc StGetNext StSetRing StSetStream StUnSetRing
-}
-
-// libpress: the MDEC.
-stubs! { DecDCTin DecDCTout DecDCToutCallback DecDCTReset DecDCTvlc2 DecDCTvlcBuild }
