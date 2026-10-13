@@ -61,7 +61,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     (`docs/canonical-state.md`, 834 bytes) at 19 checkpoints; the record run and two fresh-process
     replays gave byte-identical dumps, and the debugger does not perturb the run. Field rate:
     564398 CPU cycles per VBlank = 60.009 Hz (Redux) vs 59.817 Hz on hardware, 0.32% shorter
-    (`docs/s08-oracle.md`). Not done: certification on booklab, OpenBIOS.
+    (`docs/s08-oracle.md`). Also certified on booklab (M1). Not done: OpenBIOS.
   - **S0.7 done:** `docs/s07-libgs-spike.md`. `oracle/capture-libgs.lua` records the machine
     around every `GsSortObject4J` call in one frame (48 calls); a clean Rust
     `psyq::libgs::sort_object4j` (lit GT3/GT4, from psx-spx and black-box captures) matches
@@ -70,8 +70,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     capture of a scene that uses it.
 - **SDK rule set (Ember, 2026-10-13):** clean reimplementation of Sony's SDK (see Ground
   rules).
-- **Next:** the rest of S0.6 (SDL3-rs vs winit/cpal), the rest of S0.8 (booklab
-  certification, OpenBIOS check; optional), S0.9 (go / no-go report).
+- **Next:** the rest of S0.6 (SDL3-rs vs winit/cpal), the rest of S0.8 (OpenBIOS check; optional), S0.9 (go / no-go report).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
   known-good redump of SLUS-01032, checked 2026-10-13); Ember's PS1 BIOS dump

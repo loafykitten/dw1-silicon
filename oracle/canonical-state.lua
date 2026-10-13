@@ -8,7 +8,7 @@
 --
 -- Use inside Redux:  local C = dofile('.../canonical-state.lua'); local rec = C.collect()
 --   C.encode(rec) -> binary string      C.render(rec) -> text string
---   C.dump(basename) -> writes basename.bin and basename.txt (via DW1ROUTE_WRITE if defined)
+--   C.dump(basename) -> writes basename.bin and basename.txt; raises on any write error
 -- Also loadable outside Redux with a memory reader: C.collect(function(off, n) ... end) where
 -- the function returns the n bytes at RAM offset `off` as a string.
 --
@@ -362,8 +362,14 @@ end
 
 function C.dump(basename, reader)
     local rec = C.collect(reader)
-    local write = DW1ROUTE_WRITE or function(name, data)
-        local f = assert(io.open(name, 'wb')); f:write(data); f:close()
+    -- Strict writer: any failure raises (callers such as oracle/replay.lua turn that into a failed run).
+    local function write(name, data)
+        local f, err = io.open(name, 'wb')
+        if not f then error(name .. ': ' .. tostring(err)) end
+        local ok, werr = f:write(data)
+        local cok, cerr = f:close()
+        if not ok then error(name .. ': ' .. tostring(werr)) end
+        if not cok then error(name .. ': ' .. tostring(cerr)) end
     end
     write(basename .. '.bin', C.encode(rec))
     write(basename .. '.txt', C.render(rec))

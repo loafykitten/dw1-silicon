@@ -99,7 +99,7 @@ environment `DW1REPLAY_MODE=record|replay`; `DW1REPLAY_FILE` (replay input, defa
   run on a Lua error.
 - **Checkpoints** (canonical dump, `ckpt_NNNN_<why>.bin/.txt` in the run directory): at each change
   of `MAIN_STATE`, `GAME_STATE` or `CURRENT_SCREEN` (tested at each poll return), every 600 polls,
-  and at the end. The gameplay route makes 19: three at the first poll (initial values), 12
+  and at the end. The gameplay route makes 19: three at the first poll (initial values), 11
   "every 600 polls", screen changes to 204, 238, 218 and 204 again, and `final`. MAIN_STATE and
   GAME_STATE stay 0 for the whole route.
 
@@ -121,31 +121,49 @@ time, the pinned binary and flags above.
 - **The debugger does not perturb emulation:** the record run's BIOS rand state at VBlank 19400
   (`0xb738fdb3`) and all 16 milestone screenshots (`.raw`) are byte-identical to the plain
   route run's.
-- Not tested: the replay on a second machine (booklab), and a replay with an altered poll
-  (the failure paths are exercised only by the earlier breakpoint-limit failure).
+- **Second machine (booklab, Apple M1, same pinned Redux binary, same BIOS and disc SHA-1s):**
+  the replay of `oracle/replays/new-game.txt` exited 0 in 389 s and all 19 checkpoint dumps are
+  byte-identical to this Mac's replay 1 (run by Ember's coordinator).
+- **Negative test 1:** changing the caller address of poll 20 makes the replay fail with exit 1
+  at poll 20 ("divergence at poll 20").
+- **Negative test 2:** in a copy of the replay file, the whole CROSS press at polls 474-477
+  (VBlanks 2400-2403, the title menu's NEW GAME) was zeroed. The replay exits 1 after 64 s:
+  "divergence at poll 1045: caller 0x800efe2c, recorded 0x800efd84 (vblank 3217)" (the game was
+  still in a menu loop, `pollInputMenu`, where the recording had reached `pollInputGame`). The
+  four checkpoints written before that are identical to the recording's. Zeroing only polls
+  474-475 still exited 0 with identical checkpoints, because the press continued at 476-477.
+- **Scope.** This certifies replays on the pinned Redux configuration (26bfd693, interpreter, soft
+  GPU, this BIOS and disc) on two machines. Keying to polls does not make a replay independent
+  of CPU timing: CD completion that crosses a VBlank, and the movie code's CPU-iteration limits
+  (`MOV_decodeFrame`, `MOV_waitForFlip`), can change control flow, and a different emulator
+  build or core could diverge. The replay fails loudly on such a divergence rather than hiding
+  it.
+- **Hardening after review:** the run only exits 0 through the real completion path. At the end it
+  checks that the debugger is still on, the entry and return breakpoints are enabled and no
+  `PadRead` is pending; a Quitting event before completion exits 1; canonical dump writes check
+  every write and close. Re-recorded and replayed twice afterwards: the replay file and all 19
+  dumps are byte-identical to the first certification.
 
 ### Field rate
 
-`oracle/field-rate.lua`: `PCSX.getCPUCycles()` at each `GPU::Vsync` over 1000 VBlanks right
-after the route reaches gameplay (VBlanks 19400-20400, game idle, no debugger). 999 intervals
-(the first sample was a duplicate): mean **564398.0** cycles per VBlank, min 564154, max 564649,
-so **Hz = 33868800 / 564398.0 = 60.0087**. That is exactly Redux's 2146 x 263 = 564398
+`oracle/field-rate.lua`: `PCSX.getCPUCycles()` at each `GPU::Vsync`, collecting exactly 1000 real
+intervals right after the route reaches gameplay (VBlanks 19400-20400, game idle, no debugger):
+mean **564398.0** cycles per VBlank (564397.997), min 564154, max 564649, so
+**Hz = 33868800 / 564398.0 = 60.0087**. That is Redux's 2146 x 263 = 564398
 (`src/core/psxcounters.cc`); the +-250 cycle spread is the VBlank event being taken at the next
 instruction boundary. Hardware NTSC non-interlaced is 53.693175 MHz / (3413 x 263) = 59.817 Hz
-(566204 CPU cycles per field), so a Redux field is 0.32% shorter in CPU cycles and the oracle
-runs about 0.3% fewer instructions per frame than the console would.
+(566204 CPU cycles per field), so a Redux field is 0.32% shorter in CPU cycles.
 
-What that means for the oracle: the game's logic counts VBlanks (`VSync(n)`, the 20-ticks-a-minute
-clock advance per game update), so VBlank-keyed behavior is identical to hardware; the 0.3%
-difference only shows in things that count CPU time inside a frame (movie timeouts, CD/SPU
-completion in cycles) and in wall-clock pacing. Replays are keyed to pad polls and checkpointed
-at poll counts, not at CPU cycles, so they are unaffected. A port that wants hardware pacing
-should present at 59.82 Hz (non-interlaced); the oracle's 60.009 Hz is a property of Redux's
-counter constants, not of the game.
+What that means for the oracle: the game counts VBlanks (`VSync(n)`, the clock advances 20 ticks
+a minute per game update), so logic keyed to VBlanks sees the same number of frames, but each
+Redux frame holds about 0.3% fewer CPU cycles than hardware. Anything that depends on CPU time
+inside a frame (movie code's iteration limits, CD/SPU completion) can behave differently from
+the console, and this has not been checked against hardware. A port that wants hardware pacing
+should present at 59.82 Hz (non-interlaced); the oracle's 60.009 Hz comes from Redux's counter
+constants, not from the game.
 
 ## Not done yet
 
-- Certification on booklab (the replay has only been run on this Mac).
 - Where the game is at VBlanks 1393/1423 (probably the new-game intro), and getting further
   (the probe stops making progress after that; it needs menu-specific input).
 - `VSync(n)` timing against hardware (the field rate itself is measured, above).

@@ -1,8 +1,9 @@
 -- Oracle pad replays keyed to pad polls (S0.8). docs/s08-oracle.md has the certification results.
 --
 -- The game reads the controller only through libetc PadRead (0x80091BE8; 14 call sites). Both
--- modes hook PadRead's entry (to read $ra) and put a one-shot breakpoint on $ra to see v0 at
--- return. Breakpoints only fire with the debugger on, so the script switches it on from Lua
+-- modes hook PadRead's entry (to read $ra) and keep a persistent breakpoint on each distinct
+-- caller's return address (at most 14) to see v0 at return; the entry hook arms the one
+-- matching its $ra. Breakpoints only fire with the debugger on, so the script switches it on from Lua
 -- (don't pass -debugger).
 --
 -- Mode (global DW1REPLAY_MODE or env DW1REPLAY_MODE; default 'record'):
@@ -21,6 +22,9 @@
 -- ckpt_NNNN_<why>.bin/.txt: at every change of MAIN_STATE, GAME_STATE or CURRENT_SCREEN (checked
 -- at each poll return), every 600 polls, and "final". Run from a fresh empty directory under
 -- captures/oracle-runs/ (see docs/s08-oracle.md for the command line).
+-- The run only exits 0 through the real completion path (which first checks that the hooks are
+-- still alive: debugger on, entry and return breakpoints enabled, no PadRead pending); a Quitting
+-- event before that forces exit 1.
 -- Output lines start with "DW1REPLAY".
 
 local function here()
@@ -40,7 +44,7 @@ local REDUX_COMMIT = '26bfd693'
 local BIOS_SHA1 = '649895efd79d14790eabb362e94eb0622093dfb9'
 local DISC_SHA1 = '5611645da66183e30d11fb6c11a2784ff47e1fdb'
 
-local failed = false
+local failed, succeeded = false, false
 local function fail(msg)
     if failed then return end
     failed = true
@@ -49,6 +53,7 @@ local function fail(msg)
 end
 local function succeed()
     if failed then return end
+    succeeded = true
     if DW1ROUTE_SUCCEED then DW1ROUTE_SUCCEED() else PCSX.quit(0) end
 end
 local function write(name, data)
@@ -194,7 +199,19 @@ local function finish(v)
     if finished then return end
     finished = true
     checkpoint('final')
-    if entryBp then entryBp:remove() end
+    if failed then return end
+    -- Hook health: a deleted breakpoint or a disabled debugger would leave a partial recording
+    -- that still looks successful.
+    if not PCSX.settings.emulator.Debug.Debug then return fail('debugger was switched off during the run') end
+    if not entryBp or not entryBp:isEnabled() then return fail('PadRead entry breakpoint is gone') end
+    local nret = 0
+    for ra, bp in pairs(returnBps) do
+        nret = nret + 1
+        if not bp:isEnabled() then return fail(string.format('return breakpoint %08x is gone', ra)) end
+    end
+    if nret == 0 then return fail('no PadRead call was ever seen') end
+    if pendingRa then return fail(string.format('PadRead (caller 0x%08x) still pending at the end', pendingRa)) end
+    entryBp:remove()
     if MODE == 'record' then
         local hdr = {
             '# dw1-silicon pad replay: PadRead (0x80091BE8) results keyed to poll sequence number.',
@@ -231,19 +248,33 @@ entryBp = PCSX.addBreakpoint(PAD_READ, 'Exec', 4, 'PadRead', onEntry)
 
 if MODE == 'record' then
     DW1ROUTE_TARGET = TARGET
-    DW1ROUTE_ON_TARGET = function(v) finish(v) end
-    dofile(HERE .. '/route-new-game.lua')
-    -- route-new-game.lua owns the VBlank count; mirror it with our own listener, registered after
-    -- the route's. Both advance once per GPU::Vsync, and the route's callback (which can end the
-    -- run) never reads ours.
+    DW1ROUTE_ON_TARGET = function(v)
+        if v ~= vblank then return fail(string.format('VBlank counters disagree: route %d, ours %d', v, vblank)) end
+        local ok, err = xpcall(finish, debug.traceback, vblank)
+        if not ok then fail('error finishing: ' .. tostring(err)) end
+    end
+    -- One VBlank counter: ours, registered before the route's listener so it has advanced
+    -- before the route's callbacks (which can end the run) run for the same event.
     KEEP_REPLAY_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function() vblank = vblank + 1 end)
+    dofile(HERE .. '/route-new-game.lua')
 elseif MODE == 'replay' then
     local finalVblank = tonumber(header.final_vblank)
     KEEP_REPLAY_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
         vblank = vblank + 1
-        if vblank == finalVblank then finish(vblank) end
+        if vblank == finalVblank then
+            local ok, err = xpcall(finish, debug.traceback, vblank)
+            if not ok then fail('error finishing: ' .. tostring(err)) end
+        end
     end)
     print(string.format('DW1REPLAY replaying %s: %d polls, final vblank %d, target %s', FILE, #rec.value, finalVblank, tostring(header.target)))
 else
     fail('unknown DW1REPLAY_MODE ' .. tostring(MODE))
 end
+
+-- Closing Redux or quitting before the real completion path must not look like success.
+KEEP_REPLAY_QUIT = PCSX.Events.createEventListener('Quitting', function()
+    if not succeeded then
+        print('DW1REPLAY FAIL quit before the run completed')
+        PCSX.quit(1)
+    end
+end)
