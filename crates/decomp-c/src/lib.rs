@@ -1,11 +1,11 @@
 //! The decomp's game C, compiled for arm64 (see `build.rs`), and the Rust view of it: extern
-//! declarations for the C functions Rust calls, and bindgen bindings for the decomp structs
-//! Rust reads, each checked against its PS1 size.
+//! declarations for the C functions Rust calls, and bindgen bindings for the decomp and SDK
+//! structs Rust reads, each checked against its PS1 size.
 
-use core::ffi::c_long;
-
-// Keep the psyq symbols the C needs (`dw1_bios_rand`) in the link.
+// Keep the psyq symbols the C needs in the link.
 use psyq as _;
+
+mod overlays;
 
 #[allow(
     non_camel_case_types,
@@ -22,12 +22,32 @@ pub mod bindings {
 const _: () = {
     assert!(size_of::<bindings::DigimonPara>() == 0x34);
     assert!(size_of::<bindings::PartnerPara>() == 0x84);
+    // SDK types with `long` members: 32-bit `long` (dw1_native.h) keeps the PS1 layout.
+    assert!(size_of::<bindings::VECTOR>() == 16);
+    assert!(size_of::<bindings::SVECTOR>() == 8);
+    assert!(size_of::<bindings::MATRIX>() == 32);
+    assert!(core::mem::offset_of!(bindings::MATRIX, t) == 20);
+};
+
+/// The SDK globals psyq defines in Rust have the layout the C headers declare.
+const _: () = {
+    assert!(size_of::<psyq::globals::Matrix>() == size_of::<bindings::MATRIX>());
+    assert!(
+        core::mem::offset_of!(psyq::globals::Matrix, t)
+            == core::mem::offset_of!(bindings::MATRIX, t)
+    );
+    assert!(
+        size_of::<[Option<unsafe extern "C" fn()>; psyq::globals::GS_FCALL_SLOTS]>()
+            == size_of::<bindings::_GsFCALL>()
+    );
 };
 
 unsafe extern "C" {
-    // src/main/rng.c. Declared with `long` in the decomp, which is 64-bit on macOS; to become
-    // `int32_t` under DW1_NATIVE (S0.5 survey, `long` inventory).
-    pub fn customRandom(min: c_long, max: c_long) -> i32;
+    // src/main/main.c: the game's main(), renamed by dw1_native.h.
+    pub fn dw1_game_main() -> i32;
+
+    // src/main/rng.c (declared with `long`, 32-bit in the native build)
+    pub fn customRandom(min: i32, max: i32) -> i32;
     pub static mut CUSTOM_RNG_VAL1: u32;
     pub static mut CUSTOM_RNG_VAL2: u32;
 
@@ -110,7 +130,7 @@ mod tests {
         }
         for (min, max) in [(0, 99), (5, 5), (10, 1), (-50, 50), (0, 0x7FFF), (1, 3)] {
             for _ in 0..100 {
-                let c = unsafe { customRandom(min.into(), max.into()) };
+                let c = unsafe { customRandom(min, max) };
                 assert_eq!(
                     c,
                     custom_random_model(&mut model, min, max),
@@ -132,5 +152,79 @@ mod tests {
                 "randomLimit({limit})"
             );
         }
+    }
+}
+
+/// The build script's CP932 literal encoder, tested here (build scripts have no tests).
+#[cfg(test)]
+mod literals;
+
+#[cfg(test)]
+mod literal_tests {
+    use super::literals::{encode_literals, literal_chars};
+
+    /// Python's cp932 for the characters used here (build.rs asks Python for the real table).
+    fn cp932(c: char) -> Option<Vec<u8>> {
+        match c {
+            'あ' => Some(vec![0x82, 0xA0]),
+            'Ｂ' => Some(vec![0x82, 0x61]),
+            '〜' => Some(vec![0x81, 0x60]),
+            _ => None,
+        }
+    }
+
+    fn enc(src: &str) -> Option<String> {
+        encode_literals(src, "test.c", &mut cp932)
+    }
+
+    #[test]
+    fn literals_become_cp932_escapes() {
+        assert_eq!(
+            enc("char s[] = \"あＢ1〜\";").unwrap(),
+            "char s[] = \"\\202\\240\\202\\1411\\201\\140\";"
+        );
+        assert_eq!(enc("int c = 'あ';").unwrap(), "int c = '\\202\\240';");
+        // Escaped quotes don't end the literal.
+        assert_eq!(enc("\"\\\"あ\"").unwrap(), "\"\\\"\\202\\240\"");
+        // Universal-character names are encoded the same way; ASCII ones are left alone.
+        assert_eq!(
+            enc("\"\\u3042\\U00003042\\u0041\"").unwrap(),
+            "\"\\202\\240\\202\\240\\u0041\""
+        );
+        assert_eq!(
+            literal_chars("/* ア */ \"あ\\u3042\" 'Ｂ'"),
+            ['あ', 'あ', 'Ｂ']
+        );
+    }
+
+    #[test]
+    fn everything_outside_literals_is_untouched() {
+        assert_eq!(enc("/* \"あ\" */ // 'あ'\nint x;"), None);
+        assert_eq!(enc("int x; /* it's */ char y = 'a';"), None);
+        // A spliced line comment stays a comment on the next line.
+        assert_eq!(enc("// note \\\n\"あ\"\nint x;"), None);
+        assert_eq!(enc("// note \\\r\n\"あ\"\nint x;"), None);
+    }
+
+    #[test]
+    fn splices_are_removed_before_lexing_and_kept_in_the_output() {
+        // Inside a literal, LF and CRLF.
+        assert_eq!(enc("\"a\\\r\nあ\"").unwrap(), "\"a\\\r\n\\202\\240\"");
+        assert_eq!(enc("\"a\\\nあ\"").unwrap(), "\"a\\\n\\202\\240\"");
+        // A block-comment terminator split by a splice still ends the comment.
+        assert_eq!(
+            enc("/* x *\\\n/ \"あ\"").unwrap(),
+            "/* x *\\\n/ \"\\202\\240\""
+        );
+        // A splice inside a \u escape: the bytes replace the escape, the splice stays.
+        assert_eq!(enc("\"\\u30\\\n42\"").unwrap(), "\"\\202\\240\\\n\"");
+        // Splices at the very end survive.
+        assert_eq!(enc("\"あ\"\\\n").unwrap(), "\"\\202\\240\"\\\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "test.c: no CP932 encoding for '😀'")]
+    fn an_unencodable_character_names_its_file() {
+        enc("\"😀\"");
     }
 }

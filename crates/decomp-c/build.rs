@@ -1,48 +1,100 @@
-//! Compiles game C from the `decomp/` submodule for the host and generates Rust bindings for
-//! the decomp structs Rust needs to read.
+//! Compiles the game C from the `decomp/` submodule for arm64 macOS, links all of it, and
+//! generates Rust bindings for the decomp and SDK structs Rust needs to read.
 //!
-//! Only files that build natively without SDK headers are listed so far; the list grows as
-//! `psyq` gains the libraries they call.
+//! - **Files:** the US build's own lists (`decomp/mk/version/us.mk`): main, SHOP and every
+//!   overlay, minus CodeWarrior's startup (`_psstart.c`; the app replaces it).
+//! - **Headers:** `include/` here first (the forced `dw1_native.h` and native replacements for
+//!   PS1-only headers), then the decomp's, then Psy-Q's (`external/psyq_headers`), then the
+//!   generated text headers.
+//! - **Text:** the decomp keeps game text in `text/**/*.yaml`; its own generator
+//!   (`tools/gen_text.py`) writes the headers into `OUT_DIR`, as Shift-JIS byte escapes.
+//! - **Shift-JIS literals:** the PS1 build compiles with `-fexec-charset=CP932`, which clang
+//!   lacks, and clang would silently store UTF-8. Files with non-ASCII string or character
+//!   literals are copied into `OUT_DIR` with those characters as CP932 octal escapes.
+//! - **Linking:** the whole archive is linked (`+whole-archive`), so every symbol any game file needs must
+//!   resolve (in `psyq`, or here), and a build check fails if the game C would bind to a
+//!   macOS libc function instead of the PS1 one.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-/// Game C files built natively, relative to `decomp/`.
-const GAME_C: &[&str] = &[
-    "src/main/rng.c",
-    "src/main/math.c",
-    // Owns SIN_LOOKUP_TABLE and ATAN_LOOKUP_TABLE (math.c's trig) and the file table.
-    "src/main/file_table_us.c",
+#[path = "src/literals.rs"]
+mod literals;
+
+/// Units of the US build that this crate compiles, by their `us.mk` variable prefix.
+const UNITS: &[&str] = &[
+    "MAIN", "SHOP", "BTL", "DGET", "DOO2", "DOOA", "EAB", "ENDI", "EVL", "FISH", "KAR", "MOV",
+    "MURD", "STD", "TRN2", "TRN", "VS",
 ];
 
-/// Headers bindgen reads, relative to `decomp/include/`.
-const BOUND_HEADERS: &[&str] = &["dw/params.h"];
+/// CodeWarrior's startup code (copyrighted, MIPS assembly); the native app starts the game.
+const EXCLUDED: &[&str] = &["src/main/_psstart.c"];
 
-/// Preprocessor setup shared by the C compiler and bindgen, so the bindings describe the C
-/// exactly as it is compiled (including everything `DW1_NATIVE` changes).
-fn preprocessor_args(native_include: &Path, decomp_include: &Path) -> Vec<String> {
-    vec![
-        format!("-I{}", native_include.display()),
-        format!("-I{}", decomp_include.display()),
-        "-DVERSION_US".into(),
-        "-DLANGUAGE_C".into(),
-        "-include".into(),
-        native_include.join("dw1_native.h").display().to_string(),
-    ]
-}
+/// Host symbols the game C may reference: `setjmp.h`'s replacement, clang's stack protector,
+/// and the memory functions clang emits itself for struct copies and zeroing (source calls
+/// are renamed to `dw1_` by `dw1_native.h`, so only compiler-generated ones remain, with the
+/// host ABI). Anything else macOS's libSystem exports is a mistake: a PS1 libc call that
+/// `dw1_native.h` doesn't rename.
+const HOST_ALLOWED: &[&str] = &[
+    "__setjmp",
+    "__longjmp",
+    "___stack_chk_fail",
+    "___stack_chk_guard",
+    "_memcpy",
+    "_memmove",
+    "_memset",
+    "_bzero",
+];
+
+/// Headers bindgen reads, relative to the include path.
+const BOUND_HEADERS: &[&str] = &[
+    "sys/types.h",
+    "libgte.h",
+    "libgpu.h",
+    "libgs.h",
+    "dw/params.h",
+];
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let decomp = manifest
         .join("../../decomp")
         .canonicalize()
         .expect("decomp/ submodule missing: run `git submodule update --init decomp`");
-    let decomp_include = decomp.join("include");
+    let workspace = manifest.join("../..").canonicalize().unwrap();
+
     let native_include = manifest.join("include");
-    let cpp_args = preprocessor_args(&native_include, &decomp_include);
+    let psyq_include = decomp.join("external/psyq_headers/mw_lib41/include");
+    assert!(
+        psyq_include.join("libgs.h").exists(),
+        "Psy-Q headers missing: run `git -C decomp submodule update --init external/psyq_headers`"
+    );
+    let python = python(&workspace);
+    let generated = out.join("generated");
+    generate_text_headers(&decomp, &python, &generated);
+
+    let cpp_args = preprocessor_args(&[
+        &native_include,
+        &decomp.join("include"),
+        &psyq_include,
+        &generated,
+    ]);
+    let sources = c_sources(&decomp);
+    let objects_dir = out.join("sjis");
 
     let mut build = cc::Build::new();
-    build.std("gnu99").warnings(true);
+    build
+        .std("gnu99")
+        .warnings(true)
+        .extra_warnings(true)
+        // Whole archive: every game file is linked, so every unresolved call shows up now.
+        .link_lib_modifier("+whole-archive")
+        // `DW1_WARNINGS=1 cargo build -p decomp-c` prints every warning (Phase 1 triage).
+        .cargo_warnings(env::var_os("DW1_WARNINGS").is_some());
     for arg in &cpp_args {
         build.flag(arg);
     }
@@ -55,32 +107,278 @@ fn main() {
         .flag("-fno-builtin")
         // Plain char is signed for MIPS GCC and for Apple arm64; pinned so it can't drift.
         // The retail CodeWarrior default is unconfirmed (docs/survey.md, item 8).
-        .flag("-fsigned-char");
-    for file in GAME_C {
-        build.file(decomp.join(file));
+        .flag("-fsigned-char")
+        // Noise from matching-decomp style, not ABI hazards (docs/phase1-report.md).
+        .flag("-Wno-unknown-pragmas")
+        .flag("-Wno-unused-parameter");
+    let texts: Vec<(PathBuf, String)> = sources
+        .iter()
+        .map(|rel| {
+            let path = decomp.join(rel);
+            let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            (path, text)
+        })
+        .collect();
+    let cp932 = cp932_table(
+        &python,
+        texts
+            .iter()
+            .flat_map(|(_, text)| literals::literal_chars(text)),
+    );
+    for ((path, text), rel) in texts.iter().zip(&sources) {
+        match literals::encode_literals(text, rel, &mut |c| cp932.get(&c).cloned()) {
+            None => {
+                build.file(path);
+            }
+            Some(encoded) => {
+                let copy = objects_dir.join(rel);
+                fs::create_dir_all(copy.parent().unwrap()).unwrap();
+                // Diagnostics and debug info keep pointing at the original file.
+                let body = format!("#line 1 \"{}\"\n{encoded}", path.display());
+                write_if_changed(&copy, &body);
+                build.file(&copy);
+            }
+        }
     }
     build.compile("decomp");
 
+    check_host_symbols(&out.join("libdecomp.a"));
+
+    generate_bindings(&cpp_args, &out);
+
+    // Directories are watched recursively, so any header, C or text edit rebuilds.
+    for dir in [
+        decomp.join("src"),
+        decomp.join("include"),
+        decomp.join("text"),
+        decomp.join("tools/gen_text.py"),
+        decomp.join("mk/version/us.mk"),
+        psyq_include,
+        native_include,
+    ] {
+        println!("cargo:rerun-if-changed={}", dir.display());
+    }
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/literals.rs");
+    println!("cargo:rerun-if-env-changed=DW1_WARNINGS");
+    println!("cargo:rerun-if-env-changed=DW1_PYTHON");
+}
+
+/// Preprocessor setup shared by the C compiler and bindgen, so the bindings describe the C
+/// exactly as it is compiled (including everything `dw1_native.h` changes).
+fn preprocessor_args(include_dirs: &[&Path]) -> Vec<String> {
+    let mut args: Vec<String> = include_dirs
+        .iter()
+        .map(|dir| format!("-I{}", dir.display()))
+        .collect();
+    args.extend([
+        "-DVERSION_US".into(),
+        "-DLANGUAGE_C".into(),
+        "-include".into(),
+        include_dirs[0].join("dw1_native.h").display().to_string(),
+    ]);
+    args
+}
+
+/// The C files of every unit in `UNITS`, from the `<UNIT>_C_SRC := \` lists in `us.mk`.
+fn c_sources(decomp: &Path) -> Vec<String> {
+    let mk = fs::read_to_string(decomp.join("mk/version/us.mk")).unwrap();
+    let mut sources = Vec::new();
+    for unit in UNITS {
+        let header = format!("{unit}_C_SRC :=");
+        let mut lines = mk.lines().skip_while(|l| !l.starts_with(&header));
+        assert!(lines.next().is_some(), "us.mk has no {header}");
+        let before = sources.len();
+        for line in lines {
+            let file = line.trim().trim_end_matches('\\').trim();
+            if file.is_empty() {
+                break;
+            }
+            if !EXCLUDED.contains(&file) {
+                sources.push(file.to_string());
+            }
+        }
+        assert!(sources.len() > before, "us.mk lists no files for {unit}");
+    }
+    sources
+}
+
+/// Runs the decomp's text generator for every `text/<dir>/<name>.yaml`, writing
+/// `<generated>/text/<dir>/<name>.h` for the US release.
+fn generate_text_headers(decomp: &Path, python: &Path, generated: &Path) {
+    let text = decomp.join("text");
+    for dir in fs::read_dir(&text).unwrap() {
+        let dir = dir.unwrap().path();
+        if !dir.is_dir() {
+            continue;
+        }
+        for yaml in fs::read_dir(&dir).unwrap() {
+            let yaml = yaml.unwrap().path();
+            if yaml.extension().is_none_or(|e| e != "yaml") {
+                continue;
+            }
+            let rel = yaml.strip_prefix(&text).unwrap().with_extension("h");
+            let header = generated.join("text").join(rel);
+            fs::create_dir_all(header.parent().unwrap()).unwrap();
+            let status = Command::new(python)
+                .arg(decomp.join("tools/gen_text.py"))
+                .args(["us".as_ref(), yaml.as_os_str(), header.as_os_str()])
+                .status()
+                .unwrap_or_else(|e| panic!("running {}: {e} (set DW1_PYTHON)", python.display()));
+            assert!(
+                status.success(),
+                "gen_text.py failed on {} (needs PyYAML: `pip install -r decomp/requirements.txt`)",
+                yaml.display()
+            );
+        }
+    }
+}
+
+/// The Python that runs the decomp's tools: `DW1_PYTHON`, else the workspace's `.venv`, else
+/// `python3` (docs/toolchain.md).
+fn python(workspace: &Path) -> PathBuf {
+    env::var_os("DW1_PYTHON")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let venv = workspace.join(".venv/bin/python");
+            if venv.exists() {
+                venv
+            } else {
+                "python3".into()
+            }
+        })
+}
+
+/// CP932 bytes for each of `chars`, from Python's `cp932` codec: the one the decomp's text
+/// generator uses, so literals in C and text from YAML agree. (Rust's Shift-JIS tables are
+/// WHATWG's, which differ from Microsoft's CP932 for about 2,300 characters.) A character
+/// Python can't encode is left out, and the encoder then names it.
+fn cp932_table(python: &Path, chars: impl Iterator<Item = char>) -> BTreeMap<char, Vec<u8>> {
+    let chars: BTreeSet<char> = chars.collect();
+    if chars.is_empty() {
+        return BTreeMap::new();
+    }
+    const SCRIPT: &str = "import sys\n\
+        for c in sys.stdin.read():\n\
+        \ttry: print(c.encode('cp932').hex())\n\
+        \texcept UnicodeEncodeError: print('-')\n";
+    let mut child = Command::new(python)
+        .args(["-c", SCRIPT])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .env("PYTHONIOENCODING", "utf-8")
+        .spawn()
+        .unwrap_or_else(|e| panic!("running {}: {e} (set DW1_PYTHON)", python.display()));
+    let input: String = chars.iter().collect();
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), input.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "Python's cp932 encoder failed");
+    let lines: Vec<&str> = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .lines()
+        .collect();
+    assert_eq!(
+        lines.len(),
+        chars.len(),
+        "Python's cp932 encoder lost characters"
+    );
+    chars
+        .into_iter()
+        .zip(lines)
+        .filter(|(_, hex)| *hex != "-")
+        .map(|(c, hex)| {
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect();
+            (c, bytes)
+        })
+        .collect()
+}
+
+/// Writes `path` only when its contents change, so unchanged copies don't recompile.
+fn write_if_changed(path: &Path, contents: &str) {
+    if fs::read_to_string(path).is_ok_and(|old| old == contents) {
+        return;
+    }
+    fs::write(path, contents).unwrap();
+}
+
+/// Fails the build if the archive needs a symbol macOS's libSystem would provide, other than
+/// `HOST_ALLOWED`: that would be a PS1 libc call silently bound to the host's version.
+fn check_host_symbols(archive: &Path) {
+    let nm = |args: &[&str]| -> BTreeSet<String> {
+        let output = Command::new("nm")
+            .args(args)
+            .arg(archive)
+            .output()
+            .expect("running nm");
+        assert!(
+            output.status.success(),
+            "nm failed on {}",
+            archive.display()
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.is_empty() && !l.ends_with(':'))
+            .map(str::to_string)
+            .collect()
+    };
+    let undefined = nm(&["-u", "-j"]);
+    let defined = nm(&["-g", "-j", "-U"]);
+
+    let sdk = Command::new("xcrun")
+        .arg("--show-sdk-path")
+        .output()
+        .expect("running xcrun");
+    let sdk = PathBuf::from(String::from_utf8(sdk.stdout).unwrap().trim());
+    let mut host = BTreeSet::new();
+    for tbd in fs::read_dir(sdk.join("usr/lib/system")).unwrap() {
+        let tbd = tbd.unwrap().path();
+        if tbd.extension().is_some_and(|e| e == "tbd") {
+            let text = fs::read_to_string(&tbd).unwrap();
+            host.extend(
+                text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+                    .filter(|s| s.starts_with('_'))
+                    .map(str::to_string),
+            );
+        }
+    }
+    let bound_to_host: Vec<_> = undefined
+        .iter()
+        .filter(|s| {
+            !defined.contains(*s) && host.contains(*s) && !HOST_ALLOWED.contains(&s.as_str())
+        })
+        .collect();
+    assert!(
+        bound_to_host.is_empty(),
+        "game C would call macOS libc for {bound_to_host:?}: rename them in \
+         include/dw1_native.h and implement them in crates/psyq"
+    );
+}
+
+fn generate_bindings(cpp_args: &[String], out: &Path) {
     let mut bindings = bindgen::Builder::default()
         .clang_args(["-std=gnu99", "-fsigned-char"])
-        .clang_args(&cpp_args)
+        .clang_args(cpp_args)
         .allowlist_type("DigimonPara")
         .allowlist_type("PartnerPara")
+        .allowlist_type("MATRIX")
+        .allowlist_type("VECTOR")
+        .allowlist_type("SVECTOR")
+        .allowlist_type("_GsFCALL")
         .use_core()
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
     for header in BOUND_HEADERS {
-        bindings = bindings.header(decomp_include.join(header).to_str().unwrap());
+        bindings = bindings.header_contents(
+            &format!("bound_{}.h", header.replace(['/', '.'], "_")),
+            &format!("#include <{header}>\n"),
+        );
     }
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings
         .generate()
         .expect("bindgen failed on the decomp headers")
         .write_to_file(out.join("bindings.rs"))
         .unwrap();
-
-    // Directories are watched recursively, so any header or C edit rebuilds.
-    for dir in [&decomp.join("src"), &decomp_include, &native_include] {
-        println!("cargo:rerun-if-changed={}", dir.display());
-    }
-    println!("cargo:rerun-if-changed=build.rs");
 }

@@ -5,15 +5,34 @@ same day after an adversarial review by GPT 6 Astra (high) (`docs/plan-review-1.
 whole before starting, and don't re-ask Ember anything answered here. Keep the
 "Where things stand" section current at the end of every session: it is the handoff.
 
-## Where things stand (2026-10-13, end of session 2): start here
+## Where things stand (2026-10-13, session 3): start here
 
+- **Phase 1 is done** (`docs/phase1-report.md`). All 119 US game C files (main, SHOP, all 15
+  overlays) compile with Apple clang and link whole into `dw1`, with every SDK call resolved
+  (187 trapping stubs in `crates/psyq/src/stubs.rs`). `cargo run -p dw1` runs the game's own
+  `main()` until its first SDK call, `InitHeap3`, and stops there with that name. **Next:
+  Phase 2** (boot to the main menu), starting with the unprototyped-call audit (958 calls to
+  32 functions; report, "Warnings") and the heap.
+  - **How the native build keeps PS1 meaning** (`crates/decomp-c/include/dw1_native.h`,
+    force-included): `long` is 32-bit (`#define long int`, after the host's `<stdint.h>`),
+    `NULL` is a pointer, libc calls are renamed `dw1_*` (BIOS semantics from psx-spx, in
+    `crates/psyq/src/libc.rs`), `main` is `dw1_game_main`. Native `inline_n.h` (GTE macros
+    through `crates/psyq/src/gte.rs`), `setjmp.h` (host) and `__rts_info_t__.h` replace the
+    PS1-only headers.
+  - **Build** (`crates/decomp-c/build.rs`): file lists from `decomp/mk/version/us.mk`; text
+    headers from the decomp's `gen_text.py`; non-ASCII string literals re-encoded as CP932 with
+    Python's codec (58 strings checked byte-identical to `SLUS_010.32`); whole-archive link;
+    fails if game C would bind to a macOS libc function. Needs `.venv` (or `DW1_PYTHON`).
+    `DW1_WARNINGS=1` prints the ~3,570 clang warnings (triaged in the report).
+  - **Fork:** `loafykitten/dw_decomp` branch `dw1-native` is pushed (a2ea978: two spelling
+    fixes for `long long`/`long unsigned int`); the decomp's GCC build still passes.
+  - Reviewed by gpt-6.1-sol (high), three passes, converged.
 - **Phase 0 is done, and Ember said go (2026-10-13).** `docs/phase0-report.md` is the S0.9
   report. The go covers the plan as written: the hybrid first (decomp C running natively,
-  Rust for everything around it), then module-by-module migration to Rust. **Next: Phase
-  1.** Main's C plus the `psyq` crate with trapping stubs builds and links for arm64, and
-  every overlay's C compiles.
+  Rust for everything around it), then module-by-module migration to Rust.
 - **Repo:** public at `github.com/loafykitten/dw1-silicon`, branch `phase0` (the only branch
-  so far; `main` comes later by merge). Claude commits and pushes at its discretion.
+  so far, Phase 1 included; `main` comes later by merge). Claude commits and pushes at its
+  discretion.
 - **Plan:** reviewed adversarially (Astra, 19 findings, three blockers; a sample checked
   against the code, all held; `docs/plan-review-1.md`) and revised: this file.
 - **Direction (Ember, 2026-10-13):** a full Rust rewrite is the endgame, reached through a
@@ -31,8 +50,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     tables, CD/card/pad/VBlank/MDEC adapters, synthetic GTE test data. Not eligible: its
     whole sound stack (translated from retail Psy-Q), libgs, most of libgte.
   - **S0.3:** dw_decomp is the `decomp/` submodule (Ember's fork
-    `loafykitten/dw_decomp`, 09c174c, only `external/psyq_headers` initialized, local
-    branch `dw1-native` not pushed); the disc is extracted to the gitignored
+    `loafykitten/dw_decomp`, based on upstream 09c174c, only `external/psyq_headers`
+    initialized; port changes on branch `dw1-native`, pushed since Phase 1); the disc is extracted to the gitignored
     `decomp/disks/us/`; the GCC build passes (`docs/s03-decomp-gcc-build.md`).
   - **S0.4:** `docs/memory.md`. Below 4 GB is impossible on arm64 macOS; design per
     kind of reference; a fixed window at 0x1_8000_0000 is a measured fallback.
@@ -583,3 +602,7 @@ None right now. Add them here as they come up.
   the oracle.
 - 2026-10-13: Sony's SDK is reimplemented clean, from public docs and emulator observation;
   the SDK disassembly answers narrow questions only, never translated (Ground rules).
+- 2026-10-13: Japanese may be translated to English where it helps maintenance ("using
+  high-quality translation sources"). Applied to comments and docs only: Japanese inside the
+  game's string literals (the kana name-entry grid, leftover VS strings) is data the game
+  draws with its Shift-JIS font, so it stays byte-exact.

@@ -6,16 +6,15 @@ written in Rust (DW2-PC is the reference). **Read `PLAN.md` before doing anythin
 it's the handoff, with the goal, ground rules, sources, architecture, oracle, phases
 and open questions.
 
-- **Current status (2026-10-13, end of session 2):** Phase 0 done; Ember said go
-  (2026-10-13, `docs/phase0-report.md`). Next: Phase 1 (main's C links natively).
-  Public repo `loafykitten/dw1-silicon` (branch `phase0`). Direction: hybrid (decomp C game
-  + Rust for everything new), full Rust as the endgame. Done: plan review, S0.1-S0.8
-  (Rust GTE/GPU/decoders; clean Rust `GsSortObject4J` matches 48 captured calls; SDL3
-  provisionally for window/input/audio; PCSX-Redux oracle pinned to 26bfd693 because of
-  upstream bug #2322, with pad replays and state dumps certified byte-identical on this Mac
-  and booklab). Sony's SDK is reimplemented clean (never translated from disassembly).
-  PLAN.md's "Where things stand" is the handoff, including how to work with the oracle;
-  keep it and this line current at the end of every session.
+- **Current status (2026-10-13, session 3):** Phase 1 done (`docs/phase1-report.md`): all
+  119 US game C files compile natively and link whole into `dw1`, every SDK call resolved
+  (unimplemented ones trap by name); `cargo run -p dw1` runs the game's `main()` to its first
+  SDK call (`InitHeap3`). Next: Phase 2 (boot to the main menu). Phase 0 done, Ember said go.
+  Public repo `loafykitten/dw1-silicon` (branch `phase0`); decomp fork branch `dw1-native`
+  pushed. Direction: hybrid (decomp C game + Rust for everything new), full Rust as the
+  endgame. Sony's SDK is reimplemented clean (never translated from disassembly). PLAN.md's
+  "Where things stand" is the handoff, including how to work with the oracle; keep it and
+  this line current at the end of every session.
 - **Never commit disc data** (image, extracted files, assets, dumps, captures). They live
   under the gitignored `disc/`, `dumps/`, `build/`, `captures/`, `ref/`. Check
   `git status` before every commit.
