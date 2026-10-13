@@ -1,0 +1,24 @@
+# Disc data and anything derived from it: never commit
+disc/
+dumps/
+captures/
+*.bin
+*.cue
+*.iso
+*.7z
+*.img
+*.mcd
+*.pak
+
+# Build output
+build/
+local.mk
+
+# Toolchain pieces that can't be redistributed
+cc_mips*.dll
+
+.DS_Store
+
+# Upstream reference clones (read-only, for surveys and reviews)
+ref/
+.venv/
