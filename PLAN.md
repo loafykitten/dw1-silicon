@@ -54,8 +54,14 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     upstream as grumpycoders/pcsx-redux#2322 on 2026-10-13; unpin once it's fixed). **New-game route**
     (`oracle/route-new-game.lua`, `docs/oracle-route.md`): deterministic inputs from boot to
     first gameplay with the tamer and Agumon on screen (VBlank 19400), milestone screenshots
-    (`oracle/raw2png.py`), reproducible across runs. Real input replays keyed to pad polls
-    and state dumps still to do.
+    (`oracle/raw2png.py`), reproducible across runs. **Replays, state dumps and field rate
+    done (session 2):** `oracle/replay.lua` records the game's `PadRead` results (7131 polls to
+    gameplay, `oracle/replays/new-game.txt`) and replays them with no pad overrides, failing on
+    divergence; `oracle/canonical-state.lua` writes the schema-v1 state dump
+    (`docs/canonical-state.md`, 834 bytes) at 19 checkpoints; the record run and two fresh-process
+    replays gave byte-identical dumps, and the debugger does not perturb the run. Field rate:
+    564398 CPU cycles per VBlank = 60.009 Hz (Redux) vs 59.817 Hz on hardware, 0.32% shorter
+    (`docs/s08-oracle.md`). Not done: certification on booklab, OpenBIOS.
   - **S0.7 done:** `docs/s07-libgs-spike.md`. `oracle/capture-libgs.lua` records the machine
     around every `GsSortObject4J` call in one frame (48 calls); a clean Rust
     `psyq::libgs::sort_object4j` (lit GT3/GT4, from psx-spx and black-box captures) matches
@@ -64,8 +70,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     capture of a scene that uses it.
 - **SDK rule set (Ember, 2026-10-13):** clean reimplementation of Sony's SDK (see Ground
   rules).
-- **Next:** the rest of S0.6 (SDL3-rs vs winit/cpal), the rest of S0.8 (replays, state
-  dumps, field rate), S0.9 (go / no-go report).
+- **Next:** the rest of S0.6 (SDL3-rs vs winit/cpal), the rest of S0.8 (booklab
+  certification, OpenBIOS check; optional), S0.9 (go / no-go report).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
   known-good redump of SLUS-01032, checked 2026-10-13); Ember's PS1 BIOS dump
@@ -307,7 +313,7 @@ comparisons.
   SDK `rand` exactly (macOS libc's would change gameplay), with its initial state, and
   checkpoints record RNG call counts.
 - **Timing is measured, not assumed** (finding 12): the PS1's non-interlaced NTSC field
-  rate is about 59.826 Hz, interlaced 59.940 Hz; DW1 runs 320×240 non-interlaced. The plan
+  rate is about 59.82 Hz (59.817 from the video clock; measured Redux: 60.009), interlaced 59.940 Hz; DW1 runs 320×240 non-interlaced. The plan
   keeps VBlank/field timing, game-update cadence (the clock: 20 ticks per game minute,
   `src/main/clock.c`) and presentation cadence separate, and preserves `VSync(n)`
   semantics. Any 59.94 or 60 Hz presentation mode is labelled as such.

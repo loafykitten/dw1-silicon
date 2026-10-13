@@ -83,3 +83,11 @@ screenshots for all 16 milestones. Final screenshot:
   (`PCSX.createSaveState` / `PCSX.loadSaveState`) sent the game back to the intro movie (seen on
   the buggy build; not re-tested).
 - Screenshots are 320x240, 16-bit (bpp 0), converted by `oracle/raw2png.py`.
+
+## Replays
+
+`oracle/replay.lua` records the pad polls this route produces (`oracle/replays/new-game.txt`, 7131
+polls to VBlank 19400) and replays them with no pad overrides; two fresh-process replays gave
+canonical state dumps byte-identical to the recording's. The recording run with breakpoints on
+reached the same BIOS rand state (`0xb738fdb3`) and the same 16 screenshots as the plain route.
+See `docs/s08-oracle.md`.

@@ -70,12 +70,84 @@ Reported as grumpycoders/pcsx-redux#2322 (2026-10-13); unpin once it's fixed.
 - **Deterministic:** two fresh emulator processes gave identical probe output (seed, call
   counts, VBlank numbers).
 
+## Replays, canonical state, certification (2026-10-13, session 2)
+
+**Scripts.** `oracle/replay.lua` (modes `record` and `replay`), the committed replay
+`oracle/replays/new-game.txt` (7131 polls; pad masks, VBlank numbers and caller addresses, no
+game data), `oracle/canonical-state.lua` (schema in `docs/canonical-state.md`) and
+`oracle/field-rate.lua`. Same command line as above with `-dofile "$R/oracle/replay.lua"` and the
+environment `DW1REPLAY_MODE=record|replay`; `DW1REPLAY_FILE` (replay input, default
+`oracle/replays/new-game.txt`), `DW1REPLAY_OUT` (record output, default `./replay.txt`),
+`DW1REPLAY_TARGET` (route milestone to stop at, default `gameplay`).
+
+- **Pad hook.** The game reads the pad only through `PadRead` (0x80091BE8). The script breaks on
+  its entry (reads `$ra`) and on `$ra` (reads `v0` at return). Record logs
+  `seq vblank mask ra`; replay installs no pad overrides and overwrites `v0` with the recorded
+  mask. It fails with exit 1 and the sequence number if a caller address differs, if polls run
+  past the recording, or if fewer were consumed at the end, and it reports whether the VBlank
+  numbers line up. Breakpoints need `PCSX.settings.emulator.Debug.Debug = true`, switched on from
+  Lua at start; it did not slow emulation (385 s with breakpoints vs 383 s without, 19400 VBlanks).
+- **The 7131 polls:** 3315 from `MOV_playMovie` (0x800108D8, the FMV Start test, 2 VBlanks apart
+  from VBlank 1651), 2656 from `pollInputGame` (0x800EFD84), 994 from `pollInputMenu`
+  (0x800EFE2C), 166 from `handlePause` (0x800E633C); 453 have a button down. The pad is read
+  throughout, including gameplay (the last poll is at VBlank 19398).
+- **Pitfall:** every Lua breakpoint costs a LuaJIT ffi callback and a process gets only about
+  2000, so a breakpoint per poll died after 2043 polls ("too many callbacks", and Redux logs
+  "Lua Breakpoint invoker threw an exception, deleting breakpoint" and carries on unobserved,
+  which looks like a clean run that simply stops polling). The return breakpoints are now
+  persistent, one per distinct caller (at most 14), and every callback is wrapped to fail the
+  run on a Lua error.
+- **Checkpoints** (canonical dump, `ckpt_NNNN_<why>.bin/.txt` in the run directory): at each change
+  of `MAIN_STATE`, `GAME_STATE` or `CURRENT_SCREEN` (tested at each poll return), every 600 polls,
+  and at the end. The gameplay route makes 19: three at the first poll (initial values), 12
+  "every 600 polls", screen changes to 204, 238, 218 and 204 again, and `final`. MAIN_STATE and
+  GAME_STATE stay 0 for the whole route.
+
+### Certification
+
+All runs in fresh empty directories under `captures/oracle-runs/s08-replay/`, one emulator at a
+time, the pinned binary and flags above.
+
+| Run | Wall | Result |
+|---|---|---|
+| record (route + hooks) | 385 s | 7131 polls, final VBlank 19400, 19 checkpoints |
+| replay 1 (fresh process) | 384 s | 7131 of 7131 polls, 0 VBlank mismatches, 19 checkpoints |
+| replay 2 (fresh process) | 385 s | same |
+| plain `route-new-game.lua` | 383 s | no hooks, for the perturbation check |
+
+- **Replays are certified:** all 19 checkpoint dumps (834 bytes each) are byte-identical across
+  record, replay 1 and replay 2, the checkpoint names and poll/VBlank numbers agree, and every
+  replayed poll came from the same caller address with the same VBlank number as recorded.
+- **The debugger does not perturb emulation:** the record run's BIOS rand state at VBlank 19400
+  (`0xb738fdb3`) and all 16 milestone screenshots (`.raw`) are byte-identical to the plain
+  route run's.
+- Not tested: the replay on a second machine (booklab), and a replay with an altered poll
+  (the failure paths are exercised only by the earlier breakpoint-limit failure).
+
+### Field rate
+
+`oracle/field-rate.lua`: `PCSX.getCPUCycles()` at each `GPU::Vsync` over 1000 VBlanks right
+after the route reaches gameplay (VBlanks 19400-20400, game idle, no debugger). 999 intervals
+(the first sample was a duplicate): mean **564398.0** cycles per VBlank, min 564154, max 564649,
+so **Hz = 33868800 / 564398.0 = 60.0087**. That is exactly Redux's 2146 x 263 = 564398
+(`src/core/psxcounters.cc`); the +-250 cycle spread is the VBlank event being taken at the next
+instruction boundary. Hardware NTSC non-interlaced is 53.693175 MHz / (3413 x 263) = 59.817 Hz
+(566204 CPU cycles per field), so a Redux field is 0.32% shorter in CPU cycles and the oracle
+runs about 0.3% fewer instructions per frame than the console would.
+
+What that means for the oracle: the game's logic counts VBlanks (`VSync(n)`, the 20-ticks-a-minute
+clock advance per game update), so VBlank-keyed behavior is identical to hardware; the 0.3%
+difference only shows in things that count CPU time inside a frame (movie timeouts, CD/SPU
+completion in cycles) and in wall-clock pacing. Replays are keyed to pad polls and checkpointed
+at poll counts, not at CPU cycles, so they are unaffected. A port that wants hardware pacing
+should present at 59.82 Hz (non-interlaced); the oracle's 60.009 Hz is a property of Redux's
+counter constants, not of the game.
+
 ## Not done yet
 
-- Real replays: a recorded input stream keyed to pad polls (the probe's schedule is a fixed
-  stand-in), canonical state dumps at checkpoints, certification on booklab.
+- Certification on booklab (the replay has only been run on this Mac).
 - Where the game is at VBlanks 1393/1423 (probably the new-game intro), and getting further
   (the probe stops making progress after that; it needs menu-specific input).
-- The field rate (59.826 vs 59.94 Hz) and `VSync(n)` timing.
-- Whether OpenBIOS's `rand` and boot state match (only matters if we ever drop the retail
-  BIOS).
+- `VSync(n)` timing against hardware (the field rate itself is measured, above).
+- Whether OpenBIOS's `rand` and boot state match (not done; only matters if we ever drop the
+  retail BIOS).
