@@ -43,7 +43,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     PCSX-Redux (`-cli -interpreter`) boots Ember's disc on Ember's retail BIOS; the BIOS
     `rand` state (RAM 0x9010) is 0 at boot and `psyq::bios` matches the emulator; two fresh
     runs are identical. Real input replays and state dumps still to do.
-- **Open question 2 for Ember:** how we reimplement Sony SDK behaviour (below).
+- **SDK rule set (Ember, 2026-10-13):** clean reimplementation of Sony's SDK (see Ground
+  rules).
 - **Next:** the rest of S0.6,
   S0.7 (libgs/TMD spike), S0.8 (oracle), S0.9 (go / no-go).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
@@ -98,6 +99,11 @@ GPU, not an ECS game; rendering is `wgpu` on Metal.
   (`host/overlay.c`, `psyq/snd_hw.c`, `configs/USA/include_bin.txt`) and third-party
   components with their own licenses. Nothing from either tree enters this repo except
   through S0.2's import allowlist. Keep the licenses and credit both projects.
+- **Sony's SDK is reimplemented clean** (Ember, 2026-10-13): from public documentation
+  (psx-spx, file-format docs, the SDK manuals' API descriptions) and emulator observation.
+  The SDK disassembly in `decomp/asm/` may answer narrow questions (a constant, an argument
+  order, whether a call blocks) but is never translated routine by routine into this repo.
+  Same for Sony-derived code in DW2-PC (`docs/provenance.md`).
 - **Never modify Ember's disc image.** Read it; build derived files from it elsewhere.
 - **Git:** commit on a work branch, never directly on `main`. Since 2026-10-13 Claude
   commits and pushes at its own discretion (Ember handed it over). Still check
@@ -503,14 +509,7 @@ is what the Rust is checked against.
 
 ## Open questions for Ember
 
-2. **How do we reimplement the Sony SDK?** (asked 2026-10-13) DW1 calls 175 SDK functions.
-   DW2-PC translated Sony's libsnd/libspu/libgs disassembly into C, which this repo's rules
-   exclude (`docs/provenance.md`). Recommended: reimplement from public documentation and
-   emulator observation, consulting the SDK disassembly in `decomp/asm/` only for narrow
-   questions (a constant, an argument order, whether a call blocks), never translating
-   routines line by line. Slower for libgs and the sound sequencer; keeps the public repo
-   clean. The alternative is DW2-PC's approach (translate the SDK), faster but carrying
-   Sony-derived code.
+None right now. Add them here as they come up.
 
 ## Answered by Ember
 
@@ -535,3 +534,5 @@ is what the Rust is checked against.
 - 2026-10-13: Claude commits and pushes as needed, at its discretion.
 - 2026-10-13: Ember supplied a retail BIOS dump (`scph1001.bin`, repo root, gitignored) for
   the oracle.
+- 2026-10-13: Sony's SDK is reimplemented clean, from public docs and emulator observation;
+  the SDK disassembly answers narrow questions only, never translated (Ground rules).

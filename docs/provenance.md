@@ -44,12 +44,12 @@ note in the file header. Totals: 79 original, 29 mixed, 11 retail/SDK, 1,666 thi
 - Vendored third-party code (Dear ImGui, miniz, monocypher, stb, GCC binaries, mkpsxiso):
   not copied. If we need one, we take it from its upstream under its own license.
 
-## Sony SDK behaviour: open question for Ember
+## Sony SDK behaviour: decided (Ember, 2026-10-13)
 
 DW1 calls 175 SDK functions (`docs/survey.md`). DW2-PC got its sound stack and libgs by
-translating the SDK's disassembly, which we've ruled out for this repo. Proposed rule (open
-question 2 in PLAN.md): we reimplement SDK behaviour from public documentation (psx-spx,
-file-format docs, the SDK's published manuals' descriptions of the API) and from what the
-emulator shows, consulting the SDK disassembly in `decomp/asm/` only to answer narrow
-questions (an argument order, a constant, whether a call blocks), and never translating
-routines line by line into this repo.
+translating the SDK's disassembly, which we've ruled out for this repo. Rule: we reimplement
+SDK behaviour from public documentation (psx-spx, file-format docs, the SDK's published
+manuals' descriptions of the API) and from what the emulator shows, consulting the SDK
+disassembly in `decomp/asm/` only to answer narrow questions (an argument order, a
+constant, whether a call blocks), and never translating routines line by line into this
+repo.
