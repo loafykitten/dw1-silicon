@@ -12,7 +12,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   enters the new-game scene. Every frame from the landing screen to the main menu, fades
   included, is pixel-identical to Redux's; the `new-game` replay keeps the recorded caller
   sequence through the card save; checkpoints 0-3 are byte-identical; re-entry works. **Next:**
-  Phase 3 (load a save) is waiting on a fixture save from Ember (asked 2026-10-14). Meanwhile
+  Phase 3 (load a save) has its fixture save from Ember (2026-10-14, below) and is under way. Meanwhile
   Phase 4 work has started along the replay: it stops at `GsSortBoxFill` (the 2D sorts, an
   agent was on it at the end of the session), then whatever the new-game scene calls next.
   Reviews still open at the session's end: GPT 6 Astra on the rasteriser refit (b162319,
@@ -27,6 +27,10 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     pair by poll. Waits on hardware must take the emulator's VBlanks: memory-card timings are
     measured (`crates/psyq/src/libmcrd.rs`). `DW1_REPLAY_LOG=1` shows each poll's native and
     recorded VBlank; frames pair as recorded + (native − native at the last poll).
+  - **Fixture save (Phase 3):** `captures/fixtures/ember-day2-gabumon.mcd` (local, gitignored;
+    notes and SHA-1 in `captures/fixtures/README.txt`): Ember's DuckStation card, one save,
+    Gabumon on about day 2. DuckStation is set up for Ember (`~/Applications/DuckStation.app`,
+    launched with `dw1-play`; cards in `~/Library/Application Support/DuckStation/memcards/`).
   - **Booklab** was unreachable after a power cut on 2026-10-13 (ssh timed out); emulator work
     ran on this Mac, one Redux at a time.
   - **Native canonical state:** `crates/dw1/src/canon.rs` collects the S0.8 record (schema v2,
