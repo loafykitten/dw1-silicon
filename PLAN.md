@@ -5,20 +5,30 @@ same day after an adversarial review by GPT 6 Astra (high) (`docs/plan-review-1.
 whole before starting, and don't re-ask Ember anything answered here. Keep the
 "Where things stand" section current at the end of every session: it is the handoff.
 
-## Where things stand (2026-10-13, session 3): start here
+## Where things stand (2026-10-14, session 3): start here
 
-- **Phase 2 is in progress** (`docs/phase2-plan.md` is its plan and status). The native boot
-  runs `main()` through the heap, sound init, the whole display setup, CD and card init, the
-  game's own initialisers and the 3D setup, and stops at the first libgte call
-  (`RotMatrixZYX`). Done: the prototype audit (`docs/abi-audit-calls.md`), heap, disc
-  (`crates/pack`, libcd), silent sound, memory cards, the GPU layer (libgpu, libgs buffers,
-  ordering tables, `GsSortClear`; packet links as data-segment offsets), libgs model mapping,
-  the virtual clock and pads, the headless host (PNG shots, emulator replays with caller
-  checks), fixed PS1 addresses and 32-bit in-data pointers (design in the plan), 558
-  pointer-truncating casts fixed in the fork (MIPS build byte-identical). In flight at the
-  end of the session: libgte fitted against the emulator, the movie (streaming + MDEC), the
-  SDL3 window; GPT 6 Astra reviewing the GPU/memory work. Then: the 2D sorts (`GsSortSprite`
-  and friends, from captures), the gate (landing screen vs Redux, replay to the main menu).
+- **Phase 2 is done** (`docs/phase2-report.md`; slices and design in `docs/phase2-plan.md`).
+  The native boot runs the intro movie, landing screen, main menu and memory-card screens and
+  enters the new-game scene. Every frame from the landing screen to the main menu, fades
+  included, is pixel-identical to Redux's; the `new-game` replay keeps the recorded caller
+  sequence through the card save; checkpoints 0-3 are byte-identical; re-entry works. **Next:**
+  Phase 3 (load a save) is waiting on a fixture save from Ember (asked 2026-10-14). Meanwhile
+  Phase 4 work has started along the replay: it stops at `GsSortBoxFill` (the 2D sorts, an
+  agent was on it at the end of the session), then whatever the new-game scene calls next.
+  Reviews still open at the session's end: GPT 6 Astra on the rasteriser refit (b162319,
+  952738e) and on `GsSortObject4J` (5b0c31b); gpt-6.1-sol's card-timing follow-ups (reads,
+  deletes, format, error paths, the periodic stall's schedule) were being measured.
+  - **Rasteriser:** `backend::gpu` now follows Redux's softgpu, fitted by black-box draws
+    (`crates/backend/tests/gpu_oracle.rs`, `tools/oracle/gpu_requests.py`; local results in
+    `captures/oracle-runs/gpu-prims`, `gpu-snap`): round-to-nearest interpolation from the left
+    edge, quads drawn v1v2v3 then v0v1v2, the odd-row last-pixel rule for semi-transparent
+    modulated textures. `crates/gpu-diff` still checks the rest against DW2-PC's C.
+  - **Time:** native loading takes no time, so native VBlanks run ahead of Redux's; replays
+    pair by poll. Waits on hardware must take the emulator's VBlanks: memory-card timings are
+    measured (`crates/psyq/src/libmcrd.rs`). `DW1_REPLAY_LOG=1` shows each poll's native and
+    recorded VBlank; frames pair as recorded + (native − native at the last poll).
+  - **Booklab** was unreachable after a power cut on 2026-10-13 (ssh timed out); emulator work
+    ran on this Mac, one Redux at a time.
   - **Native canonical state:** `crates/dw1/src/canon.rs` collects the S0.8 record (schema v2,
     834 bytes) from the game's C globals; the headless replay (`DW1_REPLAY`, `DW1_OUT`) writes
     `ckpt_NNNN_<why>.{bin,txt}` at `oracle/replay.lua`'s triggers (`DW1_CHECKPOINTS=0` turns it

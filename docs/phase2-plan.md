@@ -133,8 +133,9 @@ TMD map, the file queue, fonts, scripts, UI, clock...), `loadTIMFile` twice, the
    - Re-entry: with no input the game loops movie, landing screen, movie, landing screen with no
      trap (16,000 VBlanks).
    - Frames, compared by replay poll (native loading takes no time, so VBlank numbers differ;
-     the per-poll offset is exact): equal except where `backend::gpu` truncates interpolated
-     texture coordinates and Gouraud colours and Redux rounds them (landing screen ~10,700 px,
-     menu ~12,800 px). A slice fitting the GPU's polygon interpolation to Redux is in progress.
+     the per-poll offset is exact): all 298 frames with a reference from the landing screen to
+     the main menu, fades included, are pixel-identical (2026-10-14, after the rasteriser
+     refit, cd38b2b).
+   **Gate passed 2026-10-14** (`docs/phase2-report.md`).
    - Movie pictures: the same frames at the same cadence; MDEC rounding within 4/255
      (`docs/phase2-movie.md`), not chased.
