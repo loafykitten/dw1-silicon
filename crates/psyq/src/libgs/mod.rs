@@ -26,7 +26,8 @@ use std::sync::Mutex;
 use crate::globals::{GsIDMATRIX, Matrix, PSDCNT};
 use crate::gpu;
 use crate::libgpu::{self, DispEnv, DrawEnv, Rect};
-use crate::memory::{LINK_END, link_of};
+use crate::memory::{LINK_END, link_of, ptr_of_link};
+use crate::trap::unimplemented;
 
 /// libgs `GsOT`.
 #[repr(C)]
@@ -273,6 +274,47 @@ pub unsafe extern "C" fn GsClearOt(offset: u16, point: u16, ot: *mut GsOt) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GsDrawOt(ot: *mut GsOt) {
     unsafe { gpu::draw_chain((*ot).tag) };
+}
+
+/// `GsSortOt(src, dst)`: puts the whole of the ordering table `src` into `dst` as one chain and
+/// returns `dst` [obs: 352 `call-sdk.lua` requests and 13 captured calls of the Digimon status
+/// screen's partner model]. `dst`'s entry `src->point - dst->offset` is made to link to
+/// `src->tag` (the top entry, so `src`'s contents draw in turn as that entry's), with a zero
+/// length byte. The end of `src`'s chain, which ended its own list, is made to continue with what
+/// the entry linked to before: that is the link of the last element of the chain that starts at
+/// `src`'s entry 0 (the entry itself when no packet hangs off bucket 0, else the last packet,
+/// whose length byte stays); nothing else is written.
+///
+/// On the PS1 an emptied table's entry 0 links to two empty packets of the SDK's own and the end
+/// of the chain is found by that link; natively it is `LINK_END`, which is the same place in
+/// every case measured (the SDK, given a chain ending in the `0xFFFFFF` marker, overwrote entry
+/// 0 even with packets behind it; that state doesn't occur in the game and isn't copied).
+///
+/// An entry index outside `dst` (the SDK writes outside the table) stops the program.
+///
+/// # Safety
+/// Both tables and the packets linked from `src`'s entry 0 must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn GsSortOt(src: *mut GsOt, dst: *mut GsOt) -> *mut GsOt {
+    unsafe {
+        let index = i64::from((*src).point as i32) - i64::from((*dst).offset as i32);
+        if !(0..1i64 << ((*dst).length & 31)).contains(&index) {
+            unimplemented("GsSortOt with an entry index outside the destination table");
+        }
+        let slot = (*dst).org.add(index as usize);
+        // The last word of the chain that starts at entry 0.
+        let mut end = (*src).org;
+        for _ in 0..1 << 20 {
+            let next = ptr_of_link(end.read());
+            if next.is_null() {
+                end.write((end.read() & 0xFF00_0000) | (slot.read() & LINK_END));
+                slot.write(link_of((*src).tag.cast()));
+                return dst;
+            }
+            end = next;
+        }
+        unimplemented("GsSortOt on a chain that doesn't end");
+    }
 }
 
 /// `GsSortClear(r, g, b, ot)`: clears the buffer being drawn to (r, g, b) before anything else

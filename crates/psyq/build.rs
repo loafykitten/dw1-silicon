@@ -13,6 +13,7 @@ fn main() {
     sort2d_capture();
     libgpu_capture();
     sprite_capture();
+    sortot_capture();
     println!("cargo::rerun-if-changed=build.rs");
 }
 
@@ -197,6 +198,29 @@ fn sprite_capture() {
         println!(
             "cargo::warning=GsSortSprite oracle run not found ({}): tests/libgs_sprite_oracle.rs will be ignored",
             dir.display()
+        );
+    }
+}
+
+/// Sets `cfg(have_libgs_sortot_capture)` when `GsSortOt`'s captured calls (`g2d-sortot`,
+/// `oracle/capture-calls.lua`) and oracle run (`libgs-sortot`, `tools/oracle/sortot_requests.py`
+/// through `oracle/call-sdk.lua`) both exist under `DW1_SORT_CAPTURES` (default
+/// `<workspace>/captures/oracle-runs`); otherwise `tests/libgs_sortot.rs` shows as ignored.
+fn sortot_capture() {
+    println!("cargo::rustc-check-cfg=cfg(have_libgs_sortot_capture)");
+    println!("cargo::rerun-if-env-changed=DW1_SORT_CAPTURES");
+    let root = match std::env::var_os("DW1_SORT_CAPTURES") {
+        Some(d) => PathBuf::from(d),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs"),
+    };
+    println!("cargo::rerun-if-changed={}", root.display());
+    if root.join("g2d-sortot/calls.txt").exists() && root.join("libgs-sortot/results.txt").exists()
+    {
+        println!("cargo::rustc-cfg=have_libgs_sortot_capture");
+    } else {
+        println!(
+            "cargo::warning=GsSortOt captures not found under {}: tests/libgs_sortot.rs will be ignored",
+            root.display()
         );
     }
 }
