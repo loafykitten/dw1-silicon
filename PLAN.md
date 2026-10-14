@@ -19,6 +19,11 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   end of the session: libgte fitted against the emulator, the movie (streaming + MDEC), the
   SDL3 window; GPT 6 Astra reviewing the GPU/memory work. Then: the 2D sorts (`GsSortSprite`
   and friends, from captures), the gate (landing screen vs Redux, replay to the main menu).
+  - **Native canonical state:** `crates/dw1/src/canon.rs` collects the S0.8 record (schema v1,
+    834 bytes) from the game's C globals; the headless replay (`DW1_REPLAY`, `DW1_OUT`) writes
+    `ckpt_NNNN_<why>.{bin,txt}` at `oracle/replay.lua`'s triggers (`DW1_CHECKPOINTS=0` turns it
+    off). Compare with `tools/oracle/compare_canon.py NATIVE_DIR ORACLE_DIR --allow-unpaired`.
+    Checkpoints 0-3 (poll 0, poll 600) match the emulator's exactly, bytes included.
   - **Emulator tools added:** `oracle/capture-calls.lua` (record chosen SDK calls with full
     machine state; `tools/oracle/calldiff.py` shows what each changed) and
     `oracle/call-sdk.lua` (run SDK functions on chosen inputs). Timeline of the route at boot:

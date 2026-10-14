@@ -61,6 +61,9 @@ const BOUND_HEADERS: &[&str] = &[
     "kernel.h",
     "dw/params.h",
     "dw/model.h",
+    "dw/entity.h",
+    "dw/script.h",
+    "dw/item.h",
 ];
 
 fn main() {
@@ -369,6 +372,11 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .clang_args(cpp_args)
         .allowlist_type("DigimonPara")
         .allowlist_type("PartnerPara")
+        .allowlist_type("TamerEntity")
+        .allowlist_type("PartnerEntity")
+        .allowlist_type("PositionData")
+        .allowlist_type("ScriptState")
+        .allowlist_type("Inventory")
         .allowlist_type("MATRIX")
         .allowlist_type("VECTOR")
         .allowlist_type("SVECTOR")

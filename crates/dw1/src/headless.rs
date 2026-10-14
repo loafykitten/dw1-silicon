@@ -8,9 +8,18 @@
 //! (exit 0 there), `DW1_OUT=<dir>` (default `captures/native-runs/latest`), `DW1_REPLAY=<file>`
 //! (pad input from an emulator replay, `oracle/replays/`; the run stops when it diverges or the
 //! recording ends), `DW1_START_AT=<vblank>` (without a replay, pad 1 holds Start from there on).
+//!
+//! Checkpoints (`DW1_CHECKPOINTS`, on by default with `DW1_REPLAY`; `0` turns them off, `1`
+//! turns them on without a replay): the canonical game-state record (`canon.rs`,
+//! `docs/canonical-state.md`) written to `DW1_OUT` as `ckpt_NNNN_<why>.bin` and `.txt`, at
+//! the same triggers and with the same numbering as `oracle/replay.lua`: a change of
+//! MAIN_STATE (`main<N>`), GAME_STATE (`game<N>`) or CURRENT_SCREEN (`screen<N>`) seen at a
+//! pad poll, every 600th poll (`every<N>`), and `final` when the replay is used up (or at
+//! `DW1_STOP_AT`). `tools/oracle/compare_canon.py` compares them with the emulator's.
 
 use std::path::PathBuf;
 
+use crate::canon;
 use crate::replay::Replay;
 
 pub struct Headless {
@@ -21,6 +30,56 @@ pub struct Headless {
     replay: Option<Replay>,
     /// DW1_REPLAY_LOG: print each poll with its recorded and native VBlank.
     replay_log: bool,
+    checkpoints: Option<Checkpoints>,
+}
+
+/// Checkpoint bookkeeping, mirroring `oracle/replay.lua`'s `pollCheckpoints`.
+struct Checkpoints {
+    next: u32,
+    last: [Option<u8>; 3],
+}
+
+/// Poll interval of the `every<N>` checkpoints.
+const CHECKPOINT_EVERY: usize = 600;
+
+impl Checkpoints {
+    fn write(&mut self, out: &std::path::Path, why: &str, poll: usize, vblank: u32) {
+        let name = format!("ckpt_{:04}_{why}", self.next);
+        self.next += 1;
+        let rec = canon::collect();
+        let result = std::fs::create_dir_all(out)
+            .and_then(|()| std::fs::write(out.join(format!("{name}.bin")), rec.encode()))
+            .and_then(|()| std::fs::write(out.join(format!("{name}.txt")), rec.render()));
+        if let Err(e) = result {
+            eprintln!("dw1: {}: {e}", out.join(&name).display());
+            std::process::exit(2);
+        }
+        eprintln!("dw1: checkpoint {name} poll={poll} native vblank={vblank}");
+    }
+
+    /// Evaluated at each poll (`poll` is its sequence number), in the Lua's order.
+    fn at_poll(&mut self, out: &std::path::Path, poll: usize, vblank: u32) {
+        // The record's first fields are the three watched bytes.
+        let rec = canon::collect();
+        let value = |name: &str| {
+            let i = canon::FIELDS.iter().position(|f| f.name == name).unwrap();
+            rec.values[i][0] as u8
+        };
+        let now = [
+            value("mode.main_state"),
+            value("mode.game_state"),
+            value("screen.current_screen"),
+        ];
+        for (i, label) in ["main", "game", "screen"].into_iter().enumerate() {
+            if self.last[i] != Some(now[i]) {
+                self.write(out, &format!("{label}{}", now[i]), poll, vblank);
+                self.last[i] = Some(now[i]);
+            }
+        }
+        if poll > 0 && poll.is_multiple_of(CHECKPOINT_EVERY) {
+            self.write(out, &format!("every{poll}"), poll, vblank);
+        }
+    }
 }
 
 /// The name of the function containing `addr` (the native game code is in this binary).
@@ -93,7 +152,17 @@ impl Headless {
                 std::process::exit(2);
             })
         });
+        let checkpoints = match std::env::var("DW1_CHECKPOINTS").ok().as_deref() {
+            Some("" | "0") => false,
+            Some(_) => true,
+            None => replay.is_some(),
+        }
+        .then_some(Checkpoints {
+            next: 0,
+            last: [None; 3],
+        });
         Headless {
+            checkpoints,
             shots,
             stop_at: env_num("DW1_STOP_AT"),
             start_at: env_num("DW1_START_AT"),
@@ -137,6 +206,10 @@ impl psyq::libetc::Host for Headless {
         }
         if self.stop_at == Some(vblank) {
             eprintln!("dw1: stopped at vblank {vblank}");
+            let polls = self.replay.as_ref().map_or(0, Replay::polls_done);
+            if let Some(c) = self.checkpoints.as_mut() {
+                c.write(&self.out, "final", polls, vblank);
+            }
             if let Some(note) = self.replay.as_ref().and_then(|r| r.timing_note()) {
                 eprintln!("dw1: {note}");
             }
@@ -165,9 +238,19 @@ impl psyq::libetc::Host for Headless {
             );
         }
         match replay.poll(&name, vblank) {
-            Ok(mask) => mask,
+            Ok(mask) => {
+                if let Some(c) = self.checkpoints.as_mut() {
+                    c.at_poll(&self.out, replay.polls_done() - 1, vblank);
+                }
+                mask
+            }
             Err(e) => {
                 eprintln!("dw1: {e}");
+                if replay.polls_done() == replay.polls.len()
+                    && let Some(c) = self.checkpoints.as_mut()
+                {
+                    c.write(&self.out, "final", replay.polls_done(), vblank);
+                }
                 if let Some(note) = replay.timing_note() {
                     eprintln!("dw1: {note}");
                 }
