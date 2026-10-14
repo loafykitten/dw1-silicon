@@ -97,3 +97,10 @@ What the SDK does, as observed:
 - the other libgs entry points.
 
 Each needs a capture of a scene that uses it.
+
+## Update (2026-10-14): native
+
+The spike's model became the native `GsSortObject4J` (`crates/psyq/src/libgs/sort4j.rs`), with
+the lit Gouraud textured handlers split out as `GsTMDfastTG3L`/`TG4L` behind the `GsFCALL4`
+table, and `tests/libgs_capture.rs` runs these 48 calls and 180 more (new-game scene to name
+entry) on native memory. See `docs/phase2-plan.md`, slice 6e.

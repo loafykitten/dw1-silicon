@@ -35,7 +35,34 @@ fn open_disc() -> Result<pack::Disc, String> {
     Ok(disc)
 }
 
+/// `DW1_CRASH_TRACE=1`: on SIGSEGV/SIGBUS print the call stack (symbols) to stderr. lldb can't
+/// attach in the agent sandbox, and the game's crashes are otherwise silent (exit 139).
+fn install_crash_trace() {
+    unsafe extern "C" {
+        fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
+        fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
+        fn backtrace_symbols_fd(buffer: *const *mut std::ffi::c_void, size: i32, fd: i32);
+        fn _exit(code: i32) -> !;
+    }
+    extern "C" fn on_crash(sig: i32) {
+        eprintln!("dw1: fatal signal {sig}; call stack:");
+        let mut frames = [std::ptr::null_mut(); 24];
+        unsafe {
+            let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
+            backtrace_symbols_fd(frames.as_ptr(), n, 2);
+            _exit(139);
+        }
+    }
+    unsafe {
+        signal(11, on_crash);
+        signal(10, on_crash);
+    }
+}
+
 fn main() {
+    if std::env::var_os("DW1_CRASH_TRACE").is_some() {
+        install_crash_trace();
+    }
     match open_disc() {
         Ok(disc) => psyq::libcd::insert_disc(disc),
         Err(e) => {

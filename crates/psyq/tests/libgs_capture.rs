@@ -1,21 +1,48 @@
-//! `libgs::sort_object4j` against 48 real `GsSortObject4J` calls captured in PCSX-Redux
-//! (`oracle/capture-libgs.lua`; files under `DW1_LIBGS_CAPTURE`, default
-//! `captures/oracle-runs/libgs-pin`, gitignored). Each `callNN_in.bin` is the whole machine at
-//! the function's entry, `callNN_out.bin` at its return.
+//! The native `GsSortObject4J` (and the `GsTMDfastTG3L`/`TG4L` handlers it calls through
+//! `GsFCALL4`) against real calls captured in PCSX-Redux: the S0.7 spike's 48 (`libgs-pin`,
+//! `oracle/capture-libgs.lua`) and the Phase 2 runs (`s4j-*`, `oracle/capture-calls.lua` with
+//! `DW1_CAPTURE_STATES=1`), all under `DW1_SORT_CAPTURES` (default `captures/oracle-runs`,
+//! gitignored). Each `callNN_in.bin` is the whole machine at the function's entry,
+//! `callNN_out.bin` at its return (`DW1STATE`).
+//!
+//! The entry state's PS1 RAM goes into the native PS1 RAM stand-in (`psyq::memory`) at the same
+//! offsets, with the pointer-shaped fields translated to the native forms: the ordering table's
+//! 24-bit links (`link_of`), the TMD object record's addresses (32-bit encoded pointers), the
+//! `GsDOBJ2` and `GsOT` rebuilt as native structs, the work base as a native pointer. The call
+//! is then made through the real entry point. Compared with the capture's return state, links
+//! translated the same way:
+//! - the work base (`GsOUT_PACKET_P`);
+//! - every packet written, word for word;
+//! - every ordering-table entry;
+//! - the scratchpad, and the GTE's 32 control registers (the data registers are working storage that
+//!   the real handlers leave in pipeline-dependent states; not compared);
+//! - nothing else in RAM changed (the SDK's own stack frame aside).
+//!
+//! Strict: every call in `calls.txt` must have both state files, and every call is compared.
 
 // Byte-to-word reads of dump files read better as chunks_exact than as_chunks.
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 #[cfg(not(have_libgs_capture))]
 #[test]
-#[ignore = "needs captures/oracle-runs/libgs-pin (or DW1_LIBGS_CAPTURE); local only"]
-fn libgs_matches_capture() {}
+#[ignore = "needs captures/oracle-runs/{libgs-pin,s4j-*} (or DW1_SORT_CAPTURES); local only"]
+fn native_sort_object4j_matches_the_real_sdk() {}
 
 #[cfg(have_libgs_capture)]
 mod capture {
     use backend::gte::Gte;
-    use psyq::libgs::{GS_OUT_PACKET_P, Memory, Ps1Memory, RAM_SIZE, sort_object4j};
+    use psyq::globals::GsFCALL4;
+    use psyq::libgs::{
+        GsDobj2, GsGetWorkBase, GsOt, GsSetWorkBase, GsSortObject4J, GsTMDfastTG3L, GsTMDfastTG4L,
+        TmdHandler,
+    };
+    use psyq::memory::{
+        LINK_END, PS1_RAM_SIZE, dw1_ps1_ram, dw1_scratchpad, link_of, ps1_ram_ptr, ptr32_of,
+    };
     use std::path::{Path, PathBuf};
+
+    const GS_OUT_PACKET_P: u32 = 0x8013_6FE4;
+    const SCRATCH_BASE: u32 = 0x1F80_0000;
 
     /// One machine snapshot (`DW1STATE`: GPR[34], CP0[32], CP2D[32], CP2C[32], pc, 1 KiB
     /// scratchpad, 2 MiB RAM; all little-endian u32).
@@ -23,40 +50,97 @@ mod capture {
         gpr: [u32; 34],
         cp2d: [u32; 32],
         cp2c: [u32; 32],
-        mem: Ps1Memory,
+        scratch: Vec<u8>,
+        ram: Vec<u8>,
     }
 
     fn word(b: &[u8], i: usize) -> u32 {
         u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap())
     }
 
-    fn load(path: &Path) -> State {
-        let b = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        assert_eq!(&b[..8], b"DW1STATE", "{}", path.display());
-        let regs = &b[8..8 + 131 * 4];
-        let mut s = State {
-            gpr: [0; 34],
-            cp2d: [0; 32],
-            cp2c: [0; 32],
-            mem: Ps1Memory::new(),
-        };
-        for i in 0..34 {
-            s.gpr[i] = word(regs, i);
+    impl State {
+        fn load(path: &Path) -> State {
+            let b = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert_eq!(&b[..8], b"DW1STATE", "{}", path.display());
+            let regs = &b[8..8 + 131 * 4];
+            let mut s = State {
+                gpr: [0; 34],
+                cp2d: [0; 32],
+                cp2c: [0; 32],
+                scratch: Vec::new(),
+                ram: Vec::new(),
+            };
+            for i in 0..34 {
+                s.gpr[i] = word(regs, i);
+            }
+            for i in 0..32 {
+                s.cp2d[i] = word(regs, 66 + i);
+                s.cp2c[i] = word(regs, 98 + i);
+            }
+            let at = 8 + 131 * 4;
+            s.scratch = b[at..at + 1024].to_vec();
+            s.ram = b[at + 1024..at + 1024 + PS1_RAM_SIZE].to_vec();
+            s
         }
-        for i in 0..32 {
-            s.cp2d[i] = word(regs, 66 + i);
-            s.cp2c[i] = word(regs, 98 + i);
+
+        fn r32(&self, addr: u32) -> u32 {
+            word(&self.ram, (addr as usize & (PS1_RAM_SIZE - 1)) / 4)
         }
-        let at = 8 + 131 * 4;
-        s.mem.scratch.copy_from_slice(&b[at..at + 1024]);
-        s.mem
-            .ram
-            .copy_from_slice(&b[at + 1024..at + 1024 + RAM_SIZE]);
-        s
     }
 
-    /// The GTE as the game left it. Skip the data registers whose writes have side effects or
-    /// are read-only (SXYP moves the FIFO, IRGB rewrites IR1-3, ORGB and LZCR are derived).
+    struct Call {
+        index: usize,
+        objp: u32,
+        otp: u32,
+        shift: i32,
+        scratch: u32,
+    }
+
+    /// A capture directory's calls. `libgs-pin`'s `calls.txt` is `call vblank objp otp shift
+    /// scratch ra` (decimal shift, two-digit file names); `capture-calls.lua`'s is `n vblank
+    /// name a0 a1 a2 a3 sp ra v0` (four digits).
+    fn calls(dir: &Path) -> (Vec<Call>, usize) {
+        let text = std::fs::read_to_string(dir.join("calls.txt")).unwrap();
+        let new_format = text.contains(" name ");
+        let hex = |s: &str| u32::from_str_radix(s, 16).unwrap();
+        let calls = text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .map(|l| {
+                let f: Vec<&str> = l.split_whitespace().collect();
+                if new_format {
+                    assert_eq!(f[2], "GsSortObject4J", "{l}");
+                    Call {
+                        index: f[0].parse().unwrap(),
+                        objp: hex(f[3]),
+                        otp: hex(f[4]),
+                        shift: hex(f[5]) as i32,
+                        scratch: hex(f[6]),
+                    }
+                } else {
+                    Call {
+                        index: f[0].parse().unwrap(),
+                        objp: hex(f[2]),
+                        otp: hex(f[3]),
+                        shift: f[4].parse().unwrap(),
+                        scratch: hex(f[5]),
+                    }
+                }
+            })
+            .collect();
+        (calls, if new_format { 4 } else { 2 })
+    }
+
+    fn root() -> PathBuf {
+        match std::env::var_os("DW1_SORT_CAPTURES") {
+            Some(d) => PathBuf::from(d),
+            None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs"),
+        }
+    }
+
+    /// The captured GTE state loaded into a fresh `Gte`. Registers whose writes have side
+    /// effects or are derived (SXYP moves the FIFO, IRGB rewrites IR1-3, ORGB and LZCR) are
+    /// skipped.
     fn load_gte(s: &State) -> Gte {
         let mut g = Gte::new();
         for r in 0..32 {
@@ -70,247 +154,261 @@ mod capture {
         g
     }
 
-    fn dir() -> PathBuf {
-        match std::env::var_os("DW1_LIBGS_CAPTURE") {
-            Some(d) => PathBuf::from(d),
-            None => {
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs/libgs-pin")
+    /// A PS1 RAM address as a native pointer.
+    fn native(addr: u32) -> *mut u8 {
+        ps1_ram_ptr(addr)
+    }
+
+    /// A 24-bit link as the PS1 captured it, translated to the native encoding.
+    fn translate_link(word: u32) -> u32 {
+        let link = word & LINK_END;
+        if link == LINK_END {
+            return word;
+        }
+        (word & 0xFF00_0000) | link_of(native(0x8000_0000 | link))
+    }
+
+    fn ram() -> &'static mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut((&raw mut dw1_ps1_ram).cast::<u8>(), PS1_RAM_SIZE) }
+    }
+
+    fn ram_word(ram: &[u8], addr: u32) -> u32 {
+        word(ram, (addr as usize & (PS1_RAM_SIZE - 1)) / 4)
+    }
+
+    fn set_ram_word(ram: &mut [u8], addr: u32, v: u32) {
+        let o = addr as usize & (PS1_RAM_SIZE - 1);
+        ram[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    /// The region (RAM offsets) of the ordering table's entries.
+    fn ot_region(input: &State, otp: u32) -> (u32, u32) {
+        let org = input.r32(otp + 4);
+        (org, 4u32 << input.r32(otp))
+    }
+
+    /// Runs the native `GsSortObject4J` on call `c`'s entry state. Returns the native RAM before
+    /// (translated) and after the call.
+    fn run(c: &Call, input: &State) -> (Vec<u8>, Vec<u8>) {
+        let ram = ram();
+        ram.copy_from_slice(&input.ram);
+        // The ordering table's links.
+        let (org, size) = ot_region(input, c.otp);
+        for i in 0..size / 4 {
+            let a = org + 4 * i;
+            set_ram_word(ram, a, translate_link(input.r32(a)));
+        }
+        // The object's TMD record: vertex, normal and primitive addresses become encoded
+        // pointers (GsMapModelingData's native form).
+        let tmd = input.r32(c.objp + 8);
+        for field in [0, 2, 4] {
+            let a = tmd + 4 * field;
+            set_ram_word(ram, a, ptr32_of(native(input.r32(a))));
+        }
+        let before = ram.to_vec();
+
+        let mut obj = GsDobj2 {
+            attribute: input.r32(c.objp),
+            coord2: std::ptr::null_mut(),
+            tmd: native(tmd).cast(),
+            id: input.r32(c.objp + 12),
+        };
+        let mut ot = GsOt {
+            length: input.r32(c.otp),
+            org: native(org).cast(),
+            offset: input.r32(c.otp + 8),
+            point: input.r32(c.otp + 12),
+            tag: native(input.r32(c.otp + 16)).cast(),
+        };
+        // The game installs these in initializeGsTMDMap: tg3[NDIV][NORMAL] and tg4[NDIV][NORMAL].
+        unsafe {
+            GsFCALL4[24] = Some(std::mem::transmute::<TmdHandler, unsafe extern "C" fn()>(
+                GsTMDfastTG3L,
+            ));
+            GsFCALL4[56] = Some(std::mem::transmute::<TmdHandler, unsafe extern "C" fn()>(
+                GsTMDfastTG4L,
+            ));
+        }
+        // The scratchpad, and the work base (GsOUT_PACKET_P).
+        unsafe {
+            (&raw mut dw1_scratchpad)
+                .cast::<u8>()
+                .copy_from(input.scratch.as_ptr(), 1024);
+        }
+        let scratch: *mut u32 = if c.scratch == SCRATCH_BASE {
+            (&raw mut dw1_scratchpad).cast()
+        } else {
+            native(c.scratch).cast()
+        };
+        GsSetWorkBase(native(input.r32(GS_OUT_PACKET_P)));
+        psyq::gte::with(|g| *g = load_gte(input));
+
+        unsafe { GsSortObject4J(&mut obj, &mut ot, c.shift, scratch) };
+        (before, self::ram().to_vec())
+    }
+
+    /// Compares one call; returns (packet words checked, noise words ignored) or a description.
+    fn check(dir: &Path, width: usize, c: &Call) -> Result<(usize, usize), String> {
+        let n = c.index;
+        let input = State::load(&dir.join(format!("call{n:0width$}_in.bin")));
+        let output = State::load(&dir.join(format!("call{n:0width$}_out.bin")));
+        let (before, after) = run(c, &input);
+
+        let p_in = input.r32(GS_OUT_PACKET_P) & 0x1F_FFFF;
+        let p_out = output.r32(GS_OUT_PACKET_P) & 0x1F_FFFF;
+        let (org, size) = ot_region(&input, c.otp);
+        let org = org & 0x1F_FFFF;
+        let sp = input.gpr[29] & 0x1F_FFFF;
+        let mut bad: Vec<String> = Vec::new();
+
+        // The work base.
+        let base = GsGetWorkBase() as usize - ps1_ram_ptr(0x8000_0000) as usize;
+        if base != p_out as usize {
+            bad.push(format!("work base {base:#x}, capture {p_out:#x}"));
+        }
+
+        // Packets: each is a tag (length, link) and `length` words.
+        let mut a = p_in;
+        let mut packet_words = 0;
+        while a < p_out {
+            let tag = output.r32(a);
+            let len = (tag >> 24) as usize;
+            if len == 0 || len > 16 {
+                bad.push(format!("capture packet at {a:#x} has tag {tag:08x}"));
+                break;
             }
-        }
-    }
-
-    struct Call {
-        index: usize,
-        objp: u32,
-        otp: u32,
-        shift: u32,
-        scratch: u32,
-    }
-
-    fn calls() -> Vec<Call> {
-        let text = std::fs::read_to_string(dir().join("calls.txt")).unwrap();
-        text.lines()
-            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-            .map(|l| {
-                let f: Vec<&str> = l.split_whitespace().collect();
-                let hex = |i: usize| u32::from_str_radix(f[i], 16).unwrap();
-                Call {
-                    index: f[0].parse().unwrap(),
-                    objp: hex(2),
-                    otp: hex(3),
-                    shift: f[4].parse().unwrap(),
-                    scratch: hex(5),
+            for k in 0..=len as u32 {
+                let want = if k == 0 {
+                    translate_link(tag)
+                } else {
+                    output.r32(a + 4 * k)
+                };
+                let got = ram_word(&after, a + 4 * k);
+                packet_words += 1;
+                if got != want {
+                    bad.push(format!(
+                        "packet {a:#x} word {k}: capture {want:08x}, native {got:08x}"
+                    ));
                 }
-            })
-            .collect()
-    }
-
-    fn words(m: &Ps1Memory) -> impl Iterator<Item = u32> + '_ {
-        m.ram
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
-    }
-
-    /// A GP0 polygon packet (tag, then colour/XY/texture words per vertex) in words.
-    fn decode(m: &Ps1Memory, addr: u32) -> String {
-        let tag = m.read32(addr);
-        let len = (tag >> 24) as usize;
-        let mut s = format!(
-            "@{addr:08x} tag={tag:08x} (len {len}, link {:06x})",
-            tag & 0xFF_FFFF
-        );
-        if len == 0 || len > 16 {
-            return s;
+            }
+            a += 4 + 4 * len as u32;
         }
-        let w: Vec<u32> = (0..len)
-            .map(|i| m.read32(addr + 4 + 4 * i as u32))
-            .collect();
-        s += &format!("\n    cmd={:02x}", w[0] >> 24);
-        for (k, v) in w.chunks(3).enumerate() {
-            s += &format!(
-                "\n    v{k}: rgb={:06x} xy=({}, {}) uv=({:02x}, {:02x}) aux={:04x}",
-                v[0] & 0xFF_FFFF,
-                v[1] as i16,
-                (v[1] >> 16) as i16,
-                v[2] & 0xFF,
-                (v[2] >> 8) & 0xFF,
-                v[2] >> 16
-            );
-        }
-        s
-    }
 
-    /// Loads call `c`'s entry state and runs the Rust `sort_object4j` on it. Returns the entry
-    /// and return states of the capture and the memory after the Rust call.
-    fn run(c: &Call) -> (State, State, Ps1Memory) {
-        let n = c.index;
-        let input = load(&dir().join(format!("call{n:02}_in.bin")));
-        let output = load(&dir().join(format!("call{n:02}_out.bin")));
-        let mut mem = Ps1Memory::new();
-        mem.ram.copy_from_slice(&input.mem.ram);
-        mem.scratch = input.mem.scratch;
-        let mut gte = load_gte(&input);
-        sort_object4j(&mut mem, &mut gte, c.objp, c.otp, c.shift, c.scratch)
-            .unwrap_or_else(|e| panic!("call {n}: {e:?}"));
-        (input, output, mem)
-    }
-
-    /// Compares one call; returns a failure description.
-    fn check(c: &Call) -> Result<(usize, usize), String> {
-        let n = c.index;
-        let (input, output, mem) = run(c);
-        let p_in = input.mem.read32(GS_OUT_PACKET_P);
-        let p_out = output.mem.read32(GS_OUT_PACKET_P);
-        let sp = input.gpr[29];
-
-        // OT: GsOT.org, 2^length entries.
-        let ot_org = input.mem.read32(c.otp + 4) & 0x1F_FFFF;
-        let ot_len = 4u32 << input.mem.read32(c.otp);
-        let (pk0, pk1) = (p_in & 0x1F_FFFF, p_out & 0x1F_FFFF);
-        let in_stack = |a: u32| a >= (sp & 0x1F_FFFF) - 0x1000 && a < (sp & 0x1F_FFFF);
-        let mut bad = Vec::new();
+        // The ordering table, and nothing else.
         let mut noise = 0;
-        for (i, ((a, o), r)) in words(&input.mem)
-            .zip(words(&output.mem))
-            .zip(words(&mem))
-            .enumerate()
-        {
-            let ad = i as u32 * 4;
-            // Rust never touches the emulated stack: the call's own frame there may change in the
-            // capture, but Rust must leave every stack word as it was.
-            if in_stack(ad) {
-                if r != a {
-                    bad.push((ad, o, r));
+        for i in 0..PS1_RAM_SIZE as u32 / 4 {
+            let ad = i * 4;
+            let got = ram_word(&after, ad);
+            let was = ram_word(&before, ad);
+            if (org..org + size).contains(&ad) {
+                let want = translate_link(output.r32(ad));
+                if got != want {
+                    bad.push(format!(
+                        "OT {ad:#x}: capture {want:08x}, native {got:08x} (was {was:08x})"
+                    ));
                 }
-                continue;
-            }
-            if a == o && a == r {
-                continue;
-            }
-            let ours = (ad >= pk0 && ad < pk1)
-                || (ad >= ot_org && ad < ot_org + ot_len)
-                || ad == GS_OUT_PACKET_P & 0x1F_FFFF;
-            if r == o {
-                continue;
-            }
-            if !ours && r == a {
-                // The capture changed something that is not libgs's output (a vblank interrupt
-                // ran inside the call: BIOS kernel words, frame counters); Rust left it alone.
+            } else if (p_in..p_out).contains(&ad) {
+                // Compared above.
+            } else if got != was {
+                bad.push(format!(
+                    "stray write at {ad:#x}: {was:08x} -> {got:08x} (capture {:08x})",
+                    output.r32(ad)
+                ));
+            } else if output.r32(ad) != input.r32(ad) && !(sp - 0x1000..sp).contains(&ad) {
+                // The capture changed something that is not libgs's output (a VBlank interrupt
+                // ran inside the call: BIOS kernel words, frame counters); native left it alone.
                 noise += 1;
-                continue;
             }
-            bad.push((ad, o, r));
         }
-        if bad.is_empty() && mem.scratch == output.mem.scratch {
-            return Ok(((pk1 - pk0) as usize / 4, noise));
+
+        // The scratchpad and the GTE.
+        let scratch =
+            unsafe { std::slice::from_raw_parts((&raw const dw1_scratchpad).cast::<u8>(), 1024) };
+        if scratch != output.scratch.as_slice() {
+            bad.push("scratchpad differs".into());
         }
-        let mut msg = format!("call {n}: {} words differ", bad.len());
-        for (ad, o, r) in bad.iter().take(6) {
-            msg += &format!(
-                "\n  {:08x}: capture {o:08x}, rust {r:08x}",
-                ad | 0x8000_0000
-            );
-        }
-        // First differing packet, decoded.
-        let mut a = pk0;
-        while a < pk1 {
-            let len = output.mem.read32(a | 0x8000_0000) >> 24;
-            let size = 4 + 4 * len;
-            if (0..size / 4).any(|k| {
-                output.mem.read32((a + 4 * k) | 0x8000_0000)
-                    != mem.read32((a + 4 * k) | 0x8000_0000)
-            }) {
-                msg += &format!(
-                    "\n  first differing packet\n  capture: {}\n  rust:    {}",
-                    decode(&output.mem, a | 0x8000_0000),
-                    decode(&mem, a | 0x8000_0000)
-                );
-                break;
+        // Only the control registers are the SDK's contract, FLAG (31) aside, which is the last command's (the game sets them before the call
+        // and expects them back). The data registers are working storage: what the real
+        // handlers leave there depends on how they pipeline the primitives (the last lit mode
+        // in RGBC, SZ/IR scraps), which no later code reads, so they aren't compared.
+        psyq::gte::with(|g| {
+            for r in 0..32 {
+                if r != 31 && g.cfc2(r) != output.cp2c[r] {
+                    bad.push(format!(
+                        "GTE control {r}: capture {:08x}, native {:08x}",
+                        output.cp2c[r],
+                        g.cfc2(r)
+                    ));
+                }
             }
-            if len == 0 {
-                break;
-            }
-            a += size;
+        });
+
+        if bad.is_empty() {
+            return Ok((packet_words, noise));
         }
-        if mem.scratch != output.mem.scratch {
-            msg += "\n  scratchpad differs";
+        let mut msg = format!("{} call {n}: {} differences", dir.display(), bad.len());
+        for b in bad.iter().take(8) {
+            msg += &format!("\n  {b}");
         }
         Err(msg)
     }
 
-    /// Draws an ordering table's chain through the software GPU: from `tag` (the OT's last
-    /// entry) following the links until a terminator, each node's body as GP0 words.
-    fn render(m: &Ps1Memory, tag: u32, vram_first: &[u8]) -> Vec<u16> {
-        let mut gpu = backend::gpu::Gpu::new();
-        for (px, b) in gpu.vram_mut().iter_mut().zip(vram_first.chunks_exact(2)) {
-            *px = u16::from_le_bytes([b[0], b[1]]);
-        }
-        let mut node = tag;
-        for _ in 0..1_000_000 {
-            let t = m.read32(node);
-            let len = t >> 24;
-            if len > 0 {
-                let body: Vec<u32> = (0..len).map(|i| m.read32(node + 4 + 4 * i)).collect();
-                gpu.gp0(&body);
-            }
-            let link = t & 0xFF_FFFF;
-            if link == 0xFF_FFFF || link == 0 {
-                break;
-            }
-            node = link | 0x8000_0000;
-        }
-        gpu.vram().to_vec()
-    }
-
-    /// For a few calls: the ordering table after the Rust call and after the capture's return,
-    /// each drawn through `backend::gpu` on the frame's first VRAM. The packets were compared
-    /// word for word above; this checks that they draw, to identical VRAM. (The table holds every
-    /// packet of the frame so far, the game's other primitives included.)
     #[test]
-    fn libgs_packets_render_like_capture() {
-        let vram_first = std::fs::read(dir().join("vram_first.bin")).unwrap();
-        for c in calls()
-            .iter()
-            .filter(|c| [0, 15, 30, 47].contains(&c.index))
-        {
-            let (_, output, mem) = run(c);
-            let tag = output.mem.read32(c.otp + 16);
-            let a = render(&mem, tag, &vram_first);
-            let b = render(&output.mem, tag, &vram_first);
-            let drawn = a
-                .iter()
-                .zip(vram_first.chunks_exact(2))
-                .filter(|(p, o)| **p != u16::from_le_bytes([o[0], o[1]]))
-                .count();
-            println!(
-                "call {}: {drawn} pixels differ from the frame's first VRAM",
-                c.index
-            );
-            assert!(drawn > 0, "call {}: nothing drawn", c.index);
-            assert!(a == b, "call {}: VRAM after drawing the OT", c.index);
-        }
-    }
-
-    #[test]
-    fn libgs_matches_capture() {
+    fn native_sort_object4j_matches_the_real_sdk() {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(root())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                let name = p.file_name().unwrap().to_string_lossy();
+                (name == "libgs-pin" || name.starts_with("s4j-")) && p.join("calls.txt").exists()
+            })
+            .collect();
+        dirs.sort();
+        assert!(!dirs.is_empty());
         let mut failures = Vec::new();
-        let (mut words_ok, mut noise_total) = (0, 0);
-        let all = calls();
-        assert_eq!(all.len(), 48, "calls.txt");
-        for c in &all {
-            match check(c) {
-                Ok((w, n)) => {
-                    words_ok += w;
-                    noise_total += n;
+        let (mut total, mut words_ok, mut noise_total) = (0, 0, 0);
+        for dir in &dirs {
+            let (all, width) = calls(dir);
+            assert!(!all.is_empty(), "{}: no calls", dir.display());
+            // Strict: a state file pair for every call, and nothing recorded that calls.txt
+            // doesn't list.
+            let files = std::fs::read_dir(dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    n.starts_with("call") && n.ends_with("_in.bin")
+                })
+                .count();
+            assert_eq!(
+                files,
+                all.len(),
+                "{}: state files vs calls.txt",
+                dir.display()
+            );
+            for c in &all {
+                total += 1;
+                match check(dir, width, c) {
+                    Ok((w, n)) => {
+                        words_ok += w;
+                        noise_total += n;
+                    }
+                    Err(m) => failures.push(m),
                 }
-                Err(m) => failures.push(m),
             }
         }
         println!(
-            "{} of {} calls match; {words_ok} packet words; {noise_total} interrupt-side words ignored",
-            all.len() - failures.len(),
-            all.len()
+            "{} of {total} calls match in {} captures; {words_ok} packet words; {noise_total} \
+             interrupt-side words ignored",
+            total - failures.len(),
+            dirs.len()
         );
-        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "{} calls differ:\n{}",
+            failures.len(),
+            failures[..failures.len().min(6)].join("\n")
+        );
     }
 }
