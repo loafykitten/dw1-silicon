@@ -12,7 +12,9 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   enters the new-game scene. Every frame from the landing screen to the main menu, fades
   included, is pixel-identical to Redux's; the `new-game` replay keeps the recorded caller
   sequence through the card save; checkpoints 0-3 are byte-identical; re-entry works. **Next:**
-  Phase 3 (load a save) has its fixture save from Ember (2026-10-14, below) and is under way. Meanwhile
+  Phase 3 (load a save) gate met (`docs/phase3-plan.md`): replay `oracle/replays/continue-fixture.txt`
+  (fixture card, CONTINUE GAME), all 9 checkpoints byte-identical once the 2D sorts and
+  `GsSortObject4J` TMD mode 0x3E exist (checkpoints 0-5 already, native stops at `GsSortSprite`).
   Phase 4 work has started along the replay: it stops at `GsSortBoxFill` (the 2D sorts, an
   agent was on it at the end of the session), then whatever the new-game scene calls next.
   Reviews still open at the session's end: GPT 6 Astra on the rasteriser refit (b162319,

@@ -91,3 +91,12 @@ polls to VBlank 19400) and replays them with no pad overrides; two fresh-process
 canonical state dumps byte-identical to the recording's. The recording run with breakpoints on
 reached the same BIOS rand state (`0xb738fdb3`) and the same 16 screenshots as the plain route.
 See `docs/s08-oracle.md`.
+
+## Continue route (Phase 3)
+
+`DW1ROUTE_PROFILE=continue` swaps in `oracle/route-continue-schedule.lua`: boot with a card in
+the cwd's `memcard1.mcd` (the fixture), CONTINUE GAME, slot 1, save 1, Yes, then no input.
+Target 5000 VBlanks. Schedule and screens: `docs/phase3-plan.md`. Record with
+`DW1ROUTE_PROFILE=continue DW1REPLAY_MODE=record` and `-dofile oracle/replay.lua`; replay with
+`DW1REPLAY_MODE=replay DW1REPLAY_FILE=oracle/replays/continue-fixture.txt`. The route is blind
+like the other and depends on the card's contents.
