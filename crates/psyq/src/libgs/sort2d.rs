@@ -8,9 +8,9 @@
 //! Each call writes one packet at the work base (`GsGetWorkBase`), advances the work base past
 //! it and links it into the ordering table at the head of entry `pri`. Over the route to Jijimon's
 //! name entry (Redux VBlanks 3570-5240) the game makes 941 `GsSortBoxFill` and 164 `GsSortPoly`
-//! calls, and in File City's clock (VBlank 12773 on) `GsSortSprite`; no `GsSortFastSprite` or
-//! `GsSortOt` call occurs anywhere on the route so far, so those stay trapping stubs
-//! (`stubs.rs`) until a scene that uses them is captured.
+//! calls, and in File City's clock (VBlank 12773 on) `GsSortSprite`; no `GsSortFastSprite`
+//! call occurs anywhere on the routes so far, so that stays a trapping stub
+//! (`stubs.rs`) until a scene that uses it is captured.
 
 use super::{GsGetWorkBase, GsOt, GsSetWorkBase};
 use crate::memory::link_of;

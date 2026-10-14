@@ -275,6 +275,28 @@ pub unsafe extern "C" fn GsDrawOt(ot: *mut GsOt) {
     unsafe { gpu::draw_chain((*ot).tag) };
 }
 
+/// `GsSortOt(src, dst)`: puts the whole of the ordering table `src` into `dst` as one chain and
+/// returns `dst` [obs: 262 `call-sdk.lua` requests and 13 captured calls of the Digimon status
+/// screen's partner model]. `dst`'s entry `src->point - dst->offset` is made to link to
+/// `src->tag` (the top entry, so `src`'s contents draw in turn as that entry's), with a zero
+/// length byte, and `src`'s entry 0, which ended its own list, takes the entry's old word, so
+/// what was in that entry of `dst` follows `src`'s contents. Nothing else is written; the
+/// entry is not range checked (the SDK writes outside `dst` for an index outside it, as this
+/// does).
+///
+/// # Safety
+/// Both tables and the entry the index selects must be valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn GsSortOt(src: *mut GsOt, dst: *mut GsOt) -> *mut GsOt {
+    unsafe {
+        let index = ((*src).point as i32).wrapping_sub((*dst).offset as i32);
+        let slot = (*dst).org.offset(index as isize);
+        (*src).org.write(slot.read());
+        slot.write(link_of((*src).tag.cast()));
+    }
+    dst
+}
+
 /// `GsSortClear(r, g, b, ot)`: clears the buffer being drawn to (r, g, b) before anything else
 /// in `ot` draws: a fill packet over the drawing area goes at the head of the list [obs: the
 /// packet is `[len 3 | link] 02BBGGRR yyyyxxxx hhhhwwww`, linked in front of `ot->tag`'s

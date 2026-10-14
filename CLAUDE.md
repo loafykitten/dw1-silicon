@@ -7,7 +7,8 @@ it's the handoff, with the goal, ground rules, sources, architecture, oracle, ph
 and open questions.
 
 - **Current status (2026-10-14, session 3):** Phases 1-3 done (`docs/phase1-report.md`,
-  `docs/phase2-report.md`, `docs/phase3-plan.md`); Phase 4 under way. The native `dw1` runs the
+  `docs/phase2-report.md`, `docs/phase3-plan.md`); Phase 4's gate replays (`file-city-walk`,
+  `care-fixture`, `docs/phase4-plan.md`) pass with every checkpoint equal. The native `dw1` runs the
   `new-game` replay from boot into first gameplay with every canonical checkpoint equal to the
   emulator's, and loads Ember's fixture save. Public repo `loafykitten/dw1-silicon` (branch
   `phase0`); decomp fork branch `dw1-native` pushed. Direction: hybrid (decomp C game + Rust

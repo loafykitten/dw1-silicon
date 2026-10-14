@@ -100,3 +100,34 @@ Target 5000 VBlanks. Schedule and screens: `docs/phase3-plan.md`. Record with
 `DW1ROUTE_PROFILE=continue DW1REPLAY_MODE=record` and `-dofile oracle/replay.lua`; replay with
 `DW1REPLAY_MODE=replay DW1REPLAY_FILE=oracle/replays/continue-fixture.txt`. The route is blind
 like the other and depends on the card's contents.
+
+## Phase 4 routes
+
+Two more profiles (`docs/phase4-plan.md` has the schedules, checkpoints and results):
+
+- `DW1ROUTE_PROFILE=file-city-walk`: the new-game route, then `oracle/route-file-city-walk-schedule.lua`
+  (the yard, the plaza, back, Jijimon's house and out, the plaza again; five map changes, to
+  VBlank 23380). Recorded as `oracle/replays/file-city-walk.txt` with fresh cards.
+- `DW1ROUTE_PROFILE=care-fixture`: the continue route, then `oracle/route-care-schedule.lua` (the
+  game menu: item sort, status and tech screens; then idle, game clock 07:00 to 14:16; to VBlank
+  31000). Recorded as `oracle/replays/care-fixture.txt` with the fixture card
+  (`DW1REPLAY_CARD1_FIXTURE=ember-day2-gabumon`, the fixture as `memcard1.mcd` in the cwd).
+
+Record: `DW1ROUTE_PROFILE=<profile> DW1REPLAY_MODE=record DW1REPLAY_TARGET=walk_done|care_done
+-dofile oracle/replay.lua`, in a fresh directory like the other routes. **Keep routes under VBlank
+~32700:** in the pinned Redux the Lua hooks stop working near VBlank 32768 (breakpoints are
+deleted, listeners throw "stack overflow").
+
+**Finding a route** (`oracle/explore.lua`): the same route with `DW1EXPLORE_TARGET=<milestone>`
+instead of a target, then turn-based control. Emulation is stopped inside the VBlank event while
+it waits for `./cmd.txt` (`hold UP+RIGHT 30`, `tap CROSS`, `wait 60`, `shot name`, `state`,
+`quit`), so what the game sees is a pure function of VBlank number, and `./inputs.log` collects
+the schedule lines to paste into a route file. After each batch it prints
+`EXPLORE state vblank=... screen=... tamer=(x,y,z) clock=... cond=... ...` and writes `s_<vblank>.raw`
+(convert with `oracle/raw2png.py`). A new profile is the base profile plus an extra schedule file
+(`EXTRA` in `route-new-game.lua`).
+
+Controls in the game (US): Triangle opens the menu and cancels, Cross confirms, D-pad moves.
+Map changes show a black caption ("File City", "Jijimon's house") for about 300 VBlanks before
+control comes back. Walking is 16 game units per VBlank; the yard (screen 204) ends at
+z about -4200 (south) and the plaza (180) starts at z 3370 (its north edge).

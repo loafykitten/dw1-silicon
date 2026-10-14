@@ -7,6 +7,11 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-14, session 3): start here
 
+- **Phase 4 gate replays done (2026-10-14):** `oracle/replays/file-city-walk.txt` and
+  `care-fixture.txt`, native checkpoints all identical; `GsSortOt` implemented (DIGIMON status
+  screen); decomp fork branch `dw1-native-phase4` (local, to push) fixes the digivice's ordering
+  tables. `oracle/explore.lua` finds routes turn-based. Keep Redux routes under VBlank ~32700
+  (Lua hooks fail near 32768). See `docs/phase4-plan.md`.
 - **Phases 2 and 3 are done; Phase 4 is under way** (`docs/phase2-report.md`,
   `docs/phase3-plan.md`, `docs/phase2-plan.md` for the slices). The `new-game` replay
   (`oracle/replays/new-game.txt`, 7,131 polls) runs natively from boot to its last poll, first
@@ -541,6 +546,13 @@ The intro choices, the first partner, walking, map changes, the script engine, m
 the in-game clock and care (hunger, sleep, toilet). Oracle: a replay from boot to the
 first walk around File City, state equal at each map change, and a fixture-started replay
 of an hour of care with the clock and care state equal.
+
+**Gate met (2026-10-14, `docs/phase4-plan.md`):** `oracle/replays/file-city-walk.txt` (five map
+changes after first gameplay, to VBlank 23380) and `oracle/replays/care-fixture.txt` (Ember's
+save, more than seven game hours of care state, to VBlank 31000) are certified on Redux and
+run natively with every checkpoint identical (27 of 27, 37 of 37). Open: a care replay that
+reaches a need (the poop at ~34000 is past the pinned Redux's Lua limit near VBlank 32768),
+the shops and other exits, frame comparison.
 
 ### Phase 5: the overlays, one at a time
 
