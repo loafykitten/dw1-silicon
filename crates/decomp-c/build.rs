@@ -378,6 +378,7 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("ScriptState")
         .allowlist_type("Inventory")
         .allowlist_type("MATRIX")
+        .allowlist_type("TIM_IMAGE")
         .allowlist_type("VECTOR")
         .allowlist_type("SVECTOR")
         .allowlist_type("_GsFCALL")

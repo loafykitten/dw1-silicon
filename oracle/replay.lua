@@ -224,7 +224,7 @@ local function finish(v)
             'gpu softgpu',
             'bios_sha1 ' .. BIOS_SHA1,
             'disc_sha1 ' .. DISC_SHA1,
-            'route oracle/route-new-game.lua',
+            'route oracle/route-new-game.lua profile ' .. (DW1ROUTE_PROFILE or os.getenv('DW1ROUTE_PROFILE') or 'new-game'),
             'target ' .. TARGET,
             'final_vblank ' .. v,
             'polls ' .. #log,

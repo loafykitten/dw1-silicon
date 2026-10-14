@@ -11,6 +11,7 @@
 -- Output lines: "DW1ROUTE milestone=<name> vblank=<n>", "DW1ROUTE reached <target> vblank=<n>".
 
 -- PS1 pad bits as PCSX-Redux numbers them.
+local HERE = (debug.getinfo(1, 'S').source:gsub('^@', ''):match('^(.*)/[^/]*$')) or '.'
 local B = { SELECT = 0, START = 3, UP = 4, RIGHT = 5, DOWN = 6, LEFT = 7, L2 = 8, R2 = 9,
             L1 = 10, R1 = 11, TRIANGLE = 12, CIRCLE = 13, CROSS = 14, SQUARE = 15 }
 
@@ -53,7 +54,15 @@ local MILESTONES = {
 }
 -- Another script can stop the route elsewhere: set DW1ROUTE_TARGET (a milestone name) and
 -- DW1ROUTE_ON_TARGET (called at that VBlank instead of quitting) before dofile'ing this one.
-local TARGET = DW1ROUTE_TARGET or 'gameplay'
+-- DW1ROUTE_PROFILE=continue (env or global) swaps in the CONTINUE GAME schedule below, for a
+-- fixture card in the cwd's memcard1.mcd (see docs/oracle-route.md, "Continue route").
+local PROFILE = DW1ROUTE_PROFILE or os.getenv('DW1ROUTE_PROFILE') or 'new-game'
+if PROFILE == 'continue' then
+    PRESSES, MILESTONES = dofile(CONTINUE_SCHEDULE_FILE or (HERE .. '/route-continue-schedule.lua'))
+elseif PROFILE ~= 'new-game' then
+    error('unknown DW1ROUTE_PROFILE ' .. tostring(PROFILE))
+end
+local TARGET = DW1ROUTE_TARGET or MILESTONES[#MILESTONES][2]
 
 local RAND_ADDR = 0x9010 -- BIOS rand() state (see oracle/probe-boot.lua)
 

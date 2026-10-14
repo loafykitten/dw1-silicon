@@ -59,6 +59,13 @@ const _: () = {
     assert!(offset_of!(DirEntry, system) == offset_of!(bindings::DIRENTRY, system));
 };
 
+/// psyq's `TimImage` has the layout of `TIM_IMAGE`.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    assert!(size_of::<psyq::libgpu::TimImage>() == size_of::<bindings::TIM_IMAGE>());
+    assert!(offset_of!(psyq::libgpu::TimImage, paddr) == offset_of!(bindings::TIM_IMAGE, paddr));
+};
+
 /// The SDK globals psyq defines in Rust have the layout the C headers declare.
 const _: () = {
     // libgpu/libgs structs psyq reads and writes.
@@ -177,6 +184,11 @@ unsafe extern "C" {
 
     // src/main/file_table_us.c (via dw/sin_lookup_table.h)
     pub static SIN_LOOKUP_TABLE: [i16; 130];
+
+    // src/main/main_menu.c: the save buffer (a `SaveFile`, 0x2000 bytes) and the game's own
+    // checksum over one of its two payloads.
+    pub static mut SAVE_FILE: [u8; 0x2000];
+    pub fn createSavegameChecksum(slot: i32) -> i32;
 }
 
 #[cfg(test)]
@@ -270,6 +282,67 @@ mod tests {
                 "randomLimit({limit})"
             );
         }
+    }
+
+    /// Where a `SaveFile` keeps its two payloads and each one's checksum (main_menu.c's
+    /// `SavegamePayload`: 0x4FC bytes of data, the checksum, then 40 battle records).
+    const PAYLOAD_START: [usize; 2] = [0x200, 0x200 + 0xF00];
+    const CHECKSUM_AT: usize = 0x4FC;
+
+    fn fixture() -> Option<Vec<u8>> {
+        let path = std::env::var_os("DW1_FIXTURE_CARD")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../captures/fixtures/ember-day2-gabumon.mcd");
+                p.exists().then_some(p)
+            })?;
+        std::fs::read(path).ok()
+    }
+
+    /// Ember's fixture card, read as-is (DuckStation raw format), holds a save the game's own
+    /// checksum accepts; flipping one byte of the payload makes it reject it. The save buffer
+    /// is global state, so both checks share one test.
+    #[test]
+    fn fixture_save_checksum_is_valid_and_corruption_is_rejected() {
+        let Some(bytes) = fixture() else {
+            eprintln!("skipped: no fixture card (captures/fixtures or DW1_FIXTURE_CARD)");
+            return;
+        };
+        let card = psyq::libmcrd::Card::from_bytes(&bytes).expect("a 128 KB raw card");
+        let files = card.files();
+        let file = files
+            .iter()
+            .find(|f| f.name.starts_with(b"BASLUS-01032DMR"))
+            .expect("the DW1 save file");
+        assert_eq!(file.blocks.len(), 1);
+        let data = &card.as_bytes()[(file.blocks[0] + 1) * 8192..][..8192];
+        // The save header starts with its id, "SC" (a PS1 save file, not the card's "MC").
+        assert_eq!(&data[..2], b"SC");
+
+        let load = |buf: &[u8]| unsafe {
+            (*core::ptr::addr_of_mut!(SAVE_FILE)).copy_from_slice(buf);
+        };
+        let stored = |slot: usize| {
+            let at = PAYLOAD_START[slot] + CHECKSUM_AT;
+            i32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+        };
+        load(data);
+        assert_eq!(
+            unsafe { createSavegameChecksum(0) },
+            stored(0),
+            "slot 0 checksum"
+        );
+        // One flipped bit in the payload (inside the 0x4E4 summed bytes) no longer matches.
+        let mut bad = data.to_vec();
+        bad[PAYLOAD_START[0] + 0x100] ^= 1;
+        load(&bad);
+        assert_ne!(unsafe { createSavegameChecksum(0) }, stored(0));
+        // And in the battle records (the 0xA00 bytes).
+        let mut bad = data.to_vec();
+        bad[PAYLOAD_START[0] + 0x500 + 0x10] ^= 1;
+        load(&bad);
+        assert_ne!(unsafe { createSavegameChecksum(0) }, stored(0));
     }
 }
 
