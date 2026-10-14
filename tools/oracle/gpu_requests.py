@@ -3,7 +3,8 @@
 software renderer) and reads VRAM back, for `crates/backend/tests/gpu_oracle.rs` to compare the
 Rust GPU model against. Black-box: only the results of what the emulator draws are used.
 
-Usage: gpu_requests.py OUT_DIR [--seed N] [--scale K] [--only semi|fade]
+Usage: gpu_requests.py OUT_DIR [--seed N] [--scale K] [--only semi|fade|models|tails|tiny]
+(`tiny` only runs when asked for.)
 
 --only semi writes just the semi-transparent cases, --only fade just the game's fade quad (both
 after the same setup). The test's known-residue list is keyed by case ids, so use a plain run
@@ -45,6 +46,7 @@ FILL = 0x7FFF
 TPAGE_A = 10 | (1 << 7)  # x 640, y 0, 8-bit
 TPAGE_B = 12 | (1 << 7)  # x 768
 CLUT = (640 // 16) | (300 << 6)  # CLUT word (x/16 in bits 0-5, y in bits 6-14)
+CLUT3 = (640 // 16) | (302 << 6)  # colours spread over all channels, bit 15 set
 CLUT2 = (640 // 16) | (301 << 6)  # the same colours, bit 15 set on odd entries (semi-transparent texels)
 
 M32 = 0xFFFFFFFF
@@ -114,6 +116,11 @@ class Gen:
             c = lambda i: (i & 31) | ((i >> 5) << 5) | (1 << 10) | (0x8000 if i & 1 else 0)
             clut2.append(c(i) | c(i + 1) << 16)
         self.draw([clut2])
+        clut3 = [0xA0000000, w_xy(640, 302), w_xy(256, 1)]
+        for i in range(0, 256, 2):
+            c3 = lambda i: (i & 31) | (((i * 7) & 31) << 5) | (((i * 3 + 5) & 31) << 10) | 0x8000
+            clut3.append(c3(i) | c3(i + 1) << 16)
+        self.draw([clut3])
 
     def case(self, rect, words):
         """words: the chain's GP0 words, as one list per packet."""
@@ -360,6 +367,69 @@ class Gen:
             page = TPAGE_A if n % 2 else TPAGE_B
             self.poly_case(kind, verts, cols, [uv] * m, page, False, (n // 3) % 2, full, (4, 260))
 
+    def models(self, count):
+        """Small lit Gouraud textured quads and triangles like the game's 3D models draw them
+        (a few pixels to a dozen across, texture spans of tens of texels, dark colours that differ
+        by a few steps between vertices), raw and modulated."""
+        r = random.Random(88)
+        ax, ay, aw, ah = AREA
+        full = (ax, ay, ax + aw - 1, ay + ah - 1)
+        for n in range(count):
+            kind = ["GT4", "GT4", "GT3", "GT4"][n % 4]
+            m = 4 if kind.endswith("4") else 3
+            w = r.randint(3, 14)
+            h = r.randint(3, 14)
+            cx, cy = r.randint(20, 200), r.randint(10, 30)
+            j = lambda: r.randint(-2, 2)
+            v = [(cx + j(), cy + j()), (cx + w + j(), cy + j()), (cx + j(), cy + h + j()), (cx + w + j(), cy + h + j())][:m]
+            if r.random() < 0.5:
+                v[1], v[2] = v[2], v[1]
+            u0, v0 = r.randint(0, 120), r.randint(0, 120)
+            du, dv = r.randint(2, 60), r.randint(2, 60)
+            uv = [(u0 + r.randint(0, 3), v0 + r.randint(0, 3)), (u0 + du + r.randint(0, 3), v0 + r.randint(0, 3)),
+                  (u0 + r.randint(0, 3), v0 + dv + r.randint(0, 3)), (u0 + du + r.randint(0, 3), v0 + dv + r.randint(0, 3))][:m]
+            base = r.randint(0x38, 0x80)
+            cols = [(base + r.randint(0, 0x10)) * 0x010101 for _ in range(m)]
+            raw = n % 3 == 0
+            page = TPAGE_A if (n // 2) % 2 else TPAGE_B
+            self.poly_case(kind, v, cols, uv, page, raw, 0, full, (ax, ay + 4))
+
+    def tails(self):
+        """Semi-transparent modulated textured quads over a coloured background with one texel all
+        over (colours of CLUT3 spread over all channels), every blend mode, a few colour
+        multipliers: the odd-row last pixel's arithmetic as a function of texel and colour."""
+        r = random.Random(99)
+        ax, ay, aw, ah = AREA
+        clip = (ax, ay, ax + 59, ay + 31)
+        for abr in (2, 0, 1, 3):
+            idxs = range(0, 256, 3) if abr == 2 else range(1, 256, 17)
+            for idx in idxs:
+                for c in (0x30, 0x60, 0x80, 0xB0):
+                    self.fillc = r.randint(14, 30) | r.randint(14, 30) << 5 | r.randint(14, 30) << 10
+                    self.clutw = CLUT3
+                    verts = [(4, 3), (4 + r.randint(10, 40), 3), (4, 3 + r.randint(9, 24)), (4 + r.randint(10, 40), 3 + r.randint(9, 24))]
+                    verts[3] = (verts[1][0], verts[2][1])
+                    cols = [c * 0x010101] * 4
+                    page = TPAGE_A | (abr << 5)
+                    self.poly_case("FT4", verts, cols, [(idx, idx)] * 4, page, False, 0, clip, (ax, ay), semi=True, e1=abr << 5)
+        self.fillc = FILL
+        self.clutw = CLUT
+
+    def tiny(self, count):
+        """Triangles on a 7 x 7 grid with texture coordinates 0..8: pixels land on exact halves all
+        the time, and the failing ones are small enough to work out by hand."""
+        r = random.Random(123)
+        ax, ay, aw, ah = AREA
+        clip = (ax, ay, ax + 15, ay + 15)
+        for n in range(count):
+            while True:
+                v = [(r.randint(1, 7), r.randint(1, 7)) for _ in range(3)]
+                a = (v[1][0] - v[0][0]) * (v[2][1] - v[0][1]) - (v[2][0] - v[0][0]) * (v[1][1] - v[0][1])
+                if a != 0:
+                    break
+            us = [(r.randint(0, 8), 0) for _ in range(3)]
+            self.poly_case("FT3", v, [0] * 3, us, TPAGE_A, True, 0, clip, (ax, ay))
+
     def sprites(self, count):
         """Axis-aligned quads like the game's sprites and menu boxes, up to 320 x 240 with
         texture spans of any size, seen through a window of the test area at a random offset."""
@@ -476,6 +546,13 @@ def main():
         g.semis(288 * a.scale)
     if a.only in ("", "fade"):
         g.fades()
+    if a.only in ("", "models"):
+        g.models(600 * a.scale)
+    if a.only in ("", "tails"):
+        g.tails()
+    if a.only == "tiny":
+        # only on request: their Redux results aren't part of gpu_oracle_known.txt's set
+        g.tiny(2500)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "req.txt"), "w") as f:
         f.write("\n".join(g.req) + "\n")

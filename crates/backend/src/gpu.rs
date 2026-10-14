@@ -114,6 +114,13 @@ fn to5(c8: i32, d: i32) -> i32 {
     (c8 + d).clamp(0, 255) >> 3
 }
 
+/// Whether `DW1_GP0_DUMP` is set: polygon packets are then printed with their draw state (a local
+/// debugging aid, see `tools/oracle/gpu_frame_requests.py`).
+pub fn dump_polygons() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("DW1_GP0_DUMP").is_some())
+}
+
 /// The emulated GPU. The C keeps this in file-level statics; here it is a value.
 pub struct Gpu {
     vram: Vec<u16>,
@@ -319,8 +326,9 @@ impl Gpu {
                 self.put_semi8(x, y, c8, d, abr, true);
                 return;
             }
-            if poly && semi && abr == 3 && c & 0x8000 != 0 && !dith && !tail {
-                // [obs] Blend mode B + F/4: the texel is quartered before it is modulated.
+            if poly && semi && abr == 3 && c & 0x8000 != 0 && !dith {
+                // [obs] Blend mode B + F/4: the texel is quartered before it is modulated; at the
+                // last pixel of an odd row green and blue are modulated first, then quartered.
                 let old = self.vram[Self::idx(x, y)];
                 if self.st.check_mask && old & 0x8000 != 0 {
                     return;
@@ -329,8 +337,11 @@ impl Gpu {
                 let m = [r, g, b];
                 let mut out = [0i32; 3];
                 for k in 0..3 {
+                    let t5 = [tr, tg, tb][k];
                     let sv = if t.raw {
                         q[k]
+                    } else if tail && k > 0 {
+                        (t5 * m[k]) >> 9
                     } else {
                         ((q[k] * m[k]) >> 4) >> 3
                     };
@@ -347,11 +358,22 @@ impl Gpu {
                 tb = to5(tb << 3, d);
             } else {
                 // texel (5 bit) * colour (8 bit) / 16 = 8-bit result, 0x80 = unchanged
-                tr = to5((tr * r) >> 4, d);
-                tg = to5((tg * g) >> 4, d);
-                tb = to5((tb * b) >> 4, d);
+                let blend = poly && semi && c & 0x8000 != 0 && !dith;
+                // [obs] Blended, the modulated texel isn't cut to 31 first (a colour above 0x80
+                // brightens it); the result is cut after.
+                let cut = |v: i32| if blend { v >> 3 } else { to5(v, d) };
+                tr = cut((tr * r) >> 4);
+                if tail && semi && c & 0x8000 != 0 && !dith && abr == 2 {
+                    // [obs] The last pixel of an odd row subtracts green and blue rounded up.
+                    tg = (((c >> 5) & 31) * g + 127) >> 7;
+                    tb = (((c >> 10) & 31) * b + 127) >> 7;
+                    tg = tg.min(31);
+                    tb = tb.min(31);
+                } else {
+                    tg = cut((tg * g) >> 4);
+                    tb = cut((tb * b) >> 4);
+                }
             }
-            let rejected = self.st.check_mask && self.vram[Self::idx(x, y)] & 0x8000 != 0;
             self.put(
                 x,
                 y,
@@ -362,15 +384,6 @@ impl Gpu {
                 abr,
                 c & 0x8000 != 0,
             );
-            if !rejected && tail && semi && c & 0x8000 != 0 && !dith && !t.raw && abr == 2 {
-                // [obs] The last pixel of an odd row subtracts one more from green and blue.
-                let p = &mut self.vram[Self::idx(x, y)];
-                for sh in [5, 10] {
-                    if (*p >> sh) & 31 > 0 {
-                        *p -= 1 << sh;
-                    }
-                }
-            }
         } else if dith && semi {
             self.put_semi8(x, y, [r, g, b], d, abr, false);
         } else {
@@ -585,6 +598,22 @@ impl Gpu {
 
     #[allow(clippy::needless_range_loop)]
     fn polygon(&mut self, w: &[u32], op: u32) {
+        if dump_polygons() {
+            let st = &self.st;
+            eprintln!(
+                "P {w:08x?} tp={:x} ofs={},{} clip={},{},{},{} dith={} mask={}{}",
+                st.tpage,
+                st.ofs_x,
+                st.ofs_y,
+                st.clip_x0,
+                st.clip_y0,
+                st.clip_x1,
+                st.clip_y1,
+                st.dither,
+                st.set_mask,
+                st.check_mask
+            );
+        }
         let quad = op & 0x08 != 0;
         let textured = op & 0x04 != 0;
         let semi = op & 0x02 != 0;

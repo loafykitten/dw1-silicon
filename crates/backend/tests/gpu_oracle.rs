@@ -53,6 +53,9 @@ mod oracle {
             vram[300 * VRAM_W + 640 + i] = c as u16;
             // a second CLUT at (640,301): bit 15 (semi-transparent texel) on odd entries
             vram[301 * VRAM_W + 640 + i] = (c | if i & 1 == 1 { 0x8000 } else { 0 }) as u16;
+            // a third CLUT at (640,302): colours spread over all channels, bit 15 set
+            vram[302 * VRAM_W + 640 + i] =
+                ((i & 31) | (((i * 7) & 31) << 5) | (((i * 3 + 5) & 31) << 10) | 0x8000) as u16;
         }
         g
     }
