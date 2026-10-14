@@ -8,6 +8,7 @@
 mod coord;
 mod light;
 mod model;
+mod sort2d;
 mod sort4j;
 mod tim;
 mod view;
@@ -15,6 +16,7 @@ mod view;
 pub use coord::*;
 pub use light::*;
 pub use model::*;
+pub use sort2d::*;
 pub use sort4j::*;
 pub use tim::*;
 pub use view::*;

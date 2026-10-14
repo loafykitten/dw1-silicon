@@ -157,6 +157,89 @@ pub unsafe extern "C" fn MoveImage(r: *const Rect, x: i32, y: i32) -> i32 {
     0
 }
 
+/// `LoadClut(clut, x, y)`: copies a 256-entry CLUT into VRAM row `y` from column `x` and returns
+/// its CLUT id, `GetClut(x, y)` [doc; obs: 256 halfwords of row 0x1E1..0x1E3 matched the source
+/// and nothing past them changed].
+///
+/// # Safety
+/// `clut` must hold 256 halfwords.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn LoadClut(clut: *const u32, x: i32, y: i32) -> u16 {
+    let r = Rect {
+        x: x as i16,
+        y: y as i16,
+        w: 256,
+        h: 1,
+    };
+    unsafe { LoadImage(&r, clut) };
+    GetClut(x, y)
+}
+
+/// libgpu `TIM_IMAGE` [hdr: libgpu.h; pointers are native].
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TimImage {
+    pub mode: u32,
+    pub crect: *mut Rect,
+    pub caddr: *mut u32,
+    pub prect: *mut Rect,
+    pub paddr: *mut u32,
+}
+
+/// Where `ReadTIM` reads next: set by `OpenTIM`, moved past the image by `ReadTIM` (an address;
+/// raw pointers aren't `Send`) [obs: libgpu's static, after `ReadTIM` it holds the next TIM].
+static TIM_CURSOR: Mutex<usize> = Mutex::new(0);
+
+/// The address `ReadTIM` would read next.
+pub fn tim_cursor() -> usize {
+    *TIM_CURSOR.lock().unwrap()
+}
+
+/// `OpenTIM(addr)`: starts reading the TIM file at `addr` (its ID word) and returns 0 [doc;
+/// obs]. A word other than the TIM ID 0x10 is unobserved and stops the program.
+///
+/// # Safety
+/// `addr` must point to a TIM.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn OpenTIM(addr: *const u32) -> i32 {
+    if unsafe { addr.read() } != 0x10 {
+        crate::trap::unimplemented("OpenTIM on something that is not a TIM (unobserved)");
+    }
+    *TIM_CURSOR.lock().unwrap() = addr as usize;
+    0
+}
+
+/// `ReadTIM(img)`: describes the TIM opened by `OpenTIM` in `img` and moves on to the next one;
+/// returns `img` [doc: psx-spx TIM; obs]. `mode` is the TIM's flags word, `crect` and `caddr`
+/// point at the CLUT block's rectangle and data, `prect` and `paddr` at the pixel block's, all
+/// inside the TIM. A TIM without a CLUT is unobserved and stops the program.
+///
+/// # Safety
+/// `img` must be valid and `OpenTIM` must have been called on a complete TIM.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ReadTIM(img: *mut TimImage) -> *mut TimImage {
+    let mut cursor = TIM_CURSOR.lock().unwrap();
+    unsafe {
+        let tim = *cursor as *const u32;
+        let flags = tim.add(1).read();
+        if flags & 8 == 0 {
+            crate::trap::unimplemented("ReadTIM on a TIM without a CLUT (unobserved)");
+        }
+        // Each block is [length in bytes incl. this word][rect (x, y, w, h)][data].
+        let clut = tim.add(2);
+        let pixels = clut.cast::<u8>().add(clut.read() as usize).cast::<u32>();
+        *img = TimImage {
+            mode: flags,
+            crect: clut.add(1).cast_mut().cast(),
+            caddr: clut.add(3).cast_mut(),
+            prect: pixels.add(1).cast_mut().cast(),
+            paddr: pixels.add(3).cast_mut(),
+        };
+        *cursor = pixels.cast::<u8>().add(pixels.read() as usize) as usize;
+    }
+    img
+}
+
 // ---- environments ----
 
 /// The drawing-environment commands for `env`, in the order libgpu sends them [obs: the
