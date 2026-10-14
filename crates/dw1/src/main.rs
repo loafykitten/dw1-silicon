@@ -37,25 +37,70 @@ fn open_disc() -> Result<pack::Disc, String> {
 
 /// `DW1_CRASH_TRACE=1`: on SIGSEGV/SIGBUS print the call stack (symbols) to stderr. lldb can't
 /// attach in the agent sandbox, and the game's crashes are otherwise silent (exit 139).
+///
+/// The handler only uses calls that are safe in a signal handler on macOS: `write`,
+/// `backtrace` (primed here, so it doesn't load anything when it runs) and
+/// `backtrace_symbols_fd` (writes to the descriptor without allocating), then `_exit`. It runs
+/// on its own stack, so a stack overflow is reported too, and resets to the default action on
+/// entry, so a fault inside it ends the process instead of looping.
 fn install_crash_trace() {
+    use std::ffi::c_void;
+    #[repr(C)]
+    struct SigAction {
+        handler: extern "C" fn(i32),
+        mask: u32,
+        flags: i32,
+    }
+    #[repr(C)]
+    struct StackT {
+        sp: *mut c_void,
+        size: usize,
+        flags: i32,
+    }
+    // <sys/signal.h>
+    const SA_ONSTACK: i32 = 0x0001;
+    const SA_RESETHAND: i32 = 0x0004;
+    const SIGBUS: i32 = 10;
+    const SIGSEGV: i32 = 11;
     unsafe extern "C" {
-        fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
-        fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
-        fn backtrace_symbols_fd(buffer: *const *mut std::ffi::c_void, size: i32, fd: i32);
+        fn sigaction(sig: i32, act: *const SigAction, old: *mut SigAction) -> i32;
+        fn sigaltstack(ss: *const StackT, old: *mut StackT) -> i32;
+        fn backtrace(buffer: *mut *mut c_void, size: i32) -> i32;
+        fn backtrace_symbols_fd(buffer: *const *mut c_void, size: i32, fd: i32);
+        fn write(fd: i32, buf: *const c_void, n: usize) -> isize;
         fn _exit(code: i32) -> !;
     }
-    extern "C" fn on_crash(sig: i32) {
-        eprintln!("dw1: fatal signal {sig}; call stack:");
-        let mut frames = [std::ptr::null_mut(); 24];
+    extern "C" fn on_crash(_sig: i32) {
+        const MSG: &[u8] = b"dw1: fatal signal (SIGSEGV or SIGBUS); call stack:\n";
+        let mut frames = [std::ptr::null_mut(); 32];
         unsafe {
+            write(2, MSG.as_ptr().cast(), MSG.len());
             let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
             backtrace_symbols_fd(frames.as_ptr(), n, 2);
             _exit(139);
         }
     }
     unsafe {
-        signal(11, on_crash);
-        signal(10, on_crash);
+        let mut prime = [std::ptr::null_mut(); 1];
+        backtrace(prime.as_mut_ptr(), 1);
+        // 256 KB for the handler, kept for the life of the process.
+        let stack = Box::leak(vec![0u8; 256 * 1024].into_boxed_slice());
+        let ss = StackT {
+            sp: stack.as_mut_ptr().cast(),
+            size: stack.len(),
+            flags: 0,
+        };
+        let act = SigAction {
+            handler: on_crash,
+            mask: 0,
+            flags: SA_ONSTACK | SA_RESETHAND,
+        };
+        if sigaltstack(&ss, std::ptr::null_mut()) != 0
+            || sigaction(SIGSEGV, &act, std::ptr::null_mut()) != 0
+            || sigaction(SIGBUS, &act, std::ptr::null_mut()) != 0
+        {
+            eprintln!("dw1: DW1_CRASH_TRACE: could not install the handler");
+        }
     }
 }
 

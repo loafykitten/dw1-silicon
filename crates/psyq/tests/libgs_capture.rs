@@ -361,11 +361,20 @@ mod capture {
             .map(|e| e.path())
             .filter(|p| {
                 let name = p.file_name().unwrap().to_string_lossy();
-                (name == "libgs-pin" || name.starts_with("s4j-")) && p.join("calls.txt").exists()
+                name == "libgs-pin" || name.starts_with("s4j-")
             })
             .collect();
         dirs.sort();
         assert!(!dirs.is_empty());
+        // A run without its calls.txt was interrupted (capture-calls.lua writes it last): fail
+        // rather than skip it.
+        for dir in &dirs {
+            assert!(
+                dir.join("calls.txt").exists(),
+                "{}: no calls.txt (an interrupted capture?)",
+                dir.display()
+            );
+        }
         let mut failures = Vec::new();
         let (mut total, mut words_ok, mut noise_total) = (0, 0, 0);
         for dir in &dirs {

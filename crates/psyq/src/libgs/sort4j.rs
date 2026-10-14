@@ -122,7 +122,9 @@ pub unsafe extern "C" fn GsSortObject4J(
         // The object's TMD record: vertex, normal and primitive tables (address, count), scale.
         let tmd = obj.tmd;
         let vp = ptr_of_ptr32(tmd.read()).cast::<Vert>();
+        let n_vert = tmd.add(1).read() as usize;
         let np = ptr_of_ptr32(tmd.add(2).read()).cast::<Vert>();
+        let n_norm = tmd.add(3).read() as usize;
         let mut op = ptr_of_ptr32(tmd.add(4).read()).cast::<u32>().cast_const();
         let mut left = tmd.add(5).read() as usize;
 
@@ -150,12 +152,53 @@ pub unsafe extern "C" fn GsSortObject4J(
                 eprintln!("psyq: GsFCALL4 slot {slot} (TMD mode {mode:#04x} flag {flag}) is empty");
                 unimplemented("GsSortObject4J without an installed handler");
             };
+            check_indices(op, n, words, mode, flag, n_vert, n_norm);
             let handler: TmdHandler = std::mem::transmute(f);
             pk = handler(op, vp, np, pk, n as i32, shift, otp, scratch);
             op = op.add(n * (1 + words));
             left -= n;
         }
         GsSetWorkBase(pk.cast());
+    }
+}
+
+/// Stops the program if a run of a kind implemented here indexes past its object's vertex or
+/// normal list. The SDK would read whatever lies beyond; natively that can be any memory, so an
+/// out-of-range index is treated as unmodelled. Kinds without a native handler trap in their
+/// stub anyway.
+unsafe fn check_indices(
+    op: *const u32,
+    n: usize,
+    words: usize,
+    mode: u8,
+    flag: u8,
+    n_vert: usize,
+    n_norm: usize,
+) {
+    // Lit Gouraud textured triangles and quads: (normal, vertex) halfword pairs after the
+    // header and one texture word per vertex. [doc: TMD primitive layouts]
+    let nv = match (mode & !0x03, flag & 1) {
+        (0x34, 0) => 3,
+        (0x3C, 0) => 4,
+        _ => return,
+    };
+    for i in 0..n {
+        let idx = unsafe { op.add(i * (1 + words) + 1 + nv).cast::<u16>() };
+        for k in 0..nv {
+            let (normal, vertex) = unsafe {
+                (
+                    usize::from(idx.add(2 * k).read()),
+                    usize::from(idx.add(2 * k + 1).read()),
+                )
+            };
+            if normal >= n_norm || vertex >= n_vert {
+                eprintln!(
+                    "psyq: TMD primitive {i} of a run: normal {normal} of {n_norm}, vertex {vertex} \
+                     of {n_vert}"
+                );
+                unimplemented("GsSortObject4J on a primitive indexing past its TMD lists");
+            }
+        }
     }
 }
 
@@ -231,7 +274,17 @@ unsafe fn tg_run(
             op = op.add(1 + 2 * nv);
             let normal_ix = |k: usize| usize::from(idx.add(2 * k).read());
             let vertex_ix = |k: usize| usize::from(idx.add(2 * k + 1).read());
-            debug_assert_eq!(header >> 24, mode);
+            // Only the observed combination: mode exactly 0x34/0x3C (no semi-transparency or
+            // raw-texture bit) and flag 0 (one-sided, lit, no gradation). The game installs
+            // this handler in a slot that other bits share.
+            if header >> 16 != mode << 8 {
+                eprintln!(
+                    "psyq: TMD mode {:#04x} flag {:#04x} in the TG{nv}L handler",
+                    header >> 24,
+                    (header >> 16) & 0xFF
+                );
+                unimplemented("GsTMDfastTG*L with unobserved mode or flag bits");
+            }
 
             // Vertices 0..2 through RTPT, then the back-face test on them. [doc: RTPT, NCLIP]
             for k in 0..3 {
