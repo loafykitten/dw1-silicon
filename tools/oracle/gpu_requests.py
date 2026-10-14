@@ -4,6 +4,7 @@ software renderer) and reads VRAM back, for `crates/backend/tests/gpu_oracle.rs`
 Rust GPU model against. Black-box: only the results of what the emulator draws are used.
 
 Usage: gpu_requests.py OUT_DIR [--seed N] [--scale K] [--only semi|fade|models|tails|tiny]
+(`tiny` only runs when asked for.)
 
 --only semi writes just the semi-transparent cases, --only fade just the game's fade quad (both
 after the same setup). The test's known-residue list is keyed by case ids, so use a plain run
@@ -549,7 +550,8 @@ def main():
         g.models(600 * a.scale)
     if a.only in ("", "tails"):
         g.tails()
-    if a.only in ("", "tiny"):
+    if a.only == "tiny":
+        # only on request: their Redux results aren't part of gpu_oracle_known.txt's set
         g.tiny(2500)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "req.txt"), "w") as f:

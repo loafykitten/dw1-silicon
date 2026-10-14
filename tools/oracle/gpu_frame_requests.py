@@ -33,7 +33,8 @@ def parse(dump, clip_y0):
         ofs = tuple(map(int, st["ofs"].split(",")))
         clip = tuple(map(int, st["clip"].split(",")))
         dith = st["dith"] == "true"
-        prim = (words, int(st["tp"], 16), ofs, clip, dith)
+        mask = (st["mask"].startswith("true"), st["mask"].endswith("true"))  # (set, check)
+        prim = (words, int(st["tp"], 16), ofs, clip, dith, mask)
         if cur and cur[-1][3] != clip:
             batches.append(cur)
             cur = []
@@ -53,7 +54,7 @@ def main():
     g = Gen(1)
     # textures and CLUTs used
     need = set()
-    for words, tp, ofs, clip, dith in batch:
+    for words, tp, ofs, clip, dith, mask in batch:
         op = words[0] >> 24
         if not op & 4:
             continue
@@ -92,8 +93,10 @@ def main():
     for kind, x, y, w, h in sorted(split):
         if w == 0:
             continue
-        for y0 in range(0, h, 3):
-            n = min(3, h - y0)
+        # as many rows as fit a packet (at most 255 words, 3 of them the transfer header)
+        rows = max(1, 504 // w)
+        for y0 in range(0, h, rows):
+            n = min(rows, h - y0)
             words = [0xA0000000, w_xy(x, y + y0), w_xy(w, n)]
             px = [vram[((y + y0 + r) & 511) * 1024 + ((x + c) & 1023)] for r in range(n) for c in range(w)]
             if len(px) % 2:
@@ -108,8 +111,10 @@ def main():
     chain = [[0x02000000, w_xy(0, clip_y0), w_xy(320, 240)]]
     state = None
     lines = ["Y %d" % clip_y0]
-    for words, tp, ofs, clip, dith in batch:
-        st = (ofs, clip, dith)
+    for words, tp, ofs, clip, dith, mask in batch:
+        # the captured tpage is the one in force at this polygon (a textured polygon before it
+        # may have changed it), so it is part of the state compared
+        st = (tp, ofs, clip, dith, mask)
         if st != state:
             state = st
             e = [
@@ -118,6 +123,7 @@ def main():
                 [0xE3000000 | clip[0] | (clip[1] << 10)],
                 [0xE4000000 | clip[2] | (clip[3] << 10)],
                 [0xE5000000 | (ofs[0] & 0x7FF) | ((ofs[1] & 0x7FF) << 11)],
+                [0xE6000000 | int(mask[0]) | (int(mask[1]) << 1)],
             ]
             chain += e
             lines.append("E " + " ".join("%x" % p[0] for p in e))

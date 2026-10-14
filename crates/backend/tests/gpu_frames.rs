@@ -89,6 +89,14 @@ fn model_matches_redux_on_game_frames() {
             })
             .collect();
         assert_eq!(bands.len(), 6, "{}: bands", d.display());
+        for (b, band) in bands.iter().enumerate() {
+            assert_eq!(
+                band.len(),
+                320 * 40 * 2,
+                "{}: band {b} is short",
+                d.display()
+            );
+        }
         let mut bad = Vec::new();
         for (b, band) in bands.iter().enumerate() {
             for (i, c) in band.chunks(2).enumerate() {
