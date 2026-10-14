@@ -202,7 +202,8 @@ unsafe fn check_indices(
     }
 }
 
-/// `GsTMDfastTG3L`: a run of light-calculated, Gouraud, textured triangles (mode 0x34, flag 0).
+/// `GsTMDfastTG3L`: a run of light-calculated, Gouraud, textured triangles (mode 0x34, or 0x36
+/// with the semi-transparent bit; flag 0).
 ///
 /// # Safety
 /// As [`GsSortObject4J`]'s: `op` is `n` linked TMD primitives, `vp`/`np` their object's lists.
@@ -264,7 +265,7 @@ unsafe fn tg_run(
     ot: *mut GsOt,
 ) -> *mut u32 {
     unsafe {
-        let mode: u32 = if nv == 4 { 0x3C } else { 0x34 };
+        let base_mode: u32 = if nv == 4 { 0x3C } else { 0x34 };
         let ot_entries = 1u32.checked_shl((*ot).length).unwrap_or(0);
         let ot_org = (*ot).org;
         for _ in 0..n {
@@ -274,13 +275,16 @@ unsafe fn tg_run(
             op = op.add(1 + 2 * nv);
             let normal_ix = |k: usize| usize::from(idx.add(2 * k).read());
             let vertex_ix = |k: usize| usize::from(idx.add(2 * k + 1).read());
-            // Only the observed combination: mode exactly 0x34/0x3C (no semi-transparency or
-            // raw-texture bit) and flag 0 (one-sided, lit, no gradation). The game installs
-            // this handler in a slot that other bits share.
-            if header >> 16 != mode << 8 {
+            // Only the observed combinations, flag 0 (one-sided, lit, no gradation) and the
+            // mode exactly 0x34/0x3C, or 0x36: the command byte is the header's own, so the
+            // semi-transparent bit (0x02) rides along into the packet [obs: mode 0x36
+            // triangles, one call of 198 in File City]. A semi-transparent quad (0x3E), the
+            // raw-texture bit and other flags are unobserved. The game installs this handler in
+            // a slot those bits share.
+            let mode = header >> 24;
+            if (header >> 16) & 0xFF != 0 || (mode != base_mode && !(nv == 3 && mode == 0x36)) {
                 eprintln!(
-                    "psyq: TMD mode {:#04x} flag {:#04x} in the TG{nv}L handler",
-                    header >> 24,
+                    "psyq: TMD mode {mode:#04x} flag {:#04x} in the TG{nv}L handler",
                     (header >> 16) & 0xFF
                 );
                 unimplemented("GsTMDfastTG*L with unobserved mode or flag bits");

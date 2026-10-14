@@ -29,64 +29,23 @@
 fn native_sort_object4j_matches_the_real_sdk() {}
 
 #[cfg(have_libgs_capture)]
+mod common;
+
+#[cfg(have_libgs_capture)]
 mod capture {
-    use backend::gte::Gte;
+    use super::common::{
+        State, load_gte, native, ram, ram_word, root, set_ram_word, translate_link,
+    };
     use psyq::globals::GsFCALL4;
     use psyq::libgs::{
         GsDobj2, GsGetWorkBase, GsOt, GsSetWorkBase, GsSortObject4J, GsTMDfastTG3L, GsTMDfastTG4L,
         TmdHandler,
     };
-    use psyq::memory::{
-        LINK_END, PS1_RAM_SIZE, dw1_ps1_ram, dw1_scratchpad, link_of, ps1_ram_ptr, ptr32_of,
-    };
+    use psyq::memory::{PS1_RAM_SIZE, dw1_scratchpad, ps1_ram_ptr, ptr32_of};
     use std::path::{Path, PathBuf};
 
     const GS_OUT_PACKET_P: u32 = 0x8013_6FE4;
     const SCRATCH_BASE: u32 = 0x1F80_0000;
-
-    /// One machine snapshot (`DW1STATE`: GPR[34], CP0[32], CP2D[32], CP2C[32], pc, 1 KiB
-    /// scratchpad, 2 MiB RAM; all little-endian u32).
-    struct State {
-        gpr: [u32; 34],
-        cp2d: [u32; 32],
-        cp2c: [u32; 32],
-        scratch: Vec<u8>,
-        ram: Vec<u8>,
-    }
-
-    fn word(b: &[u8], i: usize) -> u32 {
-        u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap())
-    }
-
-    impl State {
-        fn load(path: &Path) -> State {
-            let b = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-            assert_eq!(&b[..8], b"DW1STATE", "{}", path.display());
-            let regs = &b[8..8 + 131 * 4];
-            let mut s = State {
-                gpr: [0; 34],
-                cp2d: [0; 32],
-                cp2c: [0; 32],
-                scratch: Vec::new(),
-                ram: Vec::new(),
-            };
-            for i in 0..34 {
-                s.gpr[i] = word(regs, i);
-            }
-            for i in 0..32 {
-                s.cp2d[i] = word(regs, 66 + i);
-                s.cp2c[i] = word(regs, 98 + i);
-            }
-            let at = 8 + 131 * 4;
-            s.scratch = b[at..at + 1024].to_vec();
-            s.ram = b[at + 1024..at + 1024 + PS1_RAM_SIZE].to_vec();
-            s
-        }
-
-        fn r32(&self, addr: u32) -> u32 {
-            word(&self.ram, (addr as usize & (PS1_RAM_SIZE - 1)) / 4)
-        }
-    }
 
     struct Call {
         index: usize,
@@ -129,56 +88,6 @@ mod capture {
             })
             .collect();
         (calls, if new_format { 4 } else { 2 })
-    }
-
-    fn root() -> PathBuf {
-        match std::env::var_os("DW1_SORT_CAPTURES") {
-            Some(d) => PathBuf::from(d),
-            None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs"),
-        }
-    }
-
-    /// The captured GTE state loaded into a fresh `Gte`. Registers whose writes have side
-    /// effects or are derived (SXYP moves the FIFO, IRGB rewrites IR1-3, ORGB and LZCR) are
-    /// skipped.
-    fn load_gte(s: &State) -> Gte {
-        let mut g = Gte::new();
-        for r in 0..32 {
-            if !matches!(r, 15 | 28 | 29 | 31) {
-                g.mtc2(r, s.cp2d[r]);
-            }
-        }
-        for r in 0..32 {
-            g.ctc2(r, s.cp2c[r]);
-        }
-        g
-    }
-
-    /// A PS1 RAM address as a native pointer.
-    fn native(addr: u32) -> *mut u8 {
-        ps1_ram_ptr(addr)
-    }
-
-    /// A 24-bit link as the PS1 captured it, translated to the native encoding.
-    fn translate_link(word: u32) -> u32 {
-        let link = word & LINK_END;
-        if link == LINK_END {
-            return word;
-        }
-        (word & 0xFF00_0000) | link_of(native(0x8000_0000 | link))
-    }
-
-    fn ram() -> &'static mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut((&raw mut dw1_ps1_ram).cast::<u8>(), PS1_RAM_SIZE) }
-    }
-
-    fn ram_word(ram: &[u8], addr: u32) -> u32 {
-        word(ram, (addr as usize & (PS1_RAM_SIZE - 1)) / 4)
-    }
-
-    fn set_ram_word(ram: &mut [u8], addr: u32, v: u32) {
-        let o = addr as usize & (PS1_RAM_SIZE - 1);
-        ram[o..o + 4].copy_from_slice(&v.to_le_bytes());
     }
 
     /// The region (RAM offsets) of the ordering table's entries.

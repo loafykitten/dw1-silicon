@@ -117,6 +117,23 @@ TMD map, the file queue, fonts, scripts, UI, clock...), `loadTIMFile` twice, the
    rasteriser's rounding (about 1,300 pixels, mostly 1-3 levels). It stops at `GsSortBoxFill`
    (`renderUIBoxStatic`, poll 1088, recorded VBlank 3570) after a decomp fix:
    `setupNewGameDialogueBox` read the type of a null `ENTITY_TABLE` entry, harmless on the PS1.
+6f. **2D sorts, TIM and CLUT calls (done 2026-10-14):** `libgs/sort2d.rs`: `GsSortBoxFill`
+   (`E1000200` + a flat TILE `60`/`62`; attribute 0 or `GsALON`), `GsSortPoly` (copies the caller's
+   `POLY_FT4`, command 0x2E, into the work area), `GsSortSprite` (`SPRT` `64` when `rotate` is 0,
+   else a `POLY_FT4` `2C` whose corners go through the GTE: RT = turn by `rotate / 360` in
+   libgte units, TR = (x, y, H), RTPT + RTPS; the tpage word keeps only bits 0-4). In `libgpu.rs`:
+   `LoadClut` (256 entries, returns `GetClut`), `OpenTIM`/`ReadTIM` (cursor over the TIM's blocks;
+   CLUT required). Entry `pri` of the table is used directly. Surveyed on the route (Redux
+   VBlanks 2000-5400 and 12100-19400, counts in `captures/oracle-runs/{count-g2d,count2-g2d,
+   count3-g2d}`): `GsSortBoxFill` and `GsSortPoly` only at priorities 4 to 6 (the dialogue and
+   name-entry boxes), `GsSortSprite` only for the clock hand (every frame from File City on),
+   `LoadClut` and `OpenTIM`/`ReadTIM` at map loads; no `GsSortFastSprite`, `GsSortOt` or
+   `SetDrawLoad` (still stubs). `GsTMDfastTG3L` also takes the semi-transparent 0x36 triangle
+   (File City). Checks: `tests/libgs_2d_capture.rs` (287 captured calls: boxes 192, polys 46,
+   sprites 49), `tests/libgpu_capture.rs`, `tests/libgs_sprite_oracle.rs` (1,000 `call-sdk.lua`
+   requests: all 60 clock angles, 600 random rotations), `tests/libgs_capture.rs` (388 calls).
+   Result: the replay runs to its last poll and all 19 checkpoints equal the emulator's; frames of
+   the new-game scene differ from Redux's only in 8-20 pixels on the 3D models.
 7. **The intro movie:** MOV's streaming reads (`St*`), the MDEC calls (`DecDCT*`), XA
    skipped silently. Check: it plays to the end and skips on Start.
    **Done 2026-10-13** (`docs/phase2-movie.md`): all four movies play through `MOV_playMovie`

@@ -15,8 +15,7 @@ stubs! { SetDrawLoad }
 
 // libgs (its data globals are in `globals`).
 stubs! {
-    GsSortBoxFill GsSortFastSprite GsSortOt
-    GsSortPoly GsSortSprite
+    GsSortFastSprite GsSortOt
 }
 
 // libgs: the TMD primitive handlers GsSortObject4J dispatches to through GsFCALL4.

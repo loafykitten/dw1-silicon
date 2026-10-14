@@ -3,7 +3,7 @@
 //! something made up. Each case runs in a child process (this test binary again, with
 //! `DW1_TRAP_CASE` set) because the stop is an abort.
 
-use psyq::libgs::{GsDobj2, GsOt, GsSortObject4J, GsTMDfastTG3L, Vert};
+use psyq::libgs::{GsDobj2, GsOt, GsSortObject4J, GsTMDfastTG3L, GsTMDfastTG4L, Vert};
 use psyq::memory::ptr32_of;
 
 /// The object's data: in the program's data segment, like the game's (32-bit pointers to it
@@ -42,15 +42,15 @@ fn run_case(name: &str) {
         };
         let pk = (&raw mut PACKETS).cast::<u32>();
         match name {
-            "semi_mode" | "two_sided" => {
-                // The handler's slot is shared with semi-transparent (mode 0x36) and two-sided
-                // (flag 2) triangles; neither was ever captured.
-                let (mode, flag) = if name == "semi_mode" {
-                    (0x36, 0)
-                } else {
-                    (0x34, 2)
-                };
-                PRIM = triangle(mode, flag, [(0, 0), (0, 1), (1, 0)]);
+            "semi_mode" => {
+                // A semi-transparent quad (mode 0x3E) shares TG4L's slot and was never captured;
+                // the header is checked before anything else is read.
+                PRIM = triangle(0x3E, 0, [(0, 0), (0, 1), (1, 0)]);
+                GsTMDfastTG4L((&raw const PRIM).cast(), vp, vp, pk, 1, 0, &mut ot, pk);
+            }
+            "two_sided" => {
+                // Two-sided triangles (flag 2) share TG3L's slot and were never captured.
+                PRIM = triangle(0x34, 2, [(0, 0), (0, 1), (1, 0)]);
                 GsTMDfastTG3L((&raw const PRIM).cast(), vp, vp, pk, 1, 0, &mut ot, pk);
             }
             "bad_index" => {

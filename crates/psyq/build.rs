@@ -10,7 +10,37 @@ fn main() {
     gte_capture();
     libgs_light_capture();
     sort_capture();
+    sort2d_capture();
+    libgpu_capture();
+    sprite_capture();
     println!("cargo::rerun-if-changed=build.rs");
+}
+
+/// Sets `cfg(have_libgs_2d_capture)` when at least one `g2d-box-*` or `g2d-spr` capture run of
+/// `GsSortBoxFill`, `GsSortPoly` and `GsSortSprite` (`oracle/capture-calls.lua` with `DW1_CAPTURE_STATES=1`) exists under
+/// `DW1_SORT_CAPTURES` (default `<workspace>/captures/oracle-runs`). Without one
+/// `tests/libgs_2d_capture.rs` shows as an ignored placeholder.
+fn sort2d_capture() {
+    println!("cargo::rustc-check-cfg=cfg(have_libgs_2d_capture)");
+    let root = match std::env::var_os("DW1_SORT_CAPTURES") {
+        Some(d) => PathBuf::from(d),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs"),
+    };
+    println!("cargo::rerun-if-changed={}", root.display());
+    let found = std::fs::read_dir(&root).is_ok_and(|entries| {
+        entries.flatten().any(|e| {
+            e.file_name().to_string_lossy().starts_with("g2d-box-")
+                && e.path().join("calls.txt").exists()
+        })
+    });
+    if found {
+        println!("cargo::rustc-cfg=have_libgs_2d_capture");
+    } else {
+        println!(
+            "cargo::warning=2D sort captures not found under {}: tests/libgs_2d_capture.rs will be ignored",
+            root.display()
+        );
+    }
 }
 
 /// The capture runs of `GsSortObject4J` under `DW1_SORT_CAPTURES` (default
@@ -118,6 +148,54 @@ fn libgs_light_capture() {
     } else {
         println!(
             "cargo::warning=libgs light oracle run not found ({}): tests/libgs_oracle.rs will be ignored",
+            dir.display()
+        );
+    }
+}
+
+/// Sets `cfg(have_libgpu_capture)` when the `g2d-tim` and `g2d-clut` capture runs (`OpenTIM`,
+/// `ReadTIM` and `LoadClut` from `oracle/capture-calls.lua` with `DW1_CAPTURE_STATES=1`) exist
+/// under `DW1_SORT_CAPTURES` (default `<workspace>/captures/oracle-runs`). Without them
+/// `tests/libgpu_capture.rs` shows as an ignored placeholder.
+fn libgpu_capture() {
+    println!("cargo::rustc-check-cfg=cfg(have_libgpu_capture)");
+    let root = match std::env::var_os("DW1_SORT_CAPTURES") {
+        Some(d) => PathBuf::from(d),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs"),
+    };
+    println!("cargo::rerun-if-changed={}", root.display());
+    if root.join("g2d-tim/calls.txt").exists() && root.join("g2d-clut/calls.txt").exists() {
+        println!("cargo::rustc-cfg=have_libgpu_capture");
+    } else {
+        println!(
+            "cargo::warning=OpenTIM/LoadClut captures not found under {}: tests/libgpu_capture.rs will be ignored",
+            root.display()
+        );
+    }
+}
+
+/// Sets `cfg(have_libgs_sprite_capture)` when the `GsSortSprite` oracle run
+/// (`tools/oracle/sprite_requests.py`'s requests, `req.txt` and `results.txt`) exists:
+/// `DW1_LIBGS_SPRITE_CAPTURE`, default `<workspace>/captures/oracle-runs/libgs-sprite`. Without it
+/// `tests/libgs_sprite_oracle.rs` is ignored.
+fn sprite_capture() {
+    println!("cargo::rustc-check-cfg=cfg(have_libgs_sprite_capture)");
+    println!("cargo::rerun-if-env-changed=DW1_LIBGS_SPRITE_CAPTURE");
+    let dir = match std::env::var_os("DW1_LIBGS_SPRITE_CAPTURE") {
+        Some(d) => PathBuf::from(d),
+        None => {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs/libgs-sprite")
+        }
+    };
+    println!(
+        "cargo::rerun-if-changed={}",
+        dir.join("results.txt").display()
+    );
+    if dir.join("req.txt").exists() && dir.join("results.txt").exists() {
+        println!("cargo::rustc-cfg=have_libgs_sprite_capture");
+    } else {
+        println!(
+            "cargo::warning=GsSortSprite oracle run not found ({}): tests/libgs_sprite_oracle.rs will be ignored",
             dir.display()
         );
     }

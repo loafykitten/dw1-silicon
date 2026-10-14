@@ -146,88 +146,6 @@ pub unsafe extern "C" fn StoreImage(r: *const Rect, p: *mut u32) -> i32 {
     0
 }
 
-/// libgpu `TIM_IMAGE`, native pointers [hdr].
-#[repr(C)]
-pub struct TimImage {
-    pub mode: u32,
-    pub crect: *mut Rect,
-    pub caddr: *mut u32,
-    pub prect: *mut Rect,
-    pub paddr: *mut u32,
-}
-
-/// The TIM `OpenTIM` was last given (the SDK keeps it in a global) [doc].
-static TIM: Mutex<usize> = Mutex::new(0);
-
-/// `OpenTIM(addr)`: remembers a TIM file in memory for `ReadTIM`. Returns 0, or 1 if it
-/// doesn't start with the TIM id (0x10) [doc: library reference; format: psx-spx "TIM"].
-///
-/// # Safety
-/// `addr` must point to a TIM file.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn OpenTIM(addr: *const u32) -> i32 {
-    if unsafe { addr.read_unaligned() } != 0x10 {
-        return 1;
-    }
-    *TIM.lock().unwrap() = addr as usize;
-    0
-}
-
-/// `ReadTIM(img)`: describes the TIM `OpenTIM` was given: pixel mode (the header's flag word),
-/// the CLUT block's rectangle and data (null if the file has no CLUT) and the pixel block's
-/// rectangle and data, all pointing into the file [doc: psx-spx "TIM": flag bit 3 = has CLUT;
-/// each block is a size word, a RECT and halfwords]. Returns `img`; null if no TIM is open.
-///
-/// # Safety
-/// `img` must be valid and the opened TIM still in memory.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ReadTIM(img: *mut TimImage) -> *mut TimImage {
-    let base = *TIM.lock().unwrap() as *const u32;
-    if base.is_null() {
-        return std::ptr::null_mut();
-    }
-    unsafe {
-        let flag = base.add(1).read_unaligned();
-        let mut block = base.add(2);
-        let (crect, caddr) = if flag & 8 != 0 {
-            let words = block.read_unaligned() as usize;
-            let c = (
-                block.add(1).cast_mut().cast::<Rect>(),
-                block.add(3).cast_mut(),
-            );
-            block = block.byte_add(words);
-            c
-        } else {
-            (std::ptr::null_mut(), std::ptr::null_mut())
-        };
-        img.write(TimImage {
-            mode: flag,
-            crect,
-            caddr,
-            prect: block.add(1).cast_mut().cast::<Rect>(),
-            paddr: block.add(3).cast_mut(),
-        });
-    }
-    img
-}
-
-/// `LoadClut(clut, x, y)`: uploads 256 colours to row `y` at `x`; returns the CLUT id
-/// (`GetClut(x, y)`) [doc].
-///
-/// # Safety
-/// `clut` must hold 256 halfwords.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn LoadClut(clut: *const u32, x: i32, y: i32) -> i32 {
-    let r = Rect {
-        x: x as i16,
-        y: y as i16,
-        w: 256,
-        h: 1,
-    };
-    unsafe { LoadImage(&r, clut) };
-    i32::from(GetClut(x, y))
-}
-
 /// `MoveImage(rect, x, y)`: copies a VRAM rectangle to `(x, y)` [doc; GP0(80h)]. Returns 0.
 ///
 /// # Safety
@@ -237,6 +155,89 @@ pub unsafe extern "C" fn MoveImage(r: *const Rect, x: i32, y: i32) -> i32 {
     let r = unsafe { rect(r) };
     gpu::with(|g| g.move_image(r.x.into(), r.y.into(), x, y, r.w.into(), r.h.into()));
     0
+}
+
+/// `LoadClut(clut, x, y)`: copies a 256-entry CLUT into VRAM row `y` from column `x` and returns
+/// its CLUT id, `GetClut(x, y)` [doc; obs: 256 halfwords of row 0x1E1..0x1E3 matched the source
+/// and nothing past them changed].
+///
+/// # Safety
+/// `clut` must hold 256 halfwords.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn LoadClut(clut: *const u32, x: i32, y: i32) -> u16 {
+    let r = Rect {
+        x: x as i16,
+        y: y as i16,
+        w: 256,
+        h: 1,
+    };
+    unsafe { LoadImage(&r, clut) };
+    GetClut(x, y)
+}
+
+/// libgpu `TIM_IMAGE` [hdr: libgpu.h; pointers are native].
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TimImage {
+    pub mode: u32,
+    pub crect: *mut Rect,
+    pub caddr: *mut u32,
+    pub prect: *mut Rect,
+    pub paddr: *mut u32,
+}
+
+/// Where `ReadTIM` reads next: set by `OpenTIM`, moved past the image by `ReadTIM` (an address;
+/// raw pointers aren't `Send`) [obs: libgpu's static, after `ReadTIM` it holds the next TIM].
+static TIM_CURSOR: Mutex<usize> = Mutex::new(0);
+
+/// The address `ReadTIM` would read next.
+pub fn tim_cursor() -> usize {
+    *TIM_CURSOR.lock().unwrap()
+}
+
+/// `OpenTIM(addr)`: starts reading the TIM file at `addr` (its ID word) and returns 0 [doc;
+/// obs]. A word other than the TIM ID 0x10 is unobserved and stops the program.
+///
+/// # Safety
+/// `addr` must point to a TIM.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn OpenTIM(addr: *const u32) -> i32 {
+    if unsafe { addr.read() } != 0x10 {
+        crate::trap::unimplemented("OpenTIM on something that is not a TIM (unobserved)");
+    }
+    *TIM_CURSOR.lock().unwrap() = addr as usize;
+    0
+}
+
+/// `ReadTIM(img)`: describes the TIM opened by `OpenTIM` in `img` and moves on to the next one;
+/// returns `img` [doc: psx-spx TIM; obs]. `mode` is the TIM's flags word, `crect` and `caddr`
+/// point at the CLUT block's rectangle and data, `prect` and `paddr` at the pixel block's, all
+/// inside the TIM. A TIM without a CLUT is unobserved and stops the program.
+///
+/// # Safety
+/// `img` must be valid and `OpenTIM` must have been called on a complete TIM.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ReadTIM(img: *mut TimImage) -> *mut TimImage {
+    let mut cursor = TIM_CURSOR.lock().unwrap();
+    unsafe {
+        let tim = *cursor as *const u32;
+        let flags = tim.add(1).read();
+        if flags & 8 == 0 {
+            crate::trap::unimplemented("ReadTIM on a TIM without a CLUT (unobserved)");
+        }
+        // Each block is [length in bytes incl. this word][rect (x, y, w, h)][data].
+        let clut = tim.add(2);
+        let pixels = clut.cast::<u8>().add(clut.read() as usize).cast::<u32>();
+        *img = TimImage {
+            mode: flags,
+            crect: clut.add(1).cast_mut().cast(),
+            caddr: clut.add(3).cast_mut(),
+            prect: pixels.add(1).cast_mut().cast(),
+            paddr: pixels.add(3).cast_mut(),
+        };
+        *cursor = pixels.cast::<u8>().add(pixels.read() as usize) as usize;
+    }
+    img
 }
 
 // ---- environments ----

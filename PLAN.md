@@ -43,9 +43,31 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   - **3D models draw natively (2026-10-14):** `GsSortObject4J` and `GsTMDfastTG3L`/`TG4L` are
     native (`libgs/sort4j.rs`, bit-exact on 228 captured calls; only those two kinds occur up
     to Redux VBlank 5238). The new-game scene's frames equal Redux's up to rasteriser rounding.
-    The replay stops at `GsSortBoxFill` (2D sorts next). `DW1_CRASH_TRACE=1` prints a call
+    `DW1_CRASH_TRACE=1` prints a call
     stack on SIGSEGV (lldb can't attach in the agent sandbox). `oracle/capture-calls.lua` has
     `DW1_CAPTURE_KINDS=1` (per-call attribute and primitive kinds of `GsSortObject4J`).
+  - **2D sorts, TIM and CLUT calls are native (2026-10-14, slice 6f):** `GsSortBoxFill`,
+    `GsSortPoly`, `GsSortSprite` (`libgs/sort2d.rs`), `LoadClut`, `OpenTIM`, `ReadTIM`
+    (`libgpu.rs`). **The replay now runs from boot to the last poll (7131) with no trap and all
+    19 canonical-state checkpoints identical to the emulator's** (`compare_canon.py ... --allow-unpaired`:
+    19 paired, 19 identical). Not reached by the route, so still trapping stubs: `GsSortFastSprite`,
+    `GsSortOt`, `SetDrawLoad` (battle effects). `GsSortSprite` traps on scaling, attribute bits
+    (blend, colour mode, perspective) and other colours. Tests: `tests/libgs_2d_capture.rs`
+    (287 captured calls), `tests/libgpu_capture.rs`, `tests/libgs_sprite_oracle.rs` (1,000
+    `call-sdk.lua` requests: `tools/oracle/sprite_requests.py`), `tests/libgs_capture.rs` (388 calls,
+    now also `s4j-city*` and the semi-transparent 0x36 triangle). Shared loader: `tests/common`.
+    Captures live in `captures/oracle-runs/{g2d-box-*,g2d-spr*,g2d-tim,g2d-clut,libgs-sprite,s4j-city*}`
+    (a test directory name must start with `g2d-box-`/`g2d-spr`/`s4j-` to be picked up).
+    Fork changes this took (`dw1-native`, commits da1da55, b32edc6 and 2889e7a on top of 62ff326;
+    not pushed from the worktree that wrote them): null entity slots in `setupNameSelectorBox`,
+    `setupNameDisplayBox` and `clearMapDigimon`, and `uploadMapTileImages`, which read
+    `MapTiles.width` at the PS1 offset 0x1bb8 (wrong with 8-byte pointers; File City's ground was
+    black and noisy until fixed). **Frames** (headless shots vs Redux, aligned by poll): 134
+    new-game-scene frames (Redux VBlanks 3603-5199) differ in 8-20 pixels each, all on the 3D
+    models; 14 File City frames (13203-18003) in 24-211 pixels, models only (the largest is
+    the semi-transparent 0x36 object, blending rounding); no 2D difference anywhere.
+    `compare_canon.py`: 19 of 19 identical. Redux runs for these are in `captures/oracle-runs/`
+    (`shots-g2d`, `shots-city`).
   - **Emulator tools added:** `oracle/capture-calls.lua` (record chosen SDK calls with full
     machine state; `tools/oracle/calldiff.py` shows what each changed) and
     `oracle/call-sdk.lua` (run SDK functions on chosen inputs). Timeline of the route at boot:
