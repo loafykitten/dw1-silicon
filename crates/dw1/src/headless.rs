@@ -176,15 +176,25 @@ fn dump_cards(out: &std::path::Path) {
     if !std::env::var("DW1_CARD_DUMP").is_ok_and(|v| !v.is_empty() && v != "0") {
         return;
     }
+    // Never over the kept cards themselves.
+    let canon = |p: &std::path::Path| std::fs::canonicalize(p).ok();
+    if let Some(dir) = std::env::var_os("DW1_SAVE_DIR").filter(|d| !d.is_empty())
+        && canon(std::path::Path::new(&dir)).is_some()
+        && canon(std::path::Path::new(&dir)) == canon(out)
+    {
+        eprintln!("dw1: DW1_CARD_DUMP: DW1_OUT is the save directory; not dumping");
+        std::process::exit(2);
+    }
     for slot in 0..2 {
         let Some(card) = psyq::libmcrd::card(slot) else {
             continue;
         };
         let path = out.join(format!("card{}.mcd", slot + 1));
-        if let Err(e) =
-            std::fs::create_dir_all(out).and_then(|()| std::fs::write(&path, card.as_bytes()))
+        if let Err(e) = std::fs::create_dir_all(out)
+            .and_then(|()| psyq::libmcrd::write_atomic(&path, card.as_bytes()))
         {
             eprintln!("dw1: {}: {e}", path.display());
+            std::process::exit(2);
         }
     }
 }

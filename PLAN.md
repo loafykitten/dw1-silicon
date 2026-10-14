@@ -758,6 +758,12 @@ is what the Rust is checked against.
   Either way, saves import from and export to `.mcd` for the emulator. I'd lean to (a) first.
   Which do you want?
 
+- **(2026-10-14) Where do you save in the game?** For Phase 7 I want a replay that saves in the
+  middle of play and check the card byte for byte against the emulator. The game's scripts put
+  the save machine on two screens I can't reach from your saves yet (one in Trash Mountain, one
+  in a part of File City). Where did you save Save1 and Save2 in DuckStation? If it's a short
+  walk from where Save1 or Save2 starts, I can record the route myself.
+
 ## Answered by Ember
 
 - 2026-10-13: go ahead with the port; project lives in `~/Developer/dw1-silicon`; Ember

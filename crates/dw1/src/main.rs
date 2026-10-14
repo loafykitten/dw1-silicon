@@ -141,33 +141,96 @@ fn save_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-/// The window build's cards persist (Phase 7): slot n is `card<n>.mcd` in the save directory.
-/// A card file that exists is the card (whatever `DW1_CARD<n>` says: that only seeds a card
-/// that isn't there yet, so the launcher's fixture doesn't undo the player's saves); the game's
-/// changes are written back as they happen (libmcrd: atomic, with a `.bak` of the old file).
-fn keep_cards() {
-    let Some(dir) = save_dir() else { return };
-    for slot in 0..2 {
-        let path = dir.join(format!("card{}.mcd", slot + 1));
-        match std::fs::read(&path) {
-            Ok(bytes) => match psyq::libmcrd::Card::from_bytes(&bytes) {
-                Some(card) => psyq::libmcrd::insert_card(slot, Some(card)),
-                None => {
+/// The cards (Phase 7). Slot n's card is, in order: `card<n>.mcd` in the save directory when
+/// cards are kept (the window build; headless only with `DW1_SAVE_DIR`), else the
+/// `DW1_CARD<n>` file, else a fresh formatted card. A kept card that doesn't exist yet starts as
+/// the `DW1_CARD<n>` file (so the launcher's fixture only seeds the player's card) or fresh,
+/// and is written back as the game changes it (libmcrd: atomic, durable, with a `.bak`). An
+/// unreadable or wrong-sized card file stops the program rather than play on with a card that
+/// isn't kept. The save directory is locked for the run: a second copy of the game won't
+/// share it.
+fn insert_cards(keep: bool) {
+    let dir = if keep { save_dir() } else { None };
+    if let Some(dir) = &dir {
+        lock_save_dir(dir);
+    }
+    let read_card = |what: &str, path: &std::path::Path| -> psyq::libmcrd::Card {
+        let bytes = std::fs::read(path).unwrap_or_else(|e| {
+            eprintln!("dw1: {what} {}: {e}", path.display());
+            std::process::exit(1);
+        });
+        psyq::libmcrd::Card::from_bytes(&bytes).unwrap_or_else(|| {
+            eprintln!("dw1: {what} {} is not a 128 KB card image", path.display());
+            std::process::exit(1);
+        })
+    };
+    for (slot, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
+        let kept = dir.as_ref().map(|d| d.join(format!("card{}.mcd", slot + 1)));
+        let card = match &kept {
+            Some(path) if path.exists() => {
+                if std::env::var_os("DW1_REPLAY").is_some() {
                     eprintln!(
-                        "dw1: {} is not a 128 KB card image; not using it",
+                        "dw1: a replay starts from its recorded cards, but {} exists",
                         path.display()
                     );
-                    continue;
+                    std::process::exit(2);
                 }
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                eprintln!("dw1: {}: {e}; not using it", path.display());
-                continue;
+                Some(read_card("saved card", path))
             }
+            _ => std::env::var_os(var).map(|p| read_card(var, std::path::Path::new(&p))),
+        };
+        if let Some(card) = card {
+            psyq::libmcrd::insert_card(slot, Some(card));
         }
-        eprintln!("dw1: memory card {} kept in {}", slot + 1, path.display());
-        psyq::libmcrd::set_card_file(slot, Some(path));
+        if let Some(path) = kept {
+            eprintln!("dw1: memory card {} kept in {}", slot + 1, path.display());
+            psyq::libmcrd::set_card_file(slot, Some(path));
+        }
+    }
+    if dir.is_some() {
+        // SAFETY: registering a plain extern "C" function.
+        unsafe { atexit(flush_cards_at_exit) };
+    }
+}
+
+unsafe extern "C" {
+    fn atexit(f: extern "C" fn()) -> i32;
+}
+
+/// A card write that failed during the run gets one more try as the program exits.
+extern "C" fn flush_cards_at_exit() {
+    psyq::libmcrd::flush_cards();
+    if !psyq::libmcrd::cards_saved() {
+        eprintln!("dw1: WARNING: the last save could not be written to disk");
+    }
+}
+
+/// Holds an exclusive lock on `<dir>/lock` for the rest of the run, or stops: two copies of
+/// the game writing the same cards would undo each other's saves.
+fn lock_save_dir(dir: &std::path::Path) {
+    static LOCK: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
+    let result = std::fs::create_dir_all(dir).and_then(|()| {
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join("lock"))?;
+        f.try_lock().map_err(|e| match e {
+            std::fs::TryLockError::WouldBlock => std::io::Error::other(
+                "another copy of the game is using it (close it first)",
+            ),
+            std::fs::TryLockError::Error(e) => e,
+        })?;
+        Ok(f)
+    });
+    match result {
+        Ok(f) => {
+            let _ = LOCK.set(f);
+        }
+        Err(e) => {
+            eprintln!("dw1: save directory {}: {e}", dir.display());
+            std::process::exit(1);
+        }
     }
 }
 
@@ -182,24 +245,6 @@ fn main() {
             std::process::exit(1);
         }
     }
-    // Memory cards: an image file per slot if given, else a fresh formatted card (the default).
-    for (slot, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
-        if let Some(path) = std::env::var_os(var) {
-            let card = std::fs::read(&path)
-                .ok()
-                .and_then(|b| psyq::libmcrd::Card::from_bytes(&b));
-            match card {
-                Some(card) => psyq::libmcrd::insert_card(slot, Some(card)),
-                None => {
-                    eprintln!(
-                        "dw1: {var}: {} is not a 128 KB card image",
-                        path.to_string_lossy()
-                    );
-                    std::process::exit(1);
-                }
-            }
-        }
-    }
     // Headless for the emulator-comparison runs (and `DW1_HEADLESS=1`); the window otherwise.
     let headless = [
         "DW1_HEADLESS",
@@ -211,15 +256,11 @@ fn main() {
     ]
     .iter()
     .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"));
+    // Headless runs keep cards only when asked to (`DW1_SAVE_DIR` set): the replays write nothing.
+    insert_cards(!headless || std::env::var_os("DW1_SAVE_DIR").is_some_and(|d| !d.is_empty()));
     if headless {
-        // Headless runs keep cards only when asked to (`DW1_SAVE_DIR` set), so replays
-        // don't write anything by default.
-        if std::env::var_os("DW1_SAVE_DIR").is_some_and(|d| !d.is_empty()) {
-            keep_cards();
-        }
         psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
     } else {
-        keep_cards();
         match window::Window::new() {
             Ok(mut w) => {
                 if !std::env::var_os("DW1_NO_SPLASH").is_some_and(|x| !x.is_empty() && x != "0") {

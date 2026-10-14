@@ -10,8 +10,9 @@
 //! Sources: Psy-Q's `libmcrd.h` and `kernel.h` (McFunc*/McErr* constants, `struct DIRENTRY`),
 //! psx-spx "Memory Card Data Format" (the 128 KB layout), and how `main_menu.c` drives it.
 //! Card writes stay in memory unless the app gives a slot a file ([`set_card_file`]): then
-//! every change the game makes is written there at once, atomically (a temporary file renamed
-//! over the old one), the old file first copied to `<file>.bak` once per run (Phase 7).
+//! every change the game makes is written there at once, atomically and durably (a new
+//! temporary file, synced, renamed over the old one, the directory synced), the old file first
+//! kept as `<file>.bak` (written the same way) once per run (Phase 7).
 //!
 //! # How the game drives it
 //!
@@ -849,7 +850,9 @@ static FILES: Mutex<[Option<CardFile>; 2]> = Mutex::new([None, None]);
 
 /// Keeps slot `slot`'s card in `path` from now on: each change is written there (see the
 /// module docs). The card in the slot should be the file's contents (or what the file is to
-/// start as); nothing is written until the game changes it. `None` stops keeping it.
+/// start as); nothing is written until the game changes it. `None` stops keeping it. The caller
+/// makes sure no other process keeps the same file (the app holds a lock on its save
+/// directory).
 pub fn set_card_file(slot: usize, path: Option<std::path::PathBuf>) {
     assert!(slot < 2, "memory card slot {slot}");
     let saved = card(slot).map(|c| c.as_bytes().to_vec());
@@ -860,8 +863,19 @@ pub fn set_card_file(slot: usize, path: Option<std::path::PathBuf>) {
     });
 }
 
+/// Whether every kept card is on disk as the game last left it (false after a write that
+/// failed and hasn't been retried successfully yet).
+pub fn cards_saved() -> bool {
+    let files = FILES.lock().unwrap();
+    files.iter().enumerate().all(|(slot, f)| match f {
+        Some(f) => card(slot).map(|c| c.as_bytes().to_vec()) == f.saved,
+        None => true,
+    })
+}
+
 /// Writes every kept card that changed since it was last written. A write that fails is
-/// reported and retried at the next change.
+/// reported (loudly: the game believes its save succeeded) and retried at the next change and
+/// when the program exits ([`flush_cards`]).
 fn persist() {
     let mut files = FILES.lock().unwrap();
     for (slot, file) in files.iter_mut().enumerate() {
@@ -873,7 +887,8 @@ fn persist() {
         match write_card_file(file, card.as_bytes()) {
             Ok(()) => file.saved = Some(card.as_bytes().to_vec()),
             Err(e) => eprintln!(
-                "psyq: memory card {}: {}: {e}",
+                "psyq: MEMORY CARD {} WAS NOT SAVED to {}: {e} (trying again at the next save \
+                 and at exit)",
                 slot + 1,
                 file.path.display()
             ),
@@ -881,24 +896,69 @@ fn persist() {
     }
 }
 
-fn write_card_file(file: &mut CardFile, bytes: &[u8]) -> std::io::Result<()> {
+/// Writes any kept card whose last write failed (at exit). Gives up rather than wait if the
+/// library is busy.
+pub fn flush_cards() {
+    let free = CONTROLLER.try_lock().is_ok() && FILES.try_lock().is_ok();
+    if free {
+        persist();
+    }
+}
+
+/// A name in `dir` no other writer uses: `<stem>.<pid>.<n>.tmp`.
+fn temp_path(path: &std::path::Path) -> std::path::PathBuf {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.with_file_name(format!("{name}.{}.{n}.tmp", std::process::id()))
+}
+
+/// Writes `bytes` to `path` atomically and durably: a new temporary file, synced, renamed over
+/// `path`, and the directory synced so the rename itself survives a power cut.
+pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
+    let tmp = temp_path(path);
+    let result = (|| {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)?;
+        sync_dir(path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn sync_dir(path: &std::path::Path) -> std::io::Result<()> {
+    match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => std::fs::File::open(dir)?.sync_all(),
+        _ => Ok(()),
+    }
+}
+
+fn write_card_file(file: &mut CardFile, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = file.path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     if !file.backed_up {
-        if file.path.exists() {
-            std::fs::copy(&file.path, file.path.with_extension("mcd.bak"))?;
+        // The card as it was on disk before this run first changes it, kept whole: the backup
+        // is replaced atomically too, so a failure here leaves the old backup as it was.
+        match std::fs::read(&file.path) {
+            Ok(old) => write_atomic(&file.path.with_extension("mcd.bak"), &old)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
         file.backed_up = true;
     }
-    let tmp = file.path.with_extension("mcd.tmp");
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp, &file.path)
+    write_atomic(&file.path, bytes)
 }
 
 /// Puts a card (or none) in slot 1 or 2 (`slot` 0 or 1). The default is a fresh formatted
@@ -1135,8 +1195,33 @@ mod persist_tests {
         persist();
         let kept = Card::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(kept.files().len(), 1);
-        assert!(dir.join("card2.mcd.bak").exists());
-        assert!(!dir.join("card2.mcd.tmp").exists());
+        let backup = std::fs::read(dir.join("card2.mcd.bak")).unwrap();
+        assert_eq!(
+            backup,
+            Card::formatted().as_bytes(),
+            "the card as it was before the run"
+        );
+        assert!(cards_saved());
+        // A second change in the same run: the backup stays the run's starting card.
+        with(|c| {
+            if let Some(card) = c.slots[1].card.as_mut() {
+                card.delete(b"BASLUS-01032DMW").unwrap();
+            }
+        });
+        persist();
+        assert_eq!(std::fs::read(dir.join("card2.mcd.bak")).unwrap(), backup);
+        assert_eq!(std::fs::read(&path).unwrap(), card(1).unwrap().as_bytes());
+        let leftovers = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")
+            })
+            .count();
+        assert_eq!(leftovers, 0, "no temporary files left behind");
         set_card_file(1, None);
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -25,9 +25,18 @@ it; the write path is the same `MemCardWriteFile` with a different save in the b
 
 - libmcrd keeps a slot's card in a file when the app says so (`set_card_file`): after each call
   that can change a card (write, create, delete, format), a card that differs from what was
-  last written is written to `<file>.tmp`, synced, and renamed over the file, so a crash or a
-  failed write leaves the old file whole. The first write of a run first copies the old file to
-  `<file>.bak`. A write that fails is reported and tried again at the next change.
+  last written is written to a new temporary file (`<file>.<pid>.<n>.tmp`, created exclusively),
+  synced, renamed over the file, and the directory synced, so a crash, a power cut or a failed
+  write leaves the old file whole. The first write of a run first keeps the card as it was on
+  disk in `<file>.bak`, written the same way (a failure there leaves the old backup alone). A
+  write that fails is reported loudly (the game thinks it saved) and tried again at the next
+  change and at exit.
+- The save directory is locked (`<dir>/lock`, exclusive) for the run: a second copy of the game
+  refuses to start on it, rather than the two undoing each other's saves. A saved card file that
+  can't be read, or isn't 128 KB, stops the program instead of playing on with a card that
+  isn't kept. A replay with `DW1_SAVE_DIR` refuses to start if a kept card already exists (a
+  replay starts from its recorded cards). `DW1_CARD_DUMP` writes atomically and never into the
+  save directory.
 - The window build keeps cards in `~/Library/Application Support/dw1-silicon/card1.mcd` and
   `card2.mcd` (`DW1_SAVE_DIR` to put them elsewhere, empty to keep nothing). A card file there
   is the card; `DW1_CARD1`/`2` only seed a card that isn't there yet, so the launcher's fixture
@@ -44,3 +53,22 @@ How the save and load screens and their card checks should map onto one slot is 
 for Ember (PLAN.md, Phase 7): a native-only menu path under `DW1_NATIVE`, or a libmcrd that
 presents one always-present card with one save and no free-space or format prompts; and how
 `.mcd` import/export should look. The two-card model stays for the replays either way.
+
+## Review (gpt-6.1-sol, 2026-10-14)
+
+The first version's review found: two processes could corrupt each other's saves (shared temp
+name, no lock), a failed write was only printed, the backup was overwritten non-atomically
+before the save, the rename's directory entry wasn't synced, unreadable saved cards silently
+turned saving off, a missing launcher fixture stopped the game before a saved card could win,
+replays could start from a kept card their check didn't see, and a card dump could overwrite
+the kept cards. All fixed as above; still not done: making a failed save visible inside the game
+(the game's own error path for a write isn't measured in the emulator), backups beyond one
+generation.
+
+## Open: where to save in the game
+
+The in-game save is the "save machine" (script routine 48, `tickSaveMachine`), which the disc's
+scripts call only on screens 165 (Trash Mountain) and 178 (a File City screen, TWNA12, not one
+the replays reach from Ember's saves; `DG.SCN`'s script table). Routine 54 (the save menu) is on
+screen 192 (TWNB13). Ember knows where they saved their DuckStation games: that's the route to
+record (Open questions).
