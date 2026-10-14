@@ -3,13 +3,21 @@
 //! Translated from DW2-PC (github.com/Wyrelade/DW2-PC, CC0), `backend/psxgpu.c` at commit
 //! 2d491b5. That is DW2-PC's original work. Only the 1x software path is ported: the HD
 //! renderer (`psxgpu_hd*`), the PGXP hooks and the SDL_GPU path are left out, and the places
-//! where the C calls into them are marked below. Behaviour follows the C exactly, including
-//! its quirks (see the notes on each function); `crates/gpu-diff` checks that bit for bit
-//! against the C source.
+//! where the C calls into them are marked below.
 //!
-//! Rasterization rules (as in the C): pixel centres on integer coordinates, top and left
-//! polygon edges included, right and bottom excluded; quads are the triangles (v0 v1 v2) and
-//! (v1 v2 v3); polygons wider than 1023 or taller than 511 are dropped; texel 0 is
+//! Where the C and PCSX-Redux's software renderer (the oracle, `-softgpu`) differ, the model
+//! follows Redux, because Redux matches the game's picture. That is about how a polygon's colour
+//! and texture coordinate are interpolated and dithered, and the order of a quad's triangles;
+//! everything else follows the C exactly, quirks included (see the notes on each function).
+//! `tests/gpu_oracle.rs` replays primitives drawn inside Redux through the game's libgpu
+//! (`tools/oracle/gpu_requests.py` makes them) and compares every pixel; `crates/gpu-diff`
+//! checks the rest bit for bit against the C source. Claims below are tagged [obs] when
+//! they come from the oracle and [doc] when from public documentation (psx-spx).
+//!
+//! Rasterization rules (as in the C, [obs] the same in Redux): pixel centres on integer
+//! coordinates, top and left polygon edges included, right and bottom excluded; a quad is the
+//! triangles (v0 v1 v2) and (v1 v2 v3), [obs] drawn in the other order, so where they overlap
+//! the first one shows; polygons wider than 1023 or taller than 511 are dropped; texel 0 is
 //! transparent; semi-transparency applies to untextured primitives with the semi bit and to
 //! textured ones only where the texel's bit 15 is set; modulation is texel * colour / 16 per
 //! channel (0x80 = unchanged), clamped. Pixel format: PS1 15-bit BGR plus the mask bit.
@@ -265,7 +273,12 @@ impl Gpu {
             let mut tr = c & 31;
             let mut tg = (c >> 5) & 31;
             let mut tb = (c >> 10) & 31;
-            if !t.raw {
+            if t.raw {
+                // [obs] a raw texel is dithered too (as 8 bits: texel << 3)
+                tr = to5(tr << 3, d);
+                tg = to5(tg << 3, d);
+                tb = to5(tb << 3, d);
+            } else {
                 // texel (5 bit) * colour (8 bit) / 16 = 8-bit result, 0x80 = unchanged
                 tr = to5((tr * r) >> 4, d);
                 tg = to5((tg * g) >> 4, d);
@@ -308,7 +321,9 @@ impl Gpu {
             let dy = b.y - a.y;
             dy < 0 || (dy == 0 && dx > 0)
         }
-        let dith = self.st.dither && (gouraud || t.is_some_and(|t| !t.raw));
+        // [obs] Only Gouraud polygons are dithered (E1 bit 9): not flat ones, textured or not.
+        // A raw texture is dithered too, as its texel << 3.
+        let dith = self.st.dither && gouraud;
         let mut minx = v0.x.min(v1.x).min(v2.x);
         let maxx = v0.x.max(v1.x).max(v2.x);
         let mut miny = v0.y.min(v1.y).min(v2.y);
@@ -317,13 +332,12 @@ impl Gpu {
             return;
         }
         let (mut v1, mut v2) = (v1, v2);
-        let mut area = edge(v0, v1, v2.x, v2.y);
+        let area = edge(v0, v1, v2.x, v2.y);
         if area == 0 {
             return;
         }
         if area < 0 {
             std::mem::swap(&mut v1, &mut v2);
-            area = -area;
         }
         let st = self.st;
         minx = minx.max(st.clip_x0);
@@ -333,7 +347,75 @@ impl Gpu {
         let tl0 = top_left(v1, v2);
         let tl1 = top_left(v2, v0);
         let tl2 = top_left(v0, v1);
+        // Attributes: 0-2 colour, 3-4 texture coordinate. Only the ones in use are interpolated.
+        fn attr(p: &Vtx, i: usize) -> i64 {
+            (match i {
+                0 => p.r,
+                1 => p.g,
+                2 => p.b,
+                3 => p.u,
+                _ => p.v,
+            }) as i64
+        }
+        let mut used = Vec::with_capacity(5);
+        if gouraud {
+            used.extend([0, 1, 2]);
+        }
+        if t.is_some() {
+            used.extend([3, 4]);
+        }
+        // [obs] Interpolation, fitted to Redux (about 900,000 textured and 400,000 shaded pixels
+        // checked; about one in a thousand still differs by one at a rounding tie, in long thin
+        // triangles and textured Gouraud ones). The vertices are taken top to bottom (then left
+        // to right), so the order they were sent in doesn't matter. The plane through them gives
+        // a step per pixel along x. The edge on the left of the row (the long edge, or the
+        // shorter one when it has the smaller x there) gives the value at the row's start, from
+        // its top vertex: its x as the offset from the top vertex truncated to 16.16, a texture
+        // coordinate as a step per row (truncated, 16.16) times the rows, a colour as the exact
+        // offset truncated. A pixel is the row's start plus the x step times its distance from
+        // the edge's x (all 16.16, truncated toward zero), rounded to the nearest integer with
+        // halves up.
+        // [obs] A textured Gouraud polygon without dither takes its colour once per pair of
+        // pixels, counted from the row's first pixel (the texture coordinate is per pixel).
+        let pairs = gouraud && t.is_some() && !dith;
+        let mut sv = [*v0, *v1, *v2];
+        sv.sort_by_key(|p| (p.y, p.x));
+        let (tv, mv, bv) = (sv[0], sv[1], sv[2]);
+        let sden = (mv.x - tv.x) as i64 * (bv.y - tv.y) as i64
+            - (bv.x - tv.x) as i64 * (mv.y - tv.y) as i64;
+        let mut gx = [0i64; 5];
+        for &i in &used {
+            let nx = (attr(&mv, i) - attr(&tv, i)) * (bv.y - tv.y) as i64
+                - (attr(&bv, i) - attr(&tv, i)) * (mv.y - tv.y) as i64;
+            gx[i] = (nx << 16) / sden;
+        }
         for y in miny..=maxy {
+            // The left edge at this row: the long one (top to bottom) or the short one.
+            let short = if y < mv.y { (tv, mv) } else { (mv, bv) };
+            let xnum =
+                |p: &Vtx, q: &Vtx| p.x as i64 * (q.y - y) as i64 + q.x as i64 * (y - p.y) as i64;
+            let (ep, eq) = if short.1.y == short.0.y {
+                (tv, bv)
+            } else {
+                let xs = xnum(&short.0, &short.1) * (bv.y - tv.y) as i64;
+                let xl = xnum(&tv, &bv) * (short.1.y - short.0.y) as i64;
+                if xs < xl { short } else { (tv, bv) }
+            };
+            let den = (eq.y - ep.y) as i64;
+            // The edge's x at this row in 16.16, its offset from the top vertex truncated.
+            let xe =
+                ((ep.x as i64) << 16) + (((eq.x - ep.x) as i64 * (y - ep.y) as i64) << 16) / den;
+            let xs0 = (xe + 0xFFFF) >> 16;
+            let mut base = [0i64; 5];
+            for &i in &used {
+                let da = attr(&eq, i) - attr(&ep, i);
+                base[i] = (attr(&ep, i) << 16)
+                    + if i < 3 {
+                        ((da * (y - ep.y) as i64) << 16) / den
+                    } else {
+                        ((da << 16) / den) * (y - ep.y) as i64
+                    };
+            }
             for x in minx..=maxx {
                 let w0 = edge(v1, v2, x, y);
                 let w1 = edge(v2, v0, x, y);
@@ -344,20 +426,23 @@ impl Gpu {
                 if (w0 == 0 && !tl0) || (w1 == 0 && !tl1) || (w2 == 0 && !tl2) {
                     continue;
                 }
-                let (mut r, mut g, mut b, mut u, mut v) = (v0.r, v0.g, v0.b, 0, 0);
-                let mix = |a: i32, b: i32, c: i32| {
-                    ((a as i64 * w0 + b as i64 * w1 + c as i64 * w2) / area) as i32
-                };
+                let mut val = [0i32; 5];
+                for &i in &used {
+                    let xi = if i < 3 && pairs {
+                        xs0 + 2 * (x as i64 - xs0).div_euclid(2)
+                    } else {
+                        x as i64
+                    };
+                    let q = base[i] + gx[i] * ((xi << 16) - xe) / 0x10000 + 0x8000;
+                    val[i] = (q >> 16) as i32;
+                }
+                let (mut r, mut g, mut b) = (v0.r, v0.g, v0.b);
                 if gouraud {
-                    r = mix(v0.r, v1.r, v2.r);
-                    g = mix(v0.g, v1.g, v2.g);
-                    b = mix(v0.b, v1.b, v2.b);
+                    r = val[0].clamp(0, 255);
+                    g = val[1].clamp(0, 255);
+                    b = val[2].clamp(0, 255);
                 }
-                if t.is_some() {
-                    u = mix(v0.u, v1.u, v2.u);
-                    v = mix(v0.v, v1.v, v2.v);
-                }
-                self.shade(x, y, t, u, v, r, g, b, semi, abr, dith);
+                self.shade(x, y, t, val[3], val[4], r, g, b, semi, abr, dith);
             }
         }
     }
@@ -419,10 +504,11 @@ impl Gpu {
         }
         let t = textured.then_some(&tex);
         let abr = ((tpage >> 5) & 3) as i32;
-        self.triangle(&v[0], &v[1], &v[2], gouraud, t, semi, abr);
+        // [obs] The second triangle of a quad goes first, so where they overlap the first shows.
         if quad {
             self.triangle(&v[1], &v[2], &v[3], gouraud, t, semi, abr);
         }
+        self.triangle(&v[0], &v[1], &v[2], gouraud, t, semi, abr);
         // The C then draws the same triangles again on the HD surfaces (PGXP lookup,
         // PsxHd_Triangle) when HD is on. Not ported.
     }
