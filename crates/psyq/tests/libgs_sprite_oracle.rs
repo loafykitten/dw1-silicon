@@ -15,7 +15,9 @@
 //! rotated sprite the rotation matrix and translation (control registers 0-7) must equal the
 //! SDK's. The data registers are scratch and not compared.
 //!
-//! Strict: every request has a result, none is skipped.
+//! Strict: every request has a result with its own index and no exception, and every read-back
+//! it asked for (packet area, table, work base, sprite, GTE registers) is present with its
+//! length; none is skipped.
 
 #[cfg(not(have_libgs_sprite_capture))]
 #[test]
@@ -110,14 +112,29 @@ mod oracle {
             let end = GsGetWorkBase() as usize - ps1_ram_ptr(0x8000_0000) as usize;
 
             // The real results.
-            let mut got_all = true;
+            // Every requested read-back must be present with its length: the packet area (0x80
+            // bytes), the table (64), the work base (4), the sprite (36) and the 64 GTE registers.
+            let mut seen = [false; 5];
             let mut bad = Vec::new();
-            for w in r.split_whitespace().skip(2) {
+            let mut fields = r.split_whitespace();
+            assert_eq!(
+                fields.next().and_then(|i| i.parse::<usize>().ok()),
+                Some(n + 1),
+                "result {n}: wrong or missing index"
+            );
+            let v0 = fields.next().unwrap_or("");
+            assert!(
+                v0.starts_with("v0=") && !v0.starts_with("v0=EXC"),
+                "result {n}: {v0}"
+            );
+            for w in fields {
                 if let Some(g) = w.strip_prefix("gte=") {
                     // The rotation matrix and translation the rotated form leaves in the GTE
                     // (control registers 0-7); the unrotated form leaves the GTE alone, which
                     // the recording can't show (it didn't preset the registers).
                     let regs: Vec<u32> = g.split(',').map(word).collect();
+                    assert_eq!(regs.len(), 64, "request {n}: GTE registers");
+                    seen[4] = true;
                     let rotated = ram[(sprite_at as usize & 0x1F_FFFF) + 32..][..4] != [0; 4];
                     if rotated {
                         psyq::gte::with(|gte| {
@@ -140,12 +157,18 @@ mod oracle {
                 let (a, hex) = w.split_once('=').unwrap();
                 let (a, want) = (word(a), unhex(hex));
                 let o = a as usize & 0x1F_FFFF;
+                let mut expected_len = |len: usize, slot: usize| {
+                    assert_eq!(want.len(), len, "request {n}: read-back at {a:#x}");
+                    seen[slot] = true;
+                };
                 if a == 0x8013_6FE4 {
+                    expected_len(4, 2);
                     let want_end = (le32(&want, 0) & 0x1F_FFFF) as usize;
                     if want_end != end {
                         bad.push(format!("work base {end:#x}, SDK {want_end:#x}"));
                     }
                 } else if a == BUF + 0x300 {
+                    expected_len(64, 1);
                     // The ordering table: entry `pri` links to the packet, the rest end the list.
                     for i in 0..16 {
                         let w_sdk = le32(&want, i);
@@ -161,6 +184,7 @@ mod oracle {
                         }
                     }
                 } else if a == BUF + 0x400 {
+                    expected_len(0x80, 0);
                     // The packet area: the first word's link translated, the rest as is, and
                     // the 0xA5 fill past the packet untouched.
                     for i in 0..want.len() / 4 {
@@ -182,14 +206,18 @@ mod oracle {
                         flat += 1;
                     }
                 } else if a == sprite_at {
+                    expected_len(36, 3);
                     if want != sprite_before || ram[(o)..][..36] != sprite_before[..] {
                         bad.push("sprite struct changed".into());
                     }
                 } else {
-                    got_all = false;
+                    panic!("request {n}: unexpected read-back at {a:#x}");
                 }
             }
-            assert!(got_all, "request {n}: unexpected read-back");
+            assert!(
+                seen.iter().all(|&s| s),
+                "request {n}: missing read-backs {seen:?}"
+            );
             if !bad.is_empty() {
                 failures.push(format!(
                     "request {n}: {} differences, first: {}",
