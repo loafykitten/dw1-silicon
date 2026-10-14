@@ -54,13 +54,27 @@ local MILESTONES = {
 }
 -- Another script can stop the route elsewhere: set DW1ROUTE_TARGET (a milestone name) and
 -- DW1ROUTE_ON_TARGET (called at that VBlank instead of quitting) before dofile'ing this one.
--- DW1ROUTE_PROFILE=continue (env or global) swaps in the CONTINUE GAME schedule below, for a
--- fixture card in the cwd's memcard1.mcd (see docs/oracle-route.md, "Continue route").
+-- DW1ROUTE_PROFILE=continue (env or global) swaps in the CONTINUE GAME schedule, for a fixture
+-- card in the cwd's memcard1.mcd (see docs/oracle-route.md, "Continue route"); file-city-walk and
+-- care-fixture extend new-game and continue.
 local PROFILE = DW1ROUTE_PROFILE or os.getenv('DW1ROUTE_PROFILE') or 'new-game'
-if PROFILE == 'continue' then
+-- Profiles that continue a base profile with more input: the extra file returns PRESSES and
+-- MILESTONES to append (its last milestone becomes the target). Both are Phase 4 routes.
+local EXTRA = {
+    ['file-city-walk'] = { base = 'new-game', file = '/route-file-city-walk-schedule.lua' },
+    ['care-fixture'] = { base = 'continue', file = '/route-care-schedule.lua' },
+}
+local base = PROFILE
+if EXTRA[PROFILE] then base = EXTRA[PROFILE].base end
+if base == 'continue' then
     PRESSES, MILESTONES = dofile(CONTINUE_SCHEDULE_FILE or (HERE .. '/route-continue-schedule.lua'))
-elseif PROFILE ~= 'new-game' then
+elseif base ~= 'new-game' then
     error('unknown DW1ROUTE_PROFILE ' .. tostring(PROFILE))
+end
+if EXTRA[PROFILE] then
+    local morePresses, moreMilestones = dofile(HERE .. EXTRA[PROFILE].file)
+    for _, p in ipairs(morePresses) do PRESSES[#PRESSES + 1] = p end
+    for _, m in ipairs(moreMilestones) do MILESTONES[#MILESTONES + 1] = m end
 end
 local TARGET = DW1ROUTE_TARGET or MILESTONES[#MILESTONES][2]
 
