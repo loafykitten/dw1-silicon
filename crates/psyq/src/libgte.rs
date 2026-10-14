@@ -115,12 +115,15 @@ pub extern "C" fn ratan2(y: i32, x: i32) -> i32 {
 /// `SquareRoot0(4_000_000)` is 1999, not 2000. The argument is also left in the GTE's LZCS
 /// (the real function counts leading zeros through it).
 ///
-/// Negative arguments make the real function read before its table (the answers have no formula);
-/// this returns 0 for them and for 0 [not modelled: the game never passes one].
+/// Negative arguments make the real function read before its table (the answers have no formula,
+/// and the game never passes one): they stop the program, like any unimplemented SDK call.
 #[unsafe(no_mangle)]
 pub extern "C" fn SquareRoot0(a: i32) -> i32 {
     crate::gte::with(|g| g.mtc2(dreg::LZCS, a as u32));
-    if a <= 0 {
+    if a < 0 {
+        crate::trap::unimplemented("SquareRoot0 of a negative number");
+    }
+    if a == 0 {
         return 0;
     }
     let a = a as u32;
@@ -129,6 +132,54 @@ pub extern "C" fn SquareRoot0(a: i32) -> i32 {
     let root = (((a >> sh) << sh) as f64).sqrt() as u32;
     let granule = 1u32 << m.saturating_sub(12);
     (root / granule * granule) as i32
+}
+
+// ---- reading callers' structs ----
+//
+// Callers pass partly initialised objects (a MATRIX with only the rotation set, an SVECTOR with
+// no `pad`) and sometimes a 12-byte vector where a VECTOR is declared, so each function reads
+// only the fields it uses, through field pointers, never the whole struct.
+
+unsafe fn rd_vec(p: *const Vector) -> Vector {
+    unsafe {
+        Vector {
+            vx: (&raw const (*p).vx).read(),
+            vy: (&raw const (*p).vy).read(),
+            vz: (&raw const (*p).vz).read(),
+            pad: 0,
+        }
+    }
+}
+
+unsafe fn rd_sv(p: *const Svector) -> Svector {
+    unsafe {
+        Svector {
+            vx: (&raw const (*p).vx).read(),
+            vy: (&raw const (*p).vy).read(),
+            vz: (&raw const (*p).vz).read(),
+            pad: 0,
+        }
+    }
+}
+
+/// The rotation of `*p`; the translation reads as 0 (not read).
+unsafe fn rd_rot(p: *const Matrix) -> Matrix {
+    unsafe {
+        Matrix {
+            m: (&raw const (*p).m).read(),
+            t: [0; 3],
+        }
+    }
+}
+
+/// The rotation and the translation of `*p`.
+unsafe fn rd_mat(p: *const Matrix) -> Matrix {
+    unsafe {
+        Matrix {
+            m: (&raw const (*p).m).read(),
+            t: (&raw const (*p).t).read(),
+        }
+    }
 }
 
 // ---- GTE helpers ----
@@ -167,8 +218,8 @@ fn ir(g: &Gte, i: usize) -> i32 {
 /// `m` must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SetRotMatrix(m: *const Matrix) {
-    let m = unsafe { &*m };
-    crate::gte::with(|g| load_matrix(g, creg::RT0, m));
+    let m = unsafe { rd_rot(m) };
+    crate::gte::with(|g| load_matrix(g, creg::RT0, &m));
 }
 
 /// `SetLightMatrix(m)`: `m` into the GTE's light matrix LLM [doc].
@@ -177,8 +228,8 @@ pub unsafe extern "C" fn SetRotMatrix(m: *const Matrix) {
 /// `m` must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SetLightMatrix(m: *const Matrix) {
-    let m = unsafe { &*m };
-    crate::gte::with(|g| load_matrix(g, creg::LLM0, m));
+    let m = unsafe { rd_rot(m) };
+    crate::gte::with(|g| load_matrix(g, creg::LLM0, &m));
 }
 
 /// `SetTransMatrix(m)`: the translation of `m` into the GTE's TR [doc].
@@ -187,10 +238,10 @@ pub unsafe extern "C" fn SetLightMatrix(m: *const Matrix) {
 /// `m` must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SetTransMatrix(m: *const Matrix) {
-    let m = unsafe { &*m };
+    let t: [i32; 3] = unsafe { (&raw const (*m).t).read() };
     crate::gte::with(|g| {
-        for i in 0..3 {
-            g.ctc2(creg::TRX + i, m.t[i] as u32);
+        for (i, t) in t.iter().enumerate() {
+            g.ctc2(creg::TRX + i, *t as u32);
         }
     });
 }
@@ -239,7 +290,7 @@ pub extern "C" fn PopMatrix() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TransMatrix(m: *mut Matrix, v: *const Vector) -> *mut Matrix {
     unsafe {
-        let v = *v;
+        let v = rd_vec(v);
         (*m).t = [v.vx, v.vy, v.vz];
     }
     m
@@ -255,7 +306,7 @@ pub unsafe extern "C" fn TransMatrix(m: *mut Matrix, v: *const Vector) -> *mut M
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ScaleMatrix(m: *mut Matrix, v: *const Vector) -> *mut Matrix {
     unsafe {
-        let v = *v;
+        let v = rd_vec(v);
         let s = [v.vx, v.vy, v.vz];
         let m22 = (*m).m[2][2];
         for row in &mut (*m).m {
@@ -276,7 +327,7 @@ pub unsafe extern "C" fn ScaleMatrix(m: *mut Matrix, v: *const Vector) -> *mut M
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TransposeMatrix(m0: *const Matrix, m1: *mut Matrix) -> *mut Matrix {
     unsafe {
-        let a = (*m0).m;
+        let a = rd_rot(m0).m;
         (*m1).m = std::array::from_fn(|i| std::array::from_fn(|j| a[j][i]));
     }
     m1
@@ -314,7 +365,7 @@ unsafe fn store_rot(m: *mut Matrix, rot: [[i32; 3]; 3]) {
 /// `r` and `m` must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RotMatrix(r: *const Svector, m: *mut Matrix) -> *mut Matrix {
-    let [(sx, cx), (sy, cy), (sz, cz)] = trig(unsafe { &*r });
+    let [(sx, cx), (sy, cy), (sz, cz)] = trig(&unsafe { rd_sv(r) });
     let a = mul12(-sy, cz);
     let n = mul12(-sy, sz);
     unsafe {
@@ -344,7 +395,7 @@ pub unsafe extern "C" fn RotMatrix(r: *const Svector, m: *mut Matrix) -> *mut Ma
 /// `r` and `m` must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RotMatrixYXZ(r: *const Svector, m: *mut Matrix) -> *mut Matrix {
-    let [(sx, cx), (sy, cy), (sz, cz)] = trig(unsafe { &*r });
+    let [(sx, cx), (sy, cy), (sz, cz)] = trig(&unsafe { rd_sv(r) });
     let p = mul12(sx, sy);
     let q = mul12(cy, sx);
     unsafe {
@@ -374,7 +425,7 @@ pub unsafe extern "C" fn RotMatrixYXZ(r: *const Svector, m: *mut Matrix) -> *mut
 /// `r` and `m` must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RotMatrixZYX(r: *const Svector, m: *mut Matrix) -> *mut Matrix {
-    let [(sx, cx), (sy, cy), (sz, cz)] = trig(unsafe { &*r });
+    let [(sx, cx), (sy, cy), (sz, cz)] = trig(&unsafe { rd_sv(r) });
     let p = mul12(sx, sy);
     let q = mul12(cx, sy);
     unsafe {
@@ -437,7 +488,7 @@ pub unsafe extern "C" fn MulMatrix0(
     m1: *const Matrix,
     m2: *mut Matrix,
 ) -> *mut Matrix {
-    let (a, b) = unsafe { (*m0, *m1) };
+    let (a, b) = unsafe { (rd_rot(m0), rd_rot(m1)) };
     let r = crate::gte::with(|g| mul_columns(g, &a, &b));
     unsafe { store_gte_rot(m2, r) };
     m2
@@ -457,7 +508,8 @@ pub unsafe extern "C" fn MulMatrix(m0: *mut Matrix, m1: *const Matrix) -> *mut M
 ///
 /// The translation is `m0` times the low 16 bits of each part of `m1.t` (so a translation beyond
 /// 16 bits is cut, not split as `ApplyMatrixLV` does), and `m0.t` is added with a trapping `add`:
-/// the real function faults when the sum overflows, which is not reproduced (the result wraps).
+/// the real function faults when the sum overflows (CPU exception 12), and here the program stops
+/// (`trap::unimplemented`), the same way.
 ///
 /// # Safety
 /// The matrices must be valid.
@@ -467,7 +519,7 @@ pub unsafe extern "C" fn CompMatrix(
     m1: *const Matrix,
     m2: *mut Matrix,
 ) -> *mut Matrix {
-    let (a, b) = unsafe { (*m0, *m1) };
+    let (a, b) = unsafe { (rd_mat(m0), rd_mat(m1)) };
     let (r, t) = crate::gte::with(|g| {
         let r = mul_columns(g, &a, &b);
         // The translation goes in as the low 16 bits of each part (`gte_ldlv0`), not split.
@@ -478,7 +530,13 @@ pub unsafe extern "C" fn CompMatrix(
     unsafe {
         store_gte_rot(m2, r);
         for ((dst, t), t0) in (*m2).t.iter_mut().zip(t).zip(a.t) {
-            *dst = t.wrapping_add(t0);
+            // `add` faults on overflow on the PS1; the program stops here too.
+            match t.checked_add(t0) {
+                Some(sum) => *dst = sum,
+                None => crate::trap::unimplemented(
+                    "CompMatrix translation overflow (faults on the PS1)",
+                ),
+            }
         }
     }
     m2
@@ -494,7 +552,7 @@ pub unsafe extern "C" fn ApplyMatrix(
     v0: *const Svector,
     v1: *mut Vector,
 ) -> *mut Vector {
-    let (m, v) = unsafe { (*m, *v0) };
+    let (m, v) = unsafe { (rd_rot(m), rd_sv(v0)) };
     crate::gte::with(|g| {
         load_matrix(g, creg::RT0, &m);
         load_v0(g, v.vx, v.vy, v.vz);
@@ -518,7 +576,7 @@ pub unsafe extern "C" fn ApplyMatrixSV(
     v0: *const Svector,
     v1: *mut Svector,
 ) -> *mut Svector {
-    let (m, v) = unsafe { (*m, *v0) };
+    let (m, v) = unsafe { (rd_rot(m), rd_sv(v0)) };
     crate::gte::with(|g| {
         load_matrix(g, creg::RT0, &m);
         load_v0(g, v.vx, v.vy, v.vz);
@@ -565,7 +623,7 @@ pub unsafe extern "C" fn ApplyMatrixLV(
     v0: *const Vector,
     v1: *mut Vector,
 ) -> *mut Vector {
-    let (m, v) = unsafe { (*m, *v0) };
+    let (m, v) = unsafe { (rd_rot(m), rd_vec(v0)) };
     let r = crate::gte::with(|g| {
         load_matrix(g, creg::RT0, &m);
         mul_long(g, &v)
@@ -589,7 +647,7 @@ pub unsafe extern "C" fn ApplyTransposeMatrixLV(
     v0: *const Vector,
     v1: *mut Vector,
 ) -> *mut Vector {
-    let (m, v) = unsafe { (*m, *v0) };
+    let (m, v) = unsafe { (rd_rot(m), rd_vec(v0)) };
     let mut t = Matrix::default();
     for i in 0..3 {
         for j in 0..3 {
@@ -627,7 +685,7 @@ pub unsafe extern "C" fn RotTransPers(
     p: *mut i32,
     flag: *mut i32,
 ) -> i32 {
-    let v = unsafe { *v0 };
+    let v = unsafe { rd_sv(v0) };
     crate::gte::with(|g| {
         load_v0(g, v.vx, v.vy, v.vz);
         g.execute(cmd::RTPS);
@@ -655,7 +713,7 @@ pub unsafe extern "C" fn RotTransPers3(
     p: *mut i32,
     flag: *mut i32,
 ) -> i32 {
-    let v = unsafe { [*v0, *v1, *v2] };
+    let v = unsafe { [rd_sv(v0), rd_sv(v1), rd_sv(v2)] };
     crate::gte::with(|g| {
         let w = [dreg::VXY0, dreg::VXY1, dreg::VXY2];
         for (k, vk) in v.iter().enumerate() {
@@ -691,7 +749,7 @@ pub unsafe extern "C" fn RotTransPers4(
     p: *mut i32,
     flag: *mut i32,
 ) -> i32 {
-    let v = unsafe { [*v0, *v1, *v2, *v3] };
+    let v = unsafe { [rd_sv(v0), rd_sv(v1), rd_sv(v2), rd_sv(v3)] };
     crate::gte::with(|g| {
         let w = [dreg::VXY0, dreg::VXY1, dreg::VXY2];
         for (k, vk) in v.iter().take(3).enumerate() {
@@ -733,7 +791,7 @@ pub unsafe extern "C" fn RotNclip3(
     otz: *mut i32,
     flag: *mut i32,
 ) -> i32 {
-    let v = unsafe { [*v0, *v1, *v2] };
+    let v = unsafe { [rd_sv(v0), rd_sv(v1), rd_sv(v2)] };
     crate::gte::with(|g| {
         let w = [dreg::VXY0, dreg::VXY1, dreg::VXY2];
         for (k, vk) in v.iter().enumerate() {
@@ -777,7 +835,7 @@ pub unsafe extern "C" fn RotNclip4(
     otz: *mut i32,
     flag: *mut i32,
 ) -> i32 {
-    let v = unsafe { [*v0, *v1, *v2, *v3] };
+    let v = unsafe { [rd_sv(v0), rd_sv(v1), rd_sv(v2), rd_sv(v3)] };
     crate::gte::with(|g| {
         let w = [dreg::VXY0, dreg::VXY1, dreg::VXY2];
         for (k, vk) in v.iter().take(3).enumerate() {
@@ -823,7 +881,7 @@ pub unsafe extern "C" fn NormalColorCol(
     inc: *const Cvector,
     out: *mut Cvector,
 ) {
-    let (v, c) = unsafe { (*v0, *inc) };
+    let (v, c) = unsafe { (rd_sv(v0), *inc) };
     crate::gte::with(|g| {
         load_v0(g, v.vx, v.vy, v.vz);
         g.mtc2(dreg::RGBC, u32::from_le_bytes([c.r, c.g, c.b, c.cd]));
@@ -854,7 +912,7 @@ pub unsafe extern "C" fn NormalColorCol3(
     out1: *mut Cvector,
     out2: *mut Cvector,
 ) {
-    let v = unsafe { [*v0, *v1, *v2] };
+    let v = unsafe { [rd_sv(v0), rd_sv(v1), rd_sv(v2)] };
     let c = unsafe { *inc };
     crate::gte::with(|g| {
         let w = [dreg::VXY0, dreg::VXY1, dreg::VXY2];
@@ -1040,5 +1098,40 @@ mod tests {
         unsafe { SetRotMatrix(&make(99)) };
         PopMatrix();
         assert_eq!(rt(), 99);
+    }
+
+    #[test]
+    fn only_the_fields_a_call_uses_are_read() {
+        use std::mem::MaybeUninit;
+        let _gate = serial();
+        // A MATRIX with only the rotation set (the translation uninitialised), as
+        // `rotateVector` passes it.
+        let mut m = MaybeUninit::<Matrix>::uninit();
+        unsafe { (&raw mut (*m.as_mut_ptr()).m).write(matrix_m1().m) };
+        // A 12-byte vector where a VECTOR is declared, in an allocation of exactly 12 bytes.
+        let buf: Box<[i32]> = vec![100_000, -200_000, 300].into_boxed_slice();
+        let mut out = Vector::default();
+        unsafe { ApplyMatrixLV(m.as_ptr(), buf.as_ptr().cast(), &mut out) };
+        assert_eq!((out.vx, out.vy, out.vz), (74_943, -162_407, -124_738));
+        unsafe { ApplyTransposeMatrixLV(m.as_ptr(), buf.as_ptr().cast(), &mut out) };
+        // An SVECTOR without its pad, in 6 bytes.
+        let sv: Box<[i16]> = vec![100, -200, 300].into_boxed_slice();
+        let mut o = Vector::default();
+        unsafe { ApplyMatrix(m.as_ptr(), sv.as_ptr().cast(), &mut o) };
+        assert_eq!((o.vx, o.vy, o.vz), (18, -69, 137));
+        let mut so = Svector::default();
+        unsafe { ApplyMatrixSV(m.as_ptr(), sv.as_ptr().cast(), &mut so) };
+        assert_eq!((so.vx, so.vy, so.vz), (18, -69, 137));
+        // Rotation-only matrices in, whole matrices out.
+        let mut r = MaybeUninit::<Matrix>::uninit();
+        unsafe { (&raw mut (*r.as_mut_ptr()).m).write(matrix_m2().m) };
+        let mut prod = Matrix::default();
+        unsafe { MulMatrix0(m.as_ptr(), r.as_ptr(), &mut prod) };
+        assert_eq!(prod.m[0], [2912, -464, 32]);
+        unsafe { SetRotMatrix(m.as_ptr()) };
+        unsafe { SetLightMatrix(m.as_ptr()) };
+        let mut t = Matrix::default();
+        unsafe { TransposeMatrix(m.as_ptr(), &mut t) };
+        unsafe { ScaleMatrix(&mut t, buf.as_ptr().cast()) };
     }
 }

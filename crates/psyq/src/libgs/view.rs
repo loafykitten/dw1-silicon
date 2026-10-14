@@ -72,7 +72,7 @@ pub extern "C" fn GsSetNearClip(near: i32) -> i32 {
 /// Not modelled: a parent coordinate system (`super`, which the game always sets to NULL) stops
 /// the program, and view directions whose squared lengths overflow 32 bits (only reachable with
 /// a `vp` and `vr` on opposite sides of the origin and beyond 2^14) make the real function take
-/// the square root of a negative number, which has no model (see `SquareRoot0`).
+/// the square root of a negative number, which has no model (see `SquareRoot0`): the program stops.
 ///
 /// # Safety
 /// `pv` must be valid.

@@ -104,6 +104,8 @@ mod oracle {
     }
 
     struct Result {
+        /// The request's number (1-based) as the oracle wrote it.
+        number: usize,
         /// The real function raised a CPU exception (a trapping `add` overflowed): an input the
         /// game must never give it, with no defined result to compare.
         exception: bool,
@@ -114,9 +116,13 @@ mod oracle {
 
     fn parse_result(line: &str) -> Result {
         let mut words = line.split_whitespace();
-        words.next(); // the call number
+        let number = words
+            .next()
+            .and_then(|w| w.parse().ok())
+            .expect("result line without a call number");
         let v0 = words.next().unwrap().strip_prefix("v0=").unwrap();
         let mut res = Result {
+            number,
             exception: v0.starts_with("EXC"),
             v0: if v0.starts_with("EXC") { 0 } else { word(v0) },
             mem: vec![],
@@ -407,16 +413,69 @@ mod oracle {
         };
         let mut stats: BTreeMap<String, (usize, usize)> = BTreeMap::new();
         let mut shown: BTreeMap<String, usize> = BTreeMap::new();
+        // A run that stopped early (a hang) or an empty file must not pass: unless the partial
+        // diagnostic mode is asked for, every request needs its result line.
+        let partial = std::env::var_os("DW1_GTE_PARTIAL").is_some();
+        let n_reqs = reqs.lines().filter(|l| !l.trim().is_empty()).count();
+        let n_results = results.lines().filter(|l| !l.trim().is_empty()).count();
+        assert!(n_reqs > 0, "no requests in {}", d.display());
+        if !partial {
+            assert_eq!(
+                n_reqs, n_results,
+                "req.txt has {n_reqs} requests but results.txt {n_results} lines (a run that hung \
+                 or was cut short? DW1_GTE_PARTIAL=1 inspects what there is)"
+            );
+        }
+        let child: Option<usize> = std::env::var("DW1_GTE_CHILD")
+            .ok()
+            .and_then(|v| v.parse().ok());
         let mut result_lines = results.lines();
+        let mut index = 0usize;
         let mut compared_regs = 0usize;
         let mut skipped = 0usize;
         let mut org_before: Option<Vec<u8>> = None;
         for line in reqs.lines().filter(|l| !l.trim().is_empty()) {
+            index += 1;
             let Some(res_line) = result_lines.next() else {
-                break; // a partial run: compare what was recorded
+                break; // only reached in the partial diagnostic mode
             };
             let rq = parse(line);
             let want = parse_result(res_line);
+            assert_eq!(
+                want.number, index,
+                "result lines are out of order at request {index}"
+            );
+            if let Some(c) = child {
+                // Child mode: run only request `c` (one the real SDK faulted on) and return.
+                if c == index {
+                    for (a, bytes) in &rq.ins {
+                        let p = cx.scratch.ptr(*a);
+                        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len()) };
+                    }
+                    if let Some(words) = &rq.gtein {
+                        psyq::gte::with(|g| set_gte(g, words));
+                    }
+                    unsafe { call(&mut cx, &rq) };
+                    return;
+                }
+                continue;
+            }
+            // Every output the request asked for must be in the result.
+            if !want.exception {
+                for (a, n) in &rq.outs {
+                    assert!(
+                        want.mem.iter().any(|(wa, b)| wa == a && b.len() == *n),
+                        "request {index} ({}): result lacks the {n} bytes at {a:#x}",
+                        rq.name
+                    );
+                }
+                assert_eq!(
+                    rq.gteout,
+                    want.gte.is_some(),
+                    "request {index} ({}): GTE registers requested/recorded mismatch",
+                    rq.name
+                );
+            }
             // SquareRoot0 of a negative number reads past the real function's table: not modelled.
             let negative_sqrt = rq.name == "SquareRoot0" && (rq.args[0] as i32) < 0;
             if only.as_ref().is_some_and(|o| !o.contains(&rq.name))
@@ -425,6 +484,25 @@ mod oracle {
             {
                 if want.exception {
                     skipped += 1;
+                    // The real SDK faulted; the port must stop the program here, not carry on.
+                    if only.is_none() {
+                        assert_eq!(rq.name, "CompMatrix", "request {index}: unexpected fault");
+                        let out = std::process::Command::new(std::env::current_exe().unwrap())
+                            .args([
+                                "--exact",
+                                "oracle::libgte_matches_the_real_sdk",
+                                "--nocapture",
+                            ])
+                            .env("DW1_GTE_CHILD", index.to_string())
+                            .output()
+                            .unwrap();
+                        assert!(
+                            !out.status.success()
+                                && String::from_utf8_lossy(&out.stderr)
+                                    .contains("unimplemented SDK call"),
+                            "request {index} faults on the PS1 but the port went on"
+                        );
+                    }
                 }
                 continue;
             }
@@ -464,15 +542,13 @@ mod oracle {
             }
             for (a, expect) in &want.mem {
                 let got: Vec<u8> = if *a == WSMATRIX || *a == WSMATRIX_ORG {
-                    let m = unsafe {
-                        if *a == WSMATRIX {
-                            GsWSMATRIX
-                        } else {
-                            GsWSMATRIX_ORG
-                        }
+                    // The bytes in place: copying the struct would read its padding as uninit.
+                    let p: *const u8 = if *a == WSMATRIX {
+                        (&raw const GsWSMATRIX).cast()
+                    } else {
+                        (&raw const GsWSMATRIX_ORG).cast()
                     };
-                    let p: *const Matrix = &m;
-                    unsafe { std::slice::from_raw_parts(p.cast::<u8>(), expect.len()) }.to_vec()
+                    unsafe { std::slice::from_raw_parts(p, expect.len()) }.to_vec()
                 } else {
                     let p = cx.scratch.ptr(*a);
                     unsafe { std::slice::from_raw_parts(p, expect.len()) }.to_vec()
@@ -537,6 +613,13 @@ mod oracle {
         eprintln!(
             "{compared_regs} registers compared, {skipped} requests skipped (the real SDK faulted)"
         );
+        if child.is_some() {
+            return;
+        }
         assert_eq!(bad, 0, "{bad} requests differ from the real SDK");
+        assert!(
+            !partial,
+            "DW1_GTE_PARTIAL inspects an incomplete run: it can't count as a pass"
+        );
     }
 }
