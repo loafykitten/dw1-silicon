@@ -14,19 +14,31 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   (pushed). `oracle/explore.lua` finds routes turn-based; keep Redux routes under VBlank
   ~32700 (Lua hooks fail near 32768). See `docs/phase4-plan.md`.
 - **Phases 1-3 are done** (`docs/phase2-report.md`, `docs/phase3-plan.md`, `docs/phase2-plan.md`
-  for the slices). Frames from the landing screen to the main menu are pixel-identical (298
-  frames). 3D model frames are close but not exact: File City 129 px over 9 frames (was 904),
-  new-game 3603-5199 8-20 px a frame. All of what is left is texture coordinates exactly on .5
-  in lit Gouraud textured polygons (an Opus agent was on it at the end of the session; frame
-  redraws in `captures/oracle-runs/gpu-frames`, `crates/backend/tests/gpu_frames.rs`).
-  **Next:** the model frames exact, then a care replay that reaches a need (needs a fixture with
-  food, or Redux hooks past VBlank 32768), the shops, then Phase 5 (overlays, battles first).
-  No reviews open.
+  for the slices). **Every frame compared is now pixel-identical to Redux:** landing screen to
+  main menu (298), the new-game scene (Redux 3603-5199, 134 frames) and File City (17 frames),
+  and the three frame redraws (`crates/backend/tests/gpu_frames.rs`, data in
+  `captures/oracle-runs/gpu-frames`).
+- **Playable in a window (2026-10-14):** `dw1-mac` (`~/.local/bin`, Ember's launcher) builds the
+  release `dw1` and opens it with Ember's save in slot 1 (`--fresh` for blank cards). A
+  start-up splash (`crates/dw1/src/window/splash.rs`, window mode only, `DW1_NO_SPLASH=1`)
+  marks it as the native Rust build. Card writes stay in memory (Phase 7); no sound (Phase 6);
+  battles, training, shops and other overlays trap (Phase 5). Ember asked for **one save slot
+  instead of memory cards** for Phase 7 (noted there).
+- **Release builds replay too:** the game C is built with `-fno-inline
+  -fno-optimize-sibling-calls` so the PadRead caller check names the same function at any
+  optimisation level; release runs `new-game` in about 7 s.
+- **Next:** Phase 5 (overlays, battles first: BTL, then TRN/TRN2). Optional Phase 4 leftovers: a
+  care replay that reaches a need (needs a fixture with food, or Redux hooks past VBlank 32768),
+  the shops and other File City exits, line rasterisation ties (28 cases) and one B+F/4 quad
+  in `gpu_oracle_known.txt`. No reviews open; no agents running. Older agents' local data is
+  in `captures/archive/session3-worktrees/`.
   - **Rasteriser:** `backend::gpu` now follows Redux's softgpu, fitted by black-box draws
     (`crates/backend/tests/gpu_oracle.rs`, `tools/oracle/gpu_requests.py`; local results in
     `captures/oracle-runs/gpu-prims`, `gpu-snap`): round-to-nearest interpolation from the left
     edge, quads drawn v1v2v3 then v0v1v2, the odd-row last-pixel rule for semi-transparent
-    modulated textures. `crates/gpu-diff` still checks the rest against DW2-PC's C.
+    modulated textures, the per-pixel x step from the triangle's widest row (16.16 height ratio,
+    truncated) with a floored prestep, blended modulated texels unclamped until after the blend.
+    Opt-in sets (`--only tiny`, `--only spans`) run with `DW1_GPU_EXACT=1`. `crates/gpu-diff` still checks the rest against DW2-PC's C.
   - **Time:** native loading takes no time, so native VBlanks run ahead of Redux's; replays
     pair by poll. Waits on hardware must take the emulator's VBlanks: memory-card timings are
     measured (`crates/psyq/src/libmcrd.rs`). `DW1_REPLAY_LOG=1` shows each poll's native and

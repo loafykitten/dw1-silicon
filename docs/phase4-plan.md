@@ -124,4 +124,14 @@ poop to come sooner (the fixture has no food, so the partner can't be fed).
   poop, and feeding (the fixture has no food).
 - The shops and other map exits of File City (the exits are not mapped yet), and the route's
   unvisited scripted scenes (the wild Agumon meeting leads to a battle).
-- Frames of both replays against Redux's (only the canonical state was compared).
+- Frames of both whole replays against Redux's (only the canonical state was compared end to
+  end; the 3D model frames sampled from the new-game scene and File City, `shots-g2d` and
+  `shots-city`, are pixel-identical since the widest-row gradient rule in `backend::gpu`).
+
+## Closing (2026-10-14)
+
+The gate is met and Phase 4 is closed. Also done in the phase: the rasteriser finished for the
+game's 3D models (semi-transparent modulated blending, odd-row tails, the widest-row x step;
+reviewed by GPT 6 Astra), release builds replaying (no inlining in the game C), a window build
+Ember can play (`dw1-mac`, start-up splash), and Ember's direction for Phase 7 (one save slot).
+The items above carry over as optional; Phase 5 is next.
