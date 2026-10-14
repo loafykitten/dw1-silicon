@@ -191,6 +191,9 @@ pub struct Window {
     frames: u64,
     last_size: Option<(usize, usize)>,
     log: bool,
+    /// Pad bits still held from before the game took over (the splash's skip press): not
+    /// reported until released.
+    held_over: u32,
 }
 
 // SAFETY: SDL objects must stay on the main thread, and the host is only ever called from the
@@ -227,6 +230,7 @@ impl Window {
             frames: 0,
             last_size: None,
             log: std::env::var_os("DW1_WINDOW_LOG").is_some(),
+            held_over: 0,
         };
         for id in w.gamepad_sys.gamepads().unwrap_or_default() {
             w.open_gamepad(id);
@@ -243,38 +247,46 @@ impl Window {
     fn events(&mut self) {
         let events: Vec<Event> = self.pump.poll_iter().collect();
         for ev in events {
-            match ev {
-                Event::Quit { .. } => {
-                    if self.log {
-                        eprintln!("dw1: window closed after {} frames", self.frames);
-                    }
-                    std::process::exit(0);
-                }
-                Event::KeyDown {
-                    scancode: Some(k),
-                    repeat: false,
-                    ..
-                } => self.keys |= key_bit(k),
-                Event::KeyUp {
-                    scancode: Some(k), ..
-                } => self.keys &= !key_bit(k),
-                Event::GamepadAdded { which, .. } => self.open_gamepad(which),
-                Event::GamepadRemoved { which, .. } => {
-                    self.gamepads.retain(|g| g.id().ok() != Some(which));
-                    self.pads.remove(&which);
-                }
-                Event::GamepadButtonDown { which, button, .. } => {
-                    self.pads.entry(which).or_default().button(button, true)
-                }
-                Event::GamepadButtonUp { which, button, .. } => {
-                    self.pads.entry(which).or_default().button(button, false)
-                }
-                Event::GamepadAxisMotion {
-                    which, axis, value, ..
-                } => self.pads.entry(which).or_default().axis(axis, value),
-                _ => {}
-            }
+            self.handle(ev);
         }
+    }
+
+    fn handle(&mut self, ev: Event) {
+        match ev {
+            Event::Quit { .. } => {
+                if self.log {
+                    eprintln!("dw1: window closed after {} frames", self.frames);
+                }
+                std::process::exit(0);
+            }
+            Event::KeyDown {
+                scancode: Some(k),
+                repeat: false,
+                ..
+            } => self.keys |= key_bit(k),
+            Event::KeyUp {
+                scancode: Some(k), ..
+            } => self.keys &= !key_bit(k),
+            Event::GamepadAdded { which, .. } => self.open_gamepad(which),
+            Event::GamepadRemoved { which, .. } => {
+                self.gamepads.retain(|g| g.id().ok() != Some(which));
+                self.pads.remove(&which);
+            }
+            Event::GamepadButtonDown { which, button, .. } => {
+                self.pads.entry(which).or_default().button(button, true)
+            }
+            Event::GamepadButtonUp { which, button, .. } => {
+                self.pads.entry(which).or_default().button(button, false)
+            }
+            Event::GamepadAxisMotion {
+                which, axis, value, ..
+            } => self.pads.entry(which).or_default().axis(axis, value),
+            _ => {}
+        }
+    }
+
+    fn held_pad(&self) -> u32 {
+        self.pads.values().fold(self.keys, |a, p| a | p.bits())
     }
 
     fn texture_for(&mut self, w: usize, h: usize) -> &mut Texture {
@@ -356,7 +368,9 @@ impl psyq::libetc::Host for Window {
     }
 
     fn pad(&mut self, _caller: usize) -> u32 {
-        self.pads.values().fold(self.keys, |a, p| a | p.bits())
+        let held = self.held_pad();
+        self.held_over &= held;
+        held & !self.held_over
     }
 }
 
