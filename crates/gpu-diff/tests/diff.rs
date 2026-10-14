@@ -10,7 +10,8 @@
 //! on, ignores the raw flag of a textured one). So the polygons generated here give every
 //! vertex the same colour and the same texture coordinate (nothing to interpolate, the two
 //! agree), a quad is sent as its two triangles in the model's order (they can read each other's
-//! pixels as texture), and the dither bit of E1 stays off. Coverage, blending, masking, texture lookup,
+//! pixels as texture), and the dither bit of E1 stays off. A modulated textured polygon is never semi-transparent (Redux blends
+//! its pixels on 8 bits at the end of an odd row, and quarters the texel in mode B + F/4). Coverage, blending, masking, texture lookup,
 //! rectangles, lines and transfers are still compared bit for bit.
 //!
 //! Case count per test: env `GPU_DIFF_CASES` (default 2500).
@@ -210,6 +211,11 @@ mod diff {
             op = self.pick(op, semi_pct);
             let quad = op & 8 != 0;
             let tex = op & 4 != 0;
+            // A modulated textured polygon isn't semi-transparent here: the model blends its
+            // pixels differently from the C (see the header).
+            if tex && op & 1 == 0 {
+                op &= !2;
+            }
             let gouraud = op & 0x10 != 0;
             let nv = if quad { 4 } else { 3 };
             let c = self.point();

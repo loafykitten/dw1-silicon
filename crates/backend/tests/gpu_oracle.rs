@@ -37,7 +37,7 @@ mod oracle {
     }
 
     /// A model with the generator's textures: A (640,0) texel = u, B (768,0) texel = v, both 8-bit
-    /// 128 x 256 halfwords; CLUT at (640,300) entry i = (i & 31) | (i >> 5) << 5 | 1 << 10.
+    /// 128 x 256 halfwords; CLUT at (640,300) entry i = (i & 31) | (i >> 5) << 5 | 1 << 10, and one at (640,301) with bit 15 added to odd entries.
     fn textured_gpu() -> Gpu {
         let mut g = Gpu::new();
         let vram = g.vram_mut();
@@ -49,7 +49,10 @@ mod oracle {
             }
         }
         for i in 0..256usize {
-            vram[300 * VRAM_W + 640 + i] = ((i & 31) | ((i >> 5) << 5) | (1 << 10)) as u16;
+            let c = (i & 31) | ((i >> 5) << 5) | (1 << 10);
+            vram[300 * VRAM_W + 640 + i] = c as u16;
+            // a second CLUT at (640,301): bit 15 (semi-transparent texel) on odd entries
+            vram[301 * VRAM_W + 640 + i] = (c | if i & 1 == 1 { 0x8000 } else { 0 }) as u16;
         }
         g
     }
@@ -112,7 +115,7 @@ mod oracle {
             }
         }
         eprintln!("{bad} of {n} cases differ ({bad_px} pixels)");
-        // Known residue: about 1,100 pixels in 380,000 textured ones and 300 shaded ones still
+        // Known residue: about 1,600 pixels in a million textured and shaded ones still
         // differ by one step at a rounding tie, in long thin triangles (the model rounds as
         // Redux does but not in the last bit of its fixed-point steps). The budget keeps
         // anything bigger from sneaking in; `DW1_GPU_STRICT=1` demands zero.
@@ -120,8 +123,87 @@ mod oracle {
             assert!(bad == 0, "{bad} of {n} cases differ ({bad_px} pixels)");
         }
         assert!(
-            bad <= n / 12 && bad_px <= 1_500,
+            bad <= n / 12 && bad_px <= 2_000,
             "{bad} of {n} cases differ ({bad_px} pixels): more than the known residue"
         );
+    }
+
+    /// The game's fade quad (`tools/oracle/gpu_snap_requests.py`) redrawn in Redux over the game's
+    /// own picture and read back; the model gets the same picture and must produce the same pixels.
+    #[test]
+    fn gpu_matches_the_emulator_on_the_game_picture() {
+        let dir = dir();
+        let (Ok(cases), Ok(results)) = (
+            std::fs::read_to_string(dir.join("snap_cases.txt")),
+            std::fs::read_to_string(dir.join("snap_results.txt")),
+        ) else {
+            eprintln!("no snapshot run; skipped");
+            return;
+        };
+        let grab = |key: &str| -> Vec<Vec<u8>> {
+            results
+                .lines()
+                .filter_map(|l| l.split(key).nth(1))
+                .map(|s| unhex(s.split_whitespace().next().unwrap_or("")))
+                .collect()
+        };
+        let words16 = |b: &[u8]| -> Vec<u16> {
+            b.chunks(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect()
+        };
+        let tex = words16(&grab("801ed000=")[0]);
+        let clut = words16(&grab("801ed100=")[0]);
+        let pre = grab("801e1000=");
+        let post = grab("801e5000=");
+        let mut bad = 0;
+        for (k, line) in cases.lines().enumerate() {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let (wx, wy) = (
+                f[0].parse::<usize>().unwrap(),
+                f[1].parse::<usize>().unwrap(),
+            );
+            let words: Vec<u32> = f[2..]
+                .iter()
+                .map(|w| u32::from_str_radix(w, 16).unwrap())
+                .collect();
+            let mut g = Gpu::new();
+            let v = g.vram_mut();
+            for (i, p) in words16(&pre[k]).iter().enumerate() {
+                v[(wy + i / 64) * VRAM_W + wx + i % 64] = *p;
+            }
+            for (i, p) in tex.iter().enumerate() {
+                v[(509 + i / 8) * VRAM_W + 952 + i % 8] = *p;
+            }
+            for (i, p) in clut.iter().enumerate() {
+                v[502 * VRAM_W + 256 + i] = *p;
+            }
+            g.gp0(&words);
+            let want = words16(&post[k]);
+            let n = want
+                .iter()
+                .enumerate()
+                .filter(|(i, w)| g.vram()[(wy + i / 64) * VRAM_W + wx + i % 64] != **w)
+                .count();
+            eprintln!("game-picture draw {k}: {n} pixels differ");
+            if std::env::var_os("DW1_GPU_SHOW").is_some() {
+                let pre16 = words16(&pre[k]);
+                for (i, w) in want.iter().enumerate() {
+                    let got = g.vram()[(wy + i / 64) * VRAM_W + wx + i % 64];
+                    if got != *w {
+                        eprintln!(
+                            "  ({}, {}) pre {:04x} got {:04x} want {:04x}",
+                            wx + i % 64,
+                            wy + i / 64,
+                            pre16[i],
+                            got,
+                            w
+                        );
+                    }
+                }
+            }
+            bad += n;
+        }
+        assert_eq!(bad, 0, "the model differs on the game's own fade");
     }
 }

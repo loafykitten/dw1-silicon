@@ -3,7 +3,12 @@
 software renderer) and reads VRAM back, for `crates/backend/tests/gpu_oracle.rs` to compare the
 Rust GPU model against. Black-box: only the results of what the emulator draws are used.
 
-Usage: gpu_requests.py OUT_DIR [--seed N] [--scale K]
+Usage: gpu_requests.py OUT_DIR [--seed N] [--scale K] [--only semi|fade]
+
+--only semi writes just the semi-transparent cases, --only fade just the game's fade quad (both
+after the same setup); cases.txt of several runs can be concatenated, renumbering the ids, with
+their results.txt appended in the same order. The cases of a plain run end with the semi ones.
+`gpu_snap_requests.py` redraws the game's fade on the game's own picture.
 
 Writes OUT_DIR/req.txt (the requests) and OUT_DIR/cases.txt (what each case drew). Run req.txt
 on the emulator (booklab, nothing else running; see the header of oracle/call-sdk.lua), then
@@ -40,6 +45,7 @@ FILL = 0x7FFF
 TPAGE_A = 10 | (1 << 7)  # x 640, y 0, 8-bit
 TPAGE_B = 12 | (1 << 7)  # x 768
 CLUT = (640 // 16) | (300 << 6)  # CLUT word (x/16 in bits 0-5, y in bits 6-14)
+CLUT2 = (640 // 16) | (301 << 6)  # the same colours, bit 15 set on odd entries (semi-transparent texels)
 
 M32 = 0xFFFFFFFF
 
@@ -69,6 +75,8 @@ class Gen:
         self.r = random.Random(seed)
         self.req = []
         self.cases = []
+        self.fillc = FILL
+        self.clutw = CLUT
 
     # ---- request lines ----
     def draw(self, packets):
@@ -101,6 +109,11 @@ class Gen:
             c = lambda i: (i & 31) | ((i >> 5) << 5) | (1 << 10)
             clut.append(c(i) | c(i + 1) << 16)
         self.draw([clut])
+        clut2 = [0xA0000000, w_xy(640, 301), w_xy(256, 1)]
+        for i in range(0, 256, 2):
+            c = lambda i: (i & 31) | ((i >> 5) << 5) | (1 << 10) | (0x8000 if i & 1 else 0)
+            clut2.append(c(i) | c(i + 1) << 16)
+        self.draw([clut2])
 
     def case(self, rect, words):
         """words: the chain's GP0 words, as one list per packet."""
@@ -127,18 +140,17 @@ class Gen:
             [0xE3000000 | x0 | (y0 << 10)],
             [0xE4000000 | x1 | (y1 << 10)],
             [0xE5000000 | (ofs[0] & 0x7FF) | ((ofs[1] & 0x7FF) << 11)],
-            [0x02000000 | ((FILL & 31) << 3) | (((FILL >> 5) & 31) << 11) | (((FILL >> 10) & 31) << 19),
+            [0x02000000 | ((self.fillc & 31) << 3) | (((self.fillc >> 5) & 31) << 11) | (((self.fillc >> 10) & 31) << 19),
              w_xy(ax, ay), w_xy(aw, ah)],
         ]
 
-    @staticmethod
-    def poly(kind, verts, cols, uvs, page, raw):
+    def poly(self, kind, verts, cols, uvs, page, raw, semi=False):
         """kind 'F3' 'F4' 'G3' 'G4' 'FT3' 'FT4' 'GT3' 'GT4'. verts: (x, y) relative to the
         draw offset."""
         quad = kind.endswith("4")
         tex = "T" in kind
         gour = kind[0] == "G"
-        op = 0x20 | (0x10 if gour else 0) | (0x08 if quad else 0) | (0x04 if tex else 0) | (1 if tex and raw else 0)
+        op = 0x20 | (0x10 if gour else 0) | (0x08 if quad else 0) | (0x04 if tex else 0) | (1 if tex and raw else 0) | (2 if semi else 0)
         n = 4 if quad else 3
         words = []
         for k in range(n):
@@ -150,11 +162,11 @@ class Gen:
             words.append(w_xy(*verts[k]))
             if tex:
                 u, v = uvs[k]
-                extra = CLUT << 16 if k == 0 else (page << 16 if k == 1 else 0)
+                extra = self.clutw << 16 if k == 0 else (page << 16 if k == 1 else 0)
                 words.append(u | v << 8 | extra)
         return words
 
-    def poly_case(self, kind, verts, cols, uvs, page, raw, dither, clip, ofs, rect=None):
+    def poly_case(self, kind, verts, cols, uvs, page, raw, dither, clip, ofs, rect=None, semi=False, e1=0):
         ax, ay, aw, ah = AREA
         if rect is None:
             rx0, ry0, rx1, ry1 = clip
@@ -167,9 +179,9 @@ class Gen:
                     rx0 -= 1
                     w += 1
             rect = (rx0, ry0, w, ry1 - ry0 + 1)
-        prim = self.poly(kind, verts, cols, uvs, page, raw)
+        prim = self.poly(kind, verts, cols, uvs, page, raw, semi)
         # a textured polygon's own tpage word sets the draw-mode page
-        self.case(rect, self.prelude(page if "T" in kind else 0, dither, clip, ofs) + [prim])
+        self.case(rect, self.prelude(page if "T" in kind else e1, dither, clip, ofs) + [prim])
 
     # ---- generators ----
     def rand_clip(self, full=False):
@@ -378,21 +390,92 @@ class Gen:
             oy = ay + r.randint(-60, 40)
             self.poly_case(kind, verts, cols, uvs, r.choice([TPAGE_A, TPAGE_B]), r.random() < 0.6, r.randint(0, 1), full, (ox, oy))
 
+    def semis(self, count):
+        """Semi-transparent polygons over a coloured background, all four blend modes, every
+        kind, convex and bowed quads, to see how often a pixel on a seam or an overlap is
+        blended."""
+        r = random.Random(77)
+        ax, ay, aw, ah = AREA
+        clip = (ax, ay, ax + 99, ay + 43)
+        shapes = {
+            "rect": [(10, 6), (70, 6), (10, 34), (70, 34)],
+            "para": [(10, 6), (60, 6), (30, 34), (80, 34)],
+            "trap": [(20, 6), (60, 6), (8, 34), (76, 34)],
+            "tall": [(30, 2), (50, 2), (30, 40), (50, 40)],
+            "bow": [(10, 6), (70, 34), (10, 34), (70, 6)],
+            "dart": [(10, 6), (70, 6), (40, 20), (40, 40)],
+            "flat": [(10, 6), (40, 6), (70, 6), (70, 30)],
+            "dup": [(10, 6), (10, 6), (50, 34), (70, 10)],
+            "line3": [(10, 6), (40, 20), (70, 34), (30, 34)],
+        }
+        for n in range(count):
+            kind = ["F4", "G4", "FT4", "GT4", "F3", "G3", "FT3", "GT3"][n % 8]
+            abr = (n // 8) % 4
+            name = list(shapes)[(n // 32) % len(shapes)]
+            m = 4 if kind.endswith("4") else 3
+            verts = shapes[name][:m]
+            if m == 3 and name in ("bow", "dart", "dup", "line3", "flat"):
+                verts = shapes[name][:3]
+            self.fillc = r.randint(4, 27) | r.randint(4, 27) << 5 | r.randint(4, 27) << 10
+            base = r.randint(0x20, 0xC0)
+            cols = [(base + r.randint(0, 0x30)) | (base + r.randint(0, 0x30)) << 8 | (base + r.randint(0, 0x30)) << 16 for _ in range(m)]
+            if kind[0] == "F":
+                cols = [cols[0]] * m
+            idx = r.randint(0, 255)
+            uvs = [(idx, idx)] * m if r.random() < 0.4 else [(r.randint(0, 255), r.randint(0, 255)) for _ in range(m)]
+            self.clutw = CLUT2
+            page = (TPAGE_A if n % 2 else TPAGE_B) | (abr << 5)
+            self.poly_case(kind, verts, cols, uvs, page, r.random() < 0.4, (n // 4) % 2, clip, (ax + 2, ay + 2), semi=True, e1=abr << 5)
+        self.fillc = FILL
+        self.clutw = CLUT
+
+
+    def fades(self):
+        """The game's fade quad: the whole 320 x 240 screen, vertices in its order (top left,
+        top right, bottom left, bottom right), with a texture coordinate that moves only 2 or 3
+        steps along each axis, so the places where it ticks over show the exact rounding of the
+        interpolation. Seen through windows of 48 rows and 256 columns."""
+        ax, ay, aw, ah = AREA
+        full = (ax, ay, ax + aw - 1, ay + ah - 1)
+        verts = [(-160, -120), (160, -120), (-160, 120), (160, 120)]
+        uvsets = [
+            [(0xFA, 0xFD), (0xFC, 0xFD), (0xFA, 0xFF), (0xFC, 0xFF)],
+            [(0xF0, 0xF0), (0xF3, 0xF0), (0xF0, 0xF4), (0xF3, 0xF4)],
+            [(0x10, 0x20), (0x1F, 0x20), (0x10, 0x2F), (0x1F, 0x2F)],
+            [(0x80, 0x80), (0x82, 0x80), (0x80, 0x83), (0x82, 0x83)],
+        ]
+        for uvs in uvsets:
+            for r0 in range(0, 240, 40):
+                for xw in (0, 64):
+                    for page in (TPAGE_A, TPAGE_B):
+                        self.poly_case("FT4", verts, [0] * 4, uvs, page, True, 0, full, (ax + 160 - xw, ay + 120 - r0))
+        for uvs in uvsets[:2]:
+            for r0 in range(0, 240, 80):
+                for page in (TPAGE_A, TPAGE_B):
+                    self.poly_case("FT3", verts[:3], [0] * 3, uvs[:3], page, True, 0, full, (ax + 160, ay + 120 - r0))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--scale", type=int, default=1)
+    ap.add_argument("--only", default="")
     a = ap.parse_args()
     g = Gen(a.seed)
     g.setup()
-    g.hand()
-    g.lines_rects()
-    g.perms(150 * a.scale)
-    g.modcases(300 * a.scale)
-    g.sprites(500 * a.scale)
-    for _ in range(3000 * a.scale):
-        g.rand_case()
+    if not a.only:
+        g.hand()
+        g.lines_rects()
+        g.perms(150 * a.scale)
+        g.modcases(300 * a.scale)
+        g.sprites(500 * a.scale)
+        for _ in range(3000 * a.scale):
+            g.rand_case()
+    if a.only == "fade":
+        g.fades()
+    else:
+        g.semis(288 * a.scale)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "req.txt"), "w") as f:
         f.write("\n".join(g.req) + "\n")

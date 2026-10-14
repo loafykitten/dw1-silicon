@@ -14,6 +14,12 @@
 //! checks the rest bit for bit against the C source. Claims below are tagged [obs] when
 //! they come from the oracle and [doc] when from public documentation (psx-spx).
 //!
+//! Semi-transparent polygons [obs]: a quad's seam is blended once (no pixel is drawn twice); a
+//! dithered one blends on 8 bits and then adds the dither; a textured one is processed two
+//! pixels at a time, and the last pixel of a row with an odd number of pixels takes a different
+//! path (when modulated and subtracting, green and blue lose one more), and blend mode B + F/4
+//! quarters the texel before modulating it.
+//!
 //! Rasterization rules (as in the C, [obs] the same in Redux): pixel centres on integer
 //! coordinates, top and left polygon edges included, right and bottom excluded; a quad is the
 //! triangles (v0 v1 v2) and (v1 v2 v3), [obs] drawn in the other order, so where they overlap
@@ -223,6 +229,29 @@ impl Gpu {
         *d = (r | (g << 5) | (b << 10) | m) as u16;
     }
 
+    /// Semi-transparent pixel of a dithered polygon: the blend is done on 8-bit channels (the
+    /// source as is, the old pixel as its 5 bits << 3), then the dither is added.
+    #[allow(clippy::too_many_arguments)]
+    fn put_semi8(&mut self, x: i32, y: i32, c8: [i32; 3], dith: i32, abr: i32, mask: bool) {
+        let old = self.vram[Self::idx(x, y)];
+        if self.st.check_mask && old & 0x8000 != 0 {
+            return;
+        }
+        let mut out = [0i32; 3];
+        for k in 0..3 {
+            let (b, s) = ((((old >> (5 * k)) & 31) as i32) << 3, c8[k]);
+            let v = match abr {
+                0 => (b + s) >> 1,
+                1 => b + s,
+                2 => b - s,
+                _ => b + (s >> 2),
+            };
+            out[k] = to5(v.clamp(0, 255), dith);
+        }
+        let m = if mask || self.st.set_mask { 0x8000 } else { 0 };
+        self.vram[Self::idx(x, y)] = (out[0] | (out[1] << 5) | (out[2] << 10) | m) as u16;
+    }
+
     fn texel(&self, t: &Tex, u: i32, v: i32) -> u16 {
         let st = &self.st;
         let u = ((u & !st.tw_mask_x) | (st.tw_off_x & st.tw_mask_x)) & 0xFF;
@@ -259,7 +288,10 @@ impl Gpu {
         semi: bool,
         abr: i32,
         dith: bool,
+        tail: Option<bool>,
     ) {
+        // `tail`: None for a rectangle; for a polygon, whether this is the last pixel of an odd row.
+        let (poly, tail) = (tail.is_some(), tail == Some(true));
         let d = if dith {
             DITHER_TBL[(y & 3) as usize][(x & 3) as usize]
         } else {
@@ -273,6 +305,36 @@ impl Gpu {
             let mut tr = c & 31;
             let mut tg = (c >> 5) & 31;
             let mut tb = (c >> 10) & 31;
+            if dith && semi && c & 0x8000 != 0 {
+                let c8 = if t.raw {
+                    [tr << 3, tg << 3, tb << 3]
+                } else {
+                    [(tr * r) >> 4, (tg * g) >> 4, (tb * b) >> 4]
+                };
+                self.put_semi8(x, y, c8, d, abr, true);
+                return;
+            }
+            if poly && semi && abr == 3 && c & 0x8000 != 0 && !dith && !tail {
+                // [obs] Blend mode B + F/4: the texel is quartered before it is modulated.
+                let old = self.vram[Self::idx(x, y)];
+                if self.st.check_mask && old & 0x8000 != 0 {
+                    return;
+                }
+                let q = [tr >> 2, tg >> 2, tb >> 2];
+                let m = [r, g, b];
+                let mut out = [0i32; 3];
+                for k in 0..3 {
+                    let sv = if t.raw {
+                        q[k]
+                    } else {
+                        ((q[k] * m[k]) >> 4) >> 3
+                    };
+                    out[k] = (((old >> (5 * k)) & 31) as i32 + sv).min(31);
+                }
+                self.vram[Self::idx(x, y)] =
+                    (out[0] | (out[1] << 5) | (out[2] << 10) | 0x8000) as u16;
+                return;
+            }
             if t.raw {
                 // [obs] a raw texel is dithered too (as 8 bits: texel << 3)
                 tr = to5(tr << 3, d);
@@ -294,6 +356,17 @@ impl Gpu {
                 abr,
                 c & 0x8000 != 0,
             );
+            if tail && semi && c & 0x8000 != 0 && !dith && !t.raw && abr == 2 {
+                // [obs] The last pixel of an odd row subtracts one more from green and blue.
+                let p = &mut self.vram[Self::idx(x, y)];
+                for sh in [5, 10] {
+                    if (*p >> sh) & 31 > 0 {
+                        *p -= 1 << sh;
+                    }
+                }
+            }
+        } else if dith && semi {
+            self.put_semi8(x, y, [r, g, b], d, abr, false);
         } else {
             self.put(x, y, to5(r, d), to5(g, d), to5(b, d), semi, abr, false);
         }
@@ -339,6 +412,7 @@ impl Gpu {
         if area < 0 {
             std::mem::swap(&mut v1, &mut v2);
         }
+        let (bminx, bmaxx) = (minx, maxx);
         let st = self.st;
         minx = minx.max(st.clip_x0);
         miny = miny.max(st.clip_y0);
@@ -377,7 +451,7 @@ impl Gpu {
         // halves up.
         // [obs] A textured Gouraud polygon without dither takes its colour once per pair of
         // pixels, counted from the row's first pixel (the texture coordinate is per pixel).
-        let pairs = gouraud && t.is_some() && !dith;
+        let pairs = gouraud && t.is_some() && !dith && !semi;
         let mut sv = [*v0, *v1, *v2];
         sv.sort_by_key(|p| (p.y, p.x));
         let (tv, mv, bv) = (sv[0], sv[1], sv[2]);
@@ -416,7 +490,29 @@ impl Gpu {
                         ((da << 16) / den) * (y - ep.y) as i64
                     };
             }
+            // [obs] A semi-transparent textured polygon's last pixel of a row is blended on 8 bits
+            // when the row has an odd number of pixels (the others go two at a time).
+            let (mut xlast, mut odd) = (i32::MIN, false);
+            if semi && t.is_some() {
+                let (mut first, mut last) = (i32::MAX, i32::MIN);
+                for x in bminx..=bmaxx {
+                    let w0 = edge(v1, v2, x, y);
+                    let w1 = edge(v2, v0, x, y);
+                    let w2 = edge(v0, v1, x, y);
+                    if w0 < 0 || w1 < 0 || w2 < 0 {
+                        continue;
+                    }
+                    if (w0 == 0 && !tl0) || (w1 == 0 && !tl1) || (w2 == 0 && !tl2) {
+                        continue;
+                    }
+                    first = first.min(x);
+                    last = last.max(x);
+                }
+                xlast = last;
+                odd = last >= first && (last - first) % 2 == 0;
+            }
             for x in minx..=maxx {
+                let tail = odd && x == xlast;
                 let w0 = edge(v1, v2, x, y);
                 let w1 = edge(v2, v0, x, y);
                 let w2 = edge(v0, v1, x, y);
@@ -442,7 +538,20 @@ impl Gpu {
                     g = val[1].clamp(0, 255);
                     b = val[2].clamp(0, 255);
                 }
-                self.shade(x, y, t, val[3], val[4], r, g, b, semi, abr, dith);
+                self.shade(
+                    x,
+                    y,
+                    t,
+                    val[3],
+                    val[4],
+                    r,
+                    g,
+                    b,
+                    semi,
+                    abr,
+                    dith,
+                    Some(tail),
+                );
             }
         }
     }
@@ -552,7 +661,7 @@ impl Gpu {
                 // E1 bits 12 / 13: texture x / y flip for rectangles
                 let u = if st.flip_x { u0 - x } else { u0 + x };
                 let v = if st.flip_y { v0 - y } else { v0 + y };
-                self.shade(px, py, t, u, v, r, g, b, semi, abr, false);
+                self.shade(px, py, t, u, v, r, g, b, semi, abr, false, None);
             }
         }
         // HD: PsxHd_Rect on the HD surfaces. Not ported.
