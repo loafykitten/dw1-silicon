@@ -31,6 +31,13 @@ pub static mut GsWSMATRIX: Matrix = Matrix {
     m: [[0; 3]; 3],
     t: [0; 3],
 };
+/// A copy of the last successful `GsSetRefView2` result (the real libgs keeps one, `GsSetView2`
+/// reads it).
+#[unsafe(no_mangle)]
+pub static mut GsWSMATRIX_ORG: Matrix = Matrix {
+    m: [[0; 3]; 3],
+    t: [0; 3],
+};
 #[unsafe(no_mangle)]
 pub static mut GsLIGHTWSMATRIX: Matrix = Matrix {
     m: [[0; 3]; 3],

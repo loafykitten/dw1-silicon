@@ -14,6 +14,7 @@ pub mod libcd;
 pub mod libetc;
 pub mod libgpu;
 pub mod libgs;
+pub mod libgte;
 pub mod libmcrd;
 pub mod libpress;
 pub mod libsnd;

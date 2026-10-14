@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     disc();
+    gte_capture();
     println!("cargo::rustc-check-cfg=cfg(have_libgs_capture)");
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-env-changed=DW1_LIBGS_CAPTURE");
@@ -52,5 +53,29 @@ fn disc() {
         println!("cargo::rustc-env=DW1_TEST_FILES={}", files.display());
     } else {
         println!("cargo::warning=disc not found: tests/libcd_disc.rs will be ignored");
+    }
+}
+
+/// Sets `cfg(have_gte_capture)` when the libgte oracle run (`tools/oracle/gte_requests.py`'s
+/// requests, `req.txt` and `results.txt`) exists: `DW1_GTE_CAPTURE`, default
+/// `<workspace>/captures/oracle-runs/gte-final`. Without it `tests/libgte_oracle.rs` is ignored.
+fn gte_capture() {
+    println!("cargo::rustc-check-cfg=cfg(have_gte_capture)");
+    println!("cargo::rerun-if-env-changed=DW1_GTE_CAPTURE");
+    let dir = match std::env::var_os("DW1_GTE_CAPTURE") {
+        Some(d) => PathBuf::from(d),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs/gte-final"),
+    };
+    println!(
+        "cargo::rerun-if-changed={}",
+        dir.join("results.txt").display()
+    );
+    if dir.join("req.txt").exists() && dir.join("results.txt").exists() {
+        println!("cargo::rustc-cfg=have_gte_capture");
+    } else {
+        println!(
+            "cargo::warning=libgte oracle run not found ({}): tests/libgte_oracle.rs will be ignored",
+            dir.display()
+        );
     }
 }
