@@ -174,7 +174,12 @@ fn main() {
         psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
     } else {
         match window::Window::new() {
-            Ok(w) => psyq::libetc::set_host(Box::new(w)),
+            Ok(mut w) => {
+                if !std::env::var_os("DW1_NO_SPLASH").is_some_and(|x| !x.is_empty() && x != "0") {
+                    w.splash();
+                }
+                psyq::libetc::set_host(Box::new(w));
+            }
             Err(e) => {
                 eprintln!("dw1: cannot open the window: {e}");
                 std::process::exit(1);

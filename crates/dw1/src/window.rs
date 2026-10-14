@@ -7,6 +7,10 @@
 //! north = Triangle), the D-pad or left stick for directions, the triggers for L2/R2.
 //! Closing the window or Cmd-Q exits 0. `DW1_WINDOW_LOG=1` logs frames presented and the
 //! display size (first frame, on size changes, then every 60 frames).
+//!
+//! Before the game starts, `Window::splash` shows a short text screen (about 2.8 s; any key,
+//! button or click skips it) saying this is the native Mac build. `DW1_NO_SPLASH=1` skips it;
+//! `DW1_SPLASH_SHOT=<file.png>` saves it as a picture. Headless and replay runs never show it.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -18,6 +22,8 @@ use sdl3::keyboard::Scancode;
 use sdl3::pixels::PixelFormat;
 use sdl3::render::{FRect, ScaleMode, Texture, TextureCreator, WindowCanvas};
 use sdl3::video::WindowContext;
+
+mod splash;
 
 /// The PS1's NTSC non-interlaced field rate: 53.693175 MHz / (3413 x 263) = 59.817 Hz
 /// [doc: psx-spx GPU timings; PLAN.md's "Timing is measured", docs/s08-oracle.md]. Redux, the
