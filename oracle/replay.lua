@@ -93,6 +93,38 @@ if MODE == 'replay' then
     if tonumber(header.final_vblank) == nil then fail('replay file: no final_vblank') return end
 end
 
+-- The cards the run starts with: Redux reads memcard1.mcd and memcard2.mcd from its cwd, so
+-- they are hashed here, before anything runs ('none' = no file, Redux makes a fresh formatted
+-- card). A recording stores them (card1_sha1, card2_sha1, and the fixture's name in
+-- DW1REPLAY_CARD1_FIXTURE for a card); a replay refuses to run on any other card.
+ffi.cdef('unsigned char* CC_SHA1(const void* data, uint32_t len, unsigned char* md);')
+local function cardSha(name)
+    local f = io.open(name, 'rb')
+    if not f then return 'none' end
+    local data = f:read('*a')
+    f:close()
+    local md = ffi.new('unsigned char[20]')
+    ffi.C.CC_SHA1(data, #data, md)
+    local hex = {}
+    for i = 0, 19 do hex[#hex + 1] = string.format('%02x', md[i]) end
+    return table.concat(hex)
+end
+local CARD1_SHA, CARD2_SHA = cardSha('memcard1.mcd'), cardSha('memcard2.mcd')
+local CARD1_FIXTURE = os.getenv('DW1REPLAY_CARD1_FIXTURE')
+print('DW1REPLAY cards card1_sha1=' .. CARD1_SHA .. ' card2_sha1=' .. CARD2_SHA)
+if MODE == 'record' and CARD1_SHA ~= 'none' and not CARD1_FIXTURE then
+    fail('recording on a card needs DW1REPLAY_CARD1_FIXTURE=<name> (a fixture whose SHA-1 is known)')
+    return
+end
+if MODE == 'replay' then
+    for _, c in ipairs({ { 'card1_sha1', CARD1_SHA }, { 'card2_sha1', CARD2_SHA } }) do
+        if header[c[1]] ~= c[2] then
+            fail(string.format('%s: the recording has %s, this run starts with %s', c[1], tostring(header[c[1]]), c[2]))
+            return
+        end
+    end
+end
+
 -- Run state.
 local vblank = 0
 local polls = 0           -- completed polls so far == sequence number of the next poll
@@ -224,6 +256,9 @@ local function finish(v)
             'gpu softgpu',
             'bios_sha1 ' .. BIOS_SHA1,
             'disc_sha1 ' .. DISC_SHA1,
+            CARD1_FIXTURE and ('card1_fixture ' .. CARD1_FIXTURE) or '# card1_fixture none',
+            'card1_sha1 ' .. CARD1_SHA,
+            'card2_sha1 ' .. CARD2_SHA,
             'route oracle/route-new-game.lua profile ' .. (DW1ROUTE_PROFILE or os.getenv('DW1ROUTE_PROFILE') or 'new-game'),
             'target ' .. TARGET,
             'final_vblank ' .. v,
