@@ -276,13 +276,13 @@ unsafe fn tg_run(
             let normal_ix = |k: usize| usize::from(idx.add(2 * k).read());
             let vertex_ix = |k: usize| usize::from(idx.add(2 * k + 1).read());
             // Only the observed combinations, flag 0 (one-sided, lit, no gradation) and the
-            // mode exactly 0x34/0x3C, or 0x36: the command byte is the header's own, so the
+            // mode exactly 0x34/0x3C, or with the semi bit (0x36/0x3E): the command byte is the header's own, so the
             // semi-transparent bit (0x02) rides along into the packet [obs: mode 0x36
-            // triangles, one call of 198 in File City]. A semi-transparent quad (0x3E), the
+            // triangles in File City; mode 0x3E quads in the loaded save's File City]. The
             // raw-texture bit and other flags are unobserved. The game installs this handler in
             // a slot those bits share.
             let mode = header >> 24;
-            if (header >> 16) & 0xFF != 0 || (mode != base_mode && !(nv == 3 && mode == 0x36)) {
+            if (header >> 16) & 0xFF != 0 || (mode != base_mode && mode != base_mode | 0x02) {
                 eprintln!(
                     "psyq: TMD mode {mode:#04x} flag {:#04x} in the TG{nv}L handler",
                     (header >> 16) & 0xFF
