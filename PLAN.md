@@ -7,19 +7,21 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-14, session 3): start here
 
-- **Phase 2 is done** (`docs/phase2-report.md`; slices and design in `docs/phase2-plan.md`).
-  The native boot runs the intro movie, landing screen, main menu and memory-card screens and
-  enters the new-game scene. Every frame from the landing screen to the main menu, fades
-  included, is pixel-identical to Redux's; the `new-game` replay keeps the recorded caller
-  sequence through the card save; checkpoints 0-3 are byte-identical; re-entry works. **Next:**
-  Phase 3 (load a save) gate met (`docs/phase3-plan.md`): replay `oracle/replays/continue-fixture.txt`
-  (fixture card, CONTINUE GAME), all 9 checkpoints byte-identical once the 2D sorts and
-  `GsSortObject4J` TMD mode 0x3E exist (checkpoints 0-5 already, native stops at `GsSortSprite`).
-  Phase 4 work has started along the replay: it stops at `GsSortBoxFill` (the 2D sorts, an
-  agent was on it at the end of the session), then whatever the new-game scene calls next.
-  Reviews still open at the session's end: GPT 6 Astra on the rasteriser refit (b162319,
-  952738e) and on `GsSortObject4J` (5b0c31b); gpt-6.1-sol's card-timing follow-ups (reads,
-  deletes, format, error paths, the periodic stall's schedule) were being measured.
+- **Phases 2 and 3 are done; Phase 4 is under way** (`docs/phase2-report.md`,
+  `docs/phase3-plan.md`, `docs/phase2-plan.md` for the slices). The `new-game` replay
+  (`oracle/replays/new-game.txt`, 7,131 polls) runs natively from boot to its last poll, first
+  gameplay with the tamer and Agumon, with all 19 canonical checkpoints byte-identical to the
+  emulator's, in about 18 s. Frames from the landing screen to the main menu are
+  pixel-identical; new-game and File City frames differ only on 3D models (8-211 px a frame,
+  rasteriser rounding on Gouraud/semi-transparent polygons). Phase 3: Ember's save loads
+  through CONTINUE GAME (`oracle/replays/continue-fixture.txt` with `DW1_CARD1=` the fixture):
+  checkpoints 0-5, including the load and File City, are identical; the replay then stops at
+  TMD mode 0x3E (a semi-transparent quad) in `GsTMDfastTG4L`, which an agent was implementing at
+  the end of the session along with a survey of every TMD kind the routes use. **Next (Phase
+  4):** the rest of the TMD kinds, frames of the models exact, then the Phase 4 gate (a replay to
+  the first walk around File City with state equal at each map change, and a fixture-started
+  hour of care). Reviews open at the session's end: gpt-6.1-sol on the 2D sorts (80a8e2d,
+  0ffa5c6) and on Phase 3; GPT 6 Astra's second pass on the rasteriser (952738e, 925c0c0).
   - **Rasteriser:** `backend::gpu` now follows Redux's softgpu, fitted by black-box draws
     (`crates/backend/tests/gpu_oracle.rs`, `tools/oracle/gpu_requests.py`; local results in
     `captures/oracle-runs/gpu-prims`, `gpu-snap`): round-to-nearest interpolation from the left
