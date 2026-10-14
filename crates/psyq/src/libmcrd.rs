@@ -46,10 +46,57 @@ pub const MC_ERR_FILE_NOT_EXIST: i32 = 5;
 pub const MC_ERR_ALREADY_EXIST: i32 = 6;
 pub const MC_ERR_BLOCK_FULL: i32 = 7;
 
-/// VBlanks an asynchronous command takes from start to done. `[guess]` until measured on the
-/// emulator (how many VBlanks pass between the game starting `MemCardExist`/`Accept`/
-/// `ReadFile`/`WriteFile` and `MemCardSync(1)` first returning 1).
-pub const COMMAND_VBLANKS: u32 = 1;
+// ---- Timing ----
+//
+// Measured in PCSX-Redux on the new-game route (oracle/capture-calls.lua, VBlank numbers of
+// the Redux run; docs/phase2-plan.md "Time"). A polling game sees a command done when
+// `MemCardSync(1)` first returns 1; a blocking `MemCardSync(0)` returns at the same VBlank.
+// The recorded gaps between a blocking call and the next menu tick include the tick's own
+// `VSync` wait (+1), which the host adds natively, so the durations below are the call to
+// the end of the wait. The recording's sub-VBlank phase isn't modelled.
+
+/// `MemCardExist`: issued at VBlank V, a polling `MemCardSync(1)` returns 0 at V+1..V+3 and 1
+/// at V+4, for both slots, over and over (V = 2092, 2097, ... every 5 VBlanks to 3205) [obs].
+/// Blocking after it returned at V+4 twice (2602 to 2606, 3220 to 3224) [obs].
+pub const EXIST_VBLANKS: u32 = 4;
+/// An exist issued at the boot's first command (V = 2088, done at 2091), or within a VBlank of
+/// the end of an accept, directory read, read or write (2685, 2849 and 3361: done 3 later;
+/// each of the three exists that follow one), is done at V+3 [obs; the rule is a guess].
+pub const WARM_EXIST_VBLANKS: u32 = 3;
+/// The card driver's periodic re-check: an exist issued 1020 VBlanks after the first command
+/// after `MemCardStart` (V = 2088, 3108), and again 1722 VBlanks after each such exist (4830,
+/// 6552), is done 96 VBlanks later (3204, 4926; 6647 is 95) with an ordinary result. In the
+/// idle slot-select menu the three stalls and nothing else break the 5-VBlank loop (the run
+/// to 8000 with the game's inputs held off, `DW1ROUTE_PRESS_UNTIL`) [obs]. Why is unknown:
+/// something in the emulator's BIOS card driver or SIO; modelled as a timer [guess].
+pub const RECHECK_FIRST_VBLANKS: u32 = 1020;
+pub const RECHECK_PERIOD_VBLANKS: u32 = 1722;
+pub const RECHECK_EXIST_VBLANKS: u32 = 96;
+/// `MemCardAccept`: the call at 2606 blocks until 2684, and the next tick polls at 2685
+/// [obs]. Same for every result; only the first accept after boot was measured [guess for
+/// the rest].
+pub const ACCEPT_VBLANKS: u32 = 78;
+/// `MemCardGetDirentry`: blocks for 80 VBlanks, both for the wildcard listing of 15 entries
+/// (call at 2688, the next call at 2768) and a single named file (2768 to 2848) [obs].
+/// Charged whether the call succeeds or not [guess].
+pub const DIRENTRY_VBLANKS: u32 = 80;
+/// `MemCardCreateFile` (1 block): called at 3209, returns by 3219 (the next tick polls at
+/// 3220) [obs].
+pub const CREATE_VBLANKS: u32 = 10;
+/// `MemCardDeleteFile` and `MemCardFormat`: not measured; as create [guess].
+pub const DELETE_VBLANKS: u32 = 10;
+pub const FORMAT_VBLANKS: u32 = 10;
+/// `MemCardWriteFile` of one block (64 frames of 128 bytes): called at 3224, the blocking sync
+/// returns at 3360 (the next tick polls at 3361) [obs].
+pub const BLOCK_IO_VBLANKS: u32 = 136;
+
+/// VBlanks a read or write of `bytes` takes: [`BLOCK_IO_VBLANKS`] per 64 frames, rounded up
+/// [guess: linear in frames, as only the one-block write was measured; reads as writes].
+pub fn io_vblanks(bytes: usize) -> u32 {
+    ((bytes / FRAME) as u32 * BLOCK_IO_VBLANKS)
+        .div_ceil(64)
+        .max(1)
+}
 
 // ---- The card image ----
 
@@ -372,6 +419,12 @@ pub struct Controller {
     phase: Phase,
     cmd: u32,
     result: u32,
+    /// No command has run since `MemCardStart`.
+    fresh: bool,
+    /// When the next exist takes [`RECHECK_EXIST_VBLANKS`].
+    recheck_at: Option<u32>,
+    /// When the card bus was last busy with an accept, directory read, read or write.
+    bus_end: Option<u32>,
 }
 
 /// What `MemCardSync` returns [obs: the game's switch].
@@ -397,6 +450,28 @@ impl Controller {
             phase: Phase::Idle,
             cmd: 0,
             result: 0,
+            fresh: true,
+            bus_end: None,
+            recheck_at: None,
+        }
+    }
+
+    /// A directory read ended at `now`.
+    pub fn bus_done(&mut self, now: u32) {
+        self.bus_end = Some(now);
+    }
+
+    /// `MemCardStart`: the next command is the first one.
+    pub fn restart(&mut self) {
+        self.fresh = true;
+    }
+
+    /// The VBlank at which the running command finishes, if one is running.
+    pub fn busy_until(&mut self, now: u32) -> Option<u32> {
+        self.update(now);
+        match self.phase {
+            Phase::Busy { until } => Some(until),
+            _ => None,
         }
     }
 
@@ -426,16 +501,33 @@ impl Controller {
 
     /// Starts an asynchronous command; false if one is running [guess: starting while busy
     /// fails; starting after a finished-but-unpolled one replaces it].
-    fn start(&mut self, now: u32, cmd: u32, result: i32) -> bool {
+    fn start(&mut self, now: u32, cmd: u32, result: i32, vblanks: u32) -> bool {
         self.update(now);
         if matches!(self.phase, Phase::Busy { .. }) {
             return false;
         }
         self.cmd = cmd;
         self.result = result as u32;
-        self.phase = Phase::Busy {
-            until: now.wrapping_add(COMMAND_VBLANKS),
+        let first = std::mem::take(&mut self.fresh);
+        if first {
+            self.recheck_at = Some(now.wrapping_add(RECHECK_FIRST_VBLANKS));
+        }
+        let warm = first || self.bus_end.is_some_and(|t| now.wrapping_sub(t) <= 1);
+        let rechecking = cmd == MC_FUNC_EXIST
+            && self
+                .recheck_at
+                .is_some_and(|t| now.wrapping_sub(t) < 0x8000_0000);
+        let vblanks = if rechecking {
+            self.recheck_at = Some(now.wrapping_add(RECHECK_PERIOD_VBLANKS));
+            RECHECK_EXIST_VBLANKS
+        } else if cmd == MC_FUNC_EXIST && warm {
+            vblanks.min(WARM_EXIST_VBLANKS)
+        } else {
+            vblanks
         };
+        let until = now.wrapping_add(vblanks);
+        self.bus_end = (cmd != MC_FUNC_EXIST).then_some(until);
+        self.phase = Phase::Busy { until };
         true
     }
 
@@ -444,8 +536,9 @@ impl Controller {
         matches!(self.phase, Phase::Busy { .. })
     }
 
-    /// `MemCardExist`: is a card there? Result 1 no card, 3 a new card, else 0 [doc: McErr
-    /// codes; guess: Exist reports the new-card flag without clearing it].
+    /// `MemCardExist`: is a card there? Result 1 no card, 3 a new card (the first exist of each
+    /// slot, which clears the flag: 3 for 2091 and 2096, then 0 for the 156 after), else 0
+    /// [doc: McErr codes; obs: results at calls 172, 183 and after].
     pub fn exist(&mut self, now: u32, chan: i32) -> bool {
         let Some(s) = Self::slot_of(chan) else {
             return false;
@@ -453,12 +546,13 @@ impl Controller {
         if self.busy(now) {
             return false;
         }
-        let r = match &self.slots[s].card {
+        let slot = &mut self.slots[s];
+        let r = match &slot.card {
             None => MC_ERR_CARD_NOT_EXIST,
-            Some(_) if self.slots[s].new_card => MC_ERR_NEW_CARD,
+            Some(_) if std::mem::take(&mut slot.new_card) => MC_ERR_NEW_CARD,
             Some(_) => MC_ERR_NONE,
         };
-        self.start(now, MC_FUNC_EXIST, r)
+        self.start(now, MC_FUNC_EXIST, r, EXIST_VBLANKS)
     }
 
     /// `MemCardAccept`: checks the card is usable. Result 1 no card, 4 unformatted, 3 new card
@@ -486,7 +580,7 @@ impl Controller {
             }
             Some(_) => MC_ERR_NONE,
         };
-        self.start(now, MC_FUNC_ACCEPT, r)
+        self.start(now, MC_FUNC_ACCEPT, r, ACCEPT_VBLANKS)
     }
 
     /// `MemCardReadFile`. False if busy, the channel is bad or the range isn't valid.
@@ -508,7 +602,7 @@ impl Controller {
             None => MC_ERR_CARD_NOT_EXIST,
             Some(c) => c.read(name, ofs, buf).err().unwrap_or(MC_ERR_NONE),
         };
-        self.start(now, MC_FUNC_READ_FILE, r)
+        self.start(now, MC_FUNC_READ_FILE, r, io_vblanks(buf.len()))
     }
 
     /// `MemCardWriteFile`; as [`Controller::read_file`].
@@ -530,7 +624,7 @@ impl Controller {
             None => MC_ERR_CARD_NOT_EXIST,
             Some(c) => c.write(name, ofs, data).err().unwrap_or(MC_ERR_NONE),
         };
-        self.start(now, MC_FUNC_WRITE_FILE, r)
+        self.start(now, MC_FUNC_WRITE_FILE, r, io_vblanks(data.len()))
     }
 
     /// Runs `f` on the card for the synchronous commands. -1 if a command is running or the
@@ -643,6 +737,14 @@ fn name_bytes<'a>(name: *const c_char) -> &'a [u8] {
 
 // ---- The exported calls ----
 
+/// A synchronous command that took `vblanks` returned `status`: the call blocks, so the clock
+/// runs. A refused command (-1: one is in flight, or a bad channel) takes no time.
+fn block(status: i32, vblanks: u32) {
+    if status != -1 {
+        libetc::advance_to(libetc::vblank_count().wrapping_add(vblanks));
+    }
+}
+
 /// `MemCardInit(flg)`: initialises the card library [doc: flg 1 shares the controller ports'
 /// interrupts with the pads].
 #[unsafe(no_mangle)]
@@ -650,7 +752,9 @@ pub extern "C" fn MemCardInit(_flg: i32) {}
 
 /// `MemCardStart()`: starts card access [doc].
 #[unsafe(no_mangle)]
-pub extern "C" fn MemCardStart() {}
+pub extern "C" fn MemCardStart() {
+    with(|c| c.restart());
+}
 
 /// Starts a card check (result via `MemCardSync`); 1 if started.
 #[unsafe(no_mangle)]
@@ -705,7 +809,9 @@ pub unsafe extern "C" fn MemCardWriteFile(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MemCardCreateFile(chan: i32, fnam: *const c_char, blocks: i32) -> i32 {
     let name = name_bytes(fnam);
-    with(|c| c.create_file(libetc::vblank_count(), chan, name, blocks.max(0) as usize))
+    let r = with(|c| c.create_file(libetc::vblank_count(), chan, name, blocks.max(0) as usize));
+    block(r, CREATE_VBLANKS);
+    r
 }
 
 /// # Safety
@@ -713,12 +819,16 @@ pub unsafe extern "C" fn MemCardCreateFile(chan: i32, fnam: *const c_char, block
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MemCardDeleteFile(chan: i32, fnam: *const c_char) -> i32 {
     let name = name_bytes(fnam);
-    with(|c| c.delete_file(libetc::vblank_count(), chan, name))
+    let r = with(|c| c.delete_file(libetc::vblank_count(), chan, name));
+    block(r, DELETE_VBLANKS);
+    r
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn MemCardFormat(chan: i32) -> i32 {
-    with(|c| c.format(libetc::vblank_count(), chan))
+    let r = with(|c| c.format(libetc::vblank_count(), chan));
+    block(r, FORMAT_VBLANKS);
+    r
 }
 
 /// `MemCardSync(mode, &cmds, &rslt)`; see the module docs.
@@ -727,6 +837,12 @@ pub extern "C" fn MemCardFormat(chan: i32) -> i32 {
 /// `cmds` and `rslt` are null or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn MemCardSync(mode: i32, cmds: *mut u32, rslt: *mut u32) -> i32 {
+    if mode == 0 {
+        // Waiting lets the virtual clock run to the command's completion.
+        if let Some(until) = with(|c| c.busy_until(libetc::vblank_count())) {
+            libetc::advance_to(until);
+        }
+    }
     match with(|c| c.sync(libetc::vblank_count(), mode == 0)) {
         SyncState::Idle => -1,
         SyncState::Busy => 0,
@@ -771,6 +887,10 @@ pub unsafe extern "C" fn MemCardGetDirentry(
             max.max(0) as usize,
         )
     });
+    if r.as_ref().err() != Some(&-1) {
+        block(0, DIRENTRY_VBLANKS);
+        with(|c| c.bus_done(libetc::vblank_count()));
+    }
     let list = match r {
         Ok(l) => l,
         Err(e) => {
@@ -944,48 +1064,186 @@ mod tests {
     fn async_state_machine() {
         let mut m = Controller::new();
         assert_eq!(m.sync(0, false), SyncState::Idle);
-        assert!(m.exist(0, 0));
+        // The first command after MemCardStart: done at +3 [obs: V = 2088].
+        assert!(m.exist(0, 0x10));
         assert!(!m.accept(0, 0), "second start while busy fails");
-        assert_eq!(m.sync(0, false), SyncState::Busy);
+        assert_eq!(m.sync(2, false), SyncState::Busy);
         assert_eq!(
-            m.sync(COMMAND_VBLANKS, false),
+            m.sync(WARM_EXIST_VBLANKS, false),
             SyncState::Done {
                 cmd: MC_FUNC_EXIST,
                 result: 3
             }
         );
-        assert_eq!(m.sync(COMMAND_VBLANKS, false), SyncState::Idle);
-        // Waiting completes at once.
-        assert!(m.accept(5, 0x10));
+        assert_eq!(m.sync(WARM_EXIST_VBLANKS, false), SyncState::Idle);
+        // Later exists take 4 [obs].
+        assert!(m.exist(10, 0));
+        assert_eq!(m.sync(13, false), SyncState::Busy);
+        assert_eq!(m.sync(14, false), SyncState::Done { cmd: 1, result: 3 });
+        // The first exist of a slot reported the new card; the next says 0 [obs].
+        assert!(m.exist(15, 0));
+        assert_eq!(m.sync(19, false), SyncState::Done { cmd: 1, result: 0 });
+        // Waiting completes at once; the extern call moves the clock to `busy_until`. A
+        // freshly inserted card is new until an accept (or exist) sees it.
+        m.insert(1, Some(Card::formatted()));
+        assert!(m.accept(20, 0x10));
+        assert_eq!(m.busy_until(20), Some(20 + ACCEPT_VBLANKS));
         assert_eq!(
-            m.sync(5, true),
+            m.sync(20, true),
             SyncState::Done {
                 cmd: MC_FUNC_ACCEPT,
                 result: 3
             }
         );
-        // Accept consumed the new-card flag.
-        assert!(m.accept(6, 0x10));
+        assert!(m.accept(21, 0x10));
         assert_eq!(
-            m.sync(6, true),
+            m.sync(21, true),
             SyncState::Done {
                 cmd: MC_FUNC_ACCEPT,
                 result: 0
             }
         );
-        assert!(m.exist(7, 0x10));
-        assert_eq!(m.sync(7, true), SyncState::Done { cmd: 1, result: 0 });
+        assert!(m.exist(22, 0x10));
+        assert_eq!(m.sync(22, true), SyncState::Done { cmd: 1, result: 0 });
         // Bad channel, no card, unformatted card.
-        assert!(!m.exist(8, 3));
+        assert!(!m.exist(23, 3));
         m.insert(0, None);
-        assert!(m.exist(8, 0));
-        assert_eq!(m.sync(8, true), SyncState::Done { cmd: 1, result: 1 });
+        assert!(m.exist(23, 0));
+        assert_eq!(m.sync(23, true), SyncState::Done { cmd: 1, result: 1 });
         // A newly inserted unformatted card says so on its first accept, and after.
         m.insert(0, Card::from_bytes(&[0; CARD_SIZE]));
-        assert!(m.accept(9, 0));
-        assert_eq!(m.sync(9, true), SyncState::Done { cmd: 2, result: 4 });
-        assert!(m.accept(9, 0));
-        assert_eq!(m.sync(9, true), SyncState::Done { cmd: 2, result: 4 });
+        assert!(m.accept(24, 0));
+        assert_eq!(m.sync(24, true), SyncState::Done { cmd: 2, result: 4 });
+        assert!(m.accept(25, 0));
+        assert_eq!(m.sync(25, true), SyncState::Done { cmd: 2, result: 4 });
+    }
+
+    /// The main-menu card flow as PCSX-Redux ran it (oracle/capture-calls.lua; VBlank numbers
+    /// are the recording's): `updateMemoryCardState` polls `MemCardSync(1)` once per tick and
+    /// issues `MemCardExist` when it reports idle, alternating slots; the menu waits for a
+    /// finished command, creates the file, then writes it and waits.
+    #[test]
+    fn redux_main_menu_card_flow() {
+        let mut m = Controller::new();
+        let mut t = 2088;
+        // Boot's first exist (slot 2): 0, 0, 1 at +1, +2, +3 [obs: calls 165-172].
+        assert_eq!(m.sync(t, false), SyncState::Idle);
+        assert!(m.exist(t, 0x10));
+        for dt in 1..3 {
+            assert_eq!(m.sync(t + dt, false), SyncState::Busy);
+        }
+        assert!(matches!(m.sync(t + 3, false), SyncState::Done { .. }));
+        // Then the 5-VBlank cycle on both slots: -1 and Exist, 0, 0, 0, 1 [obs: 2092-3103].
+        // The recording's phase reaches 3108 through the accept and directory reads at
+        // 2602-2849, which this test leaves out, so it starts one VBlank later.
+        t += 5;
+        let mut chan = 0x10;
+        while t < 3108 {
+            assert_eq!(m.sync(t, false), SyncState::Idle, "at {t}");
+            assert!(m.exist(t, chan));
+            for dt in 1..4 {
+                assert_eq!(m.sync(t + dt, false), SyncState::Busy, "at {t}+{dt}");
+            }
+            assert!(matches!(
+                m.sync(t + 4, false),
+                SyncState::Done { cmd: 1, .. }
+            ));
+            t += 5;
+            chan ^= 0x10;
+        }
+        // The exist at 3108 (slot 1, channel 0) takes 96 VBlanks: done at 3204 [obs].
+        assert_eq!(t, 3108);
+        assert_eq!(m.sync(t, false), SyncState::Idle);
+        assert!(m.exist(t, chan));
+        assert_eq!(m.sync(3203, false), SyncState::Busy);
+        assert!(matches!(
+            m.sync(3204, false),
+            SyncState::Done { cmd: 1, result: 0 }
+        ));
+        // Menu 0x10 at 3209: the exist from 3205 finishes (poll 1 then the menu's own poll
+        // sees idle, -1), CreateFile runs 11 VBlanks (the extern call advances the clock), and
+        // the next tick's exist (3220) is blocked on by menu 0x11 (3220 to 3224) [obs].
+        let t = 3205;
+        assert_eq!(m.sync(t, false), SyncState::Idle);
+        assert!(m.exist(t, 0x10));
+        for dt in 1..4 {
+            assert_eq!(m.sync(t + dt, false), SyncState::Busy);
+        }
+        assert!(matches!(m.sync(t + 4, false), SyncState::Done { .. }));
+        assert_eq!(m.sync(t + 4, false), SyncState::Idle);
+        assert_eq!(m.create_file(t + 4, 0, b"BASLUS-01032DMR0", 1), 0);
+        // The create returns at 3219 and the tick's VSync reaches 3220.
+        let t = t + 4 + CREATE_VBLANKS + 1;
+        assert_eq!(t, 3220);
+        assert_eq!(m.sync(t, false), SyncState::Idle);
+        assert!(m.exist(t, 0));
+        assert_eq!(m.busy_until(t), Some(3224));
+        assert!(matches!(m.sync(3224, true), SyncState::Done { .. }));
+        // WriteFile of 0x2000 bytes at 3224; the blocking sync returns at 3360 and the next
+        // tick polls at 3361 [obs].
+        assert_eq!(io_vblanks(0x2000), 136);
+        assert!(m.write_file(3224, 0, b"BASLUS-01032DMR0", 0, &vec![1u8; 0x2000]));
+        assert_eq!(m.busy_until(3224), Some(3360));
+        assert_eq!(m.sync(3359, false), SyncState::Busy);
+        assert_eq!(m.sync(3360, true), SyncState::Done { cmd: 4, result: 0 });
+
+        // And the exist loop resumes: 0, 0, 1 at 3362-3364 [obs].
+        assert_eq!(m.sync(3361, false), SyncState::Idle);
+        assert!(m.exist(3361, 0));
+        assert_eq!(m.sync(3362, false), SyncState::Busy);
+        assert_eq!(m.sync(3363, false), SyncState::Busy);
+        assert!(matches!(m.sync(3364, false), SyncState::Done { .. }));
+    }
+
+    /// 2602-2688: the exist loop's command is waited on, then the accept blocks until 2684, and
+    /// the exist at the next tick (2685) is done 3 VBlanks later [obs].
+    #[test]
+    fn redux_accept_then_exist() {
+        let mut m = Controller::new();
+        m.restart();
+        assert!(m.exist(2000, 0));
+        m.sync(2003, false);
+        assert!(m.exist(2602, 0));
+        assert_eq!(m.busy_until(2603), Some(2606));
+        assert!(matches!(m.sync(2606, true), SyncState::Done { .. }));
+        assert!(m.accept(2606, 0));
+        assert_eq!(m.busy_until(2606), Some(2684));
+        assert!(matches!(m.sync(2684, true), SyncState::Done { cmd: 2, .. }));
+        assert!(m.exist(2685, 0));
+        assert_eq!(m.busy_until(2685), Some(2688));
+    }
+
+    /// The three periodic re-checks of the idle menu: 3108 (1020 after the first command), 4830
+    /// and 6552 (1722 after the one before) [obs: calls in captures/oracle-runs/mcrd-idle].
+    #[test]
+    fn redux_periodic_recheck() {
+        let mut m = Controller::new();
+        assert!(m.exist(2088, 0x10));
+        m.sync(2091, false);
+        let mut t = 2103;
+        let mut stalls = Vec::new();
+        while t < 6700 {
+            assert_eq!(m.sync(t, false), SyncState::Idle);
+            assert!(m.exist(t, 0));
+            let until = m.busy_until(t).unwrap();
+            if until - t != EXIST_VBLANKS {
+                stalls.push((t, until - t));
+            }
+            assert!(matches!(m.sync(until, true), SyncState::Done { .. }));
+            t = until + 1;
+        }
+        assert_eq!(
+            stalls,
+            [(3108, 96), (4830, 96), (6552, 96)],
+            "stalls at the exist the loop reaches first"
+        );
+    }
+
+    #[test]
+    fn io_time_scales_with_frames() {
+        assert_eq!(io_vblanks(128), 3);
+        assert_eq!(io_vblanks(0x2000), BLOCK_IO_VBLANKS);
+        assert_eq!(io_vblanks(0), 1);
     }
 
     #[test]

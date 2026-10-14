@@ -62,8 +62,11 @@ local pad = PCSX.SIO0.slots[1].pads[1]
 
 -- Expand PRESSES into press/release events keyed by VBlank.
 local pressAt, releaseAt = {}, {}
+-- DW1ROUTE_PRESS_UNTIL=<vblank>: ignore presses scheduled after it (to watch an idle menu).
+local PRESS_UNTIL = tonumber(os.getenv('DW1ROUTE_PRESS_UNTIL') or '') or math.huge
 for _, p in ipairs(PRESSES) do
     local first, last, period, hold, name = p[1], p[2], p[3], p[4], p[5]
+    last = math.min(last, PRESS_UNTIL)
     local bit = B[name]
     for t = first, last, period do
         pressAt[t] = pressAt[t] or {}
