@@ -29,6 +29,11 @@ pub const fn rand_step(state: u32) -> (u32, i32) {
     (next, ((next >> 16) & 0x7FFF) as i32)
 }
 
+/// The generator's current state (the PS1's RAM 0x9010), for the canonical game-state record.
+pub fn rand_state() -> u32 {
+    RAND_STATE.load(Ordering::Relaxed)
+}
+
 /// BIOS A(2Fh) `rand()`, called by the game C as `rand` (renamed `dw1_bios_rand` there so it
 /// can't bind to the host libc's).
 #[unsafe(no_mangle)]

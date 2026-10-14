@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+mod canon;
 mod headless;
 mod replay;
 mod window;
