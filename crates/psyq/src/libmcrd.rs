@@ -892,7 +892,7 @@ fn persist() {
             Err(e) => {
                 SAVE_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
                 eprintln!(
-                "psyq: MEMORY CARD {} WAS NOT SAVED to {}: {e} (trying again at the next save \
+                    "psyq: MEMORY CARD {} WAS NOT SAVED to {}: {e} (trying again at the next save \
                  and at exit)",
                     slot + 1,
                     file.path.display()
