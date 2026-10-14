@@ -451,7 +451,7 @@ class Gen:
             kind = ["FT3", "GT3", "G3", "FT4", "GT3"][n % 5]
             if kind == "FT4":
                 # the thin triangle and its mirror image across the long edge
-                v = [(x0, 1), (x0 + mx, 1 + k), (x0 + W - mx + (W * k) // H, 1 + H - k), (x0 + W, 1 + H)]
+                v = [(x0, 1), (x0 + mx, 1 + k), (x0 + W - mx, 1 + H - k), (x0 + W, 1 + H)]
             m = len(v)
             uvs = [(r.randint(0, 255), r.randint(0, 255)) for _ in range(m)]
             cols = [r.randint(0, 255) | r.randint(0, 255) << 8 | r.randint(0, 255) << 16 for _ in range(m)]

@@ -9,8 +9,8 @@
 //! A small residue is tolerated, case by case (`gpu_oracle_known.txt`): line rounding ties and
 //! one blend-mode case (see the list's check below). Set `DW1_GPU_STRICT=1` to require an exact
 //! match. Opt-in sets (`--only tiny`, `--only spans`: thin triangles that tell the gradient rule
-//! apart) run the same way with `DW1_GPU_CAPTURE` pointing at their directory and
-//! `DW1_GPU_UPDATE=1` (their list is empty: every pixel matches).
+//! apart) run with `DW1_GPU_CAPTURE` pointing at their directory and `DW1_GPU_EXACT=1`: no
+//! known list, every pixel must match.
 //!
 //! Debugging a failure: `DW1_GPU_SHOW=N` prints the first N mismatching cases with their words
 //! and the differing pixels.
@@ -123,6 +123,19 @@ mod oracle {
             }
         }
         eprintln!("{bad} of {n} cases differ ({bad_px} pixels)");
+        if std::env::var_os("DW1_GPU_EXACT").is_some() {
+            // An opt-in set: no known list, every pixel must match, and the cases must draw.
+            let drawn = outs
+                .iter()
+                .filter(|o| !o.chunks(2).all(|c| c == [0xFF, 0x7F]))
+                .count();
+            assert!(
+                n > 0 && drawn * 10 >= n * 8,
+                "only {drawn} of {n} cases draw anything"
+            );
+            assert_eq!(bad, 0, "{bad} of {n} cases differ ({bad_px} pixels)");
+            return;
+        }
         // Lines and rectangles must actually draw (an earlier version of the cases drew
         // nothing, and passed): nearly all of them leave a pixel other than the fill.
         let (mut prims, mut drawn) = (0, 0);
