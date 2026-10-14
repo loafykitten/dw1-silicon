@@ -14,8 +14,13 @@
 //! `docs/canonical-state.md`) written to `DW1_OUT` as `ckpt_NNNN_<why>.bin` and `.txt`, at
 //! the same triggers and with the same numbering as `oracle/replay.lua`: a change of
 //! MAIN_STATE (`main<N>`), GAME_STATE (`game<N>`) or CURRENT_SCREEN (`screen<N>`) seen at a
-//! pad poll, every 600th poll (`every<N>`), and `final` when the replay is used up (or at
-//! `DW1_STOP_AT`). `tools/oracle/compare_canon.py` compares them with the emulator's.
+//! pad poll, every 600th poll (`every<N>`), and `final`. The emulator writes `final` at the
+//! recording's `final_vblank`, one frame after the last poll (19399 -> 19400); loading is
+//! instant natively, so VBlank numbers don't carry over, and the native `final` is written at
+//! the same distance after the last poll's native VBlank, only once every recorded poll has
+//! been consumed (also at `DW1_STOP_AT`, whatever the poll count). The run exits 0 there.
+//! Without a replay, the triggers run at every pad poll too. Stale `ckpt_NNNN_*` files in
+//! `DW1_OUT` are deleted when the run starts (only those). `tools/oracle/compare_canon.py` compares them with the emulator's.
 
 use std::path::PathBuf;
 
@@ -37,6 +42,9 @@ pub struct Headless {
 struct Checkpoints {
     next: u32,
     last: [Option<u8>; 3],
+    /// Polls seen so far (the next poll's sequence number).
+    polls: usize,
+    final_done: bool,
 }
 
 /// Poll interval of the `every<N>` checkpoints.
@@ -58,7 +66,9 @@ impl Checkpoints {
     }
 
     /// Evaluated at each poll (`poll` is its sequence number), in the Lua's order.
-    fn at_poll(&mut self, out: &std::path::Path, poll: usize, vblank: u32) {
+    fn at_poll(&mut self, out: &std::path::Path, vblank: u32) {
+        let poll = self.polls;
+        self.polls += 1;
         // The record's first fields are the three watched bytes.
         let rec = canon::collect();
         let value = |name: &str| {
@@ -111,6 +121,27 @@ fn function_name(addr: usize) -> String {
         .into_owned()
 }
 
+/// Removes the `ckpt_NNNN_*.bin/.txt` files an earlier run left in `out` (only those), so a
+/// run that stops early can't be compared against its predecessor's checkpoints.
+fn clear_stale_checkpoints(out: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(out) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let stale = name.strip_prefix("ckpt_").is_some_and(|r| {
+            r.len() > 5
+                && r.as_bytes()[..4].iter().all(u8::is_ascii_digit)
+                && r.as_bytes()[4] == b'_'
+                && (name.ends_with(".bin") || name.ends_with(".txt"))
+        });
+        if stale && let Err(e) = std::fs::remove_file(e.path()) {
+            eprintln!("dw1: cannot remove stale {name}: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn env_num(name: &str) -> Option<u32> {
     let v = std::env::var(name).ok()?;
     match v.parse() {
@@ -160,7 +191,12 @@ impl Headless {
         .then_some(Checkpoints {
             next: 0,
             last: [None; 3],
+            polls: 0,
+            final_done: false,
         });
+        if checkpoints.is_some() {
+            clear_stale_checkpoints(&out);
+        }
         Headless {
             checkpoints,
             shots,
@@ -204,10 +240,28 @@ impl psyq::libetc::Host for Headless {
         {
             self.shot(vblank);
         }
+        // The recording's end: the emulator writes `final` at the recording's final_vblank,
+        // after the last poll. Natively the same distance after the last poll's frame.
+        if let Some(replay) = self.replay.as_ref()
+            && let Some(end) = replay.end_vblank()
+            && vblank >= end
+            && let Some(c) = self.checkpoints.as_mut()
+            && !c.final_done
+        {
+            c.final_done = true;
+            c.write(&self.out, "final", replay.polls_done(), vblank);
+            if let Some(note) = replay.timing_note() {
+                eprintln!("dw1: {note}");
+            }
+            std::process::exit(0);
+        }
         if self.stop_at == Some(vblank) {
             eprintln!("dw1: stopped at vblank {vblank}");
             let polls = self.replay.as_ref().map_or(0, Replay::polls_done);
-            if let Some(c) = self.checkpoints.as_mut() {
+            if let Some(c) = self.checkpoints.as_mut()
+                && !c.final_done
+            {
+                c.final_done = true;
                 c.write(&self.out, "final", polls, vblank);
             }
             if let Some(note) = self.replay.as_ref().and_then(|r| r.timing_note()) {
@@ -219,8 +273,12 @@ impl psyq::libetc::Host for Headless {
 
     fn pad(&mut self, caller: usize) -> u32 {
         let Some(replay) = self.replay.as_mut() else {
+            let vblank = psyq::libetc::vblank_count();
+            if let Some(c) = self.checkpoints.as_mut() {
+                c.at_poll(&self.out, vblank);
+            }
             return match self.start_at {
-                Some(at) if psyq::libetc::vblank_count() >= at => 0x800,
+                Some(at) if vblank >= at => 0x800,
                 _ => 0,
             };
         };
@@ -240,15 +298,19 @@ impl psyq::libetc::Host for Headless {
         match replay.poll(&name, vblank) {
             Ok(mask) => {
                 if let Some(c) = self.checkpoints.as_mut() {
-                    c.at_poll(&self.out, replay.polls_done() - 1, vblank);
+                    c.at_poll(&self.out, vblank);
                 }
                 mask
             }
             Err(e) => {
                 eprintln!("dw1: {e}");
+                // Normally `final` was written by the VBlank callback and we never get here;
+                // a poll in the same frame as the last one is the fallback.
                 if replay.polls_done() == replay.polls.len()
                     && let Some(c) = self.checkpoints.as_mut()
+                    && !c.final_done
                 {
+                    c.final_done = true;
                     c.write(&self.out, "final", replay.polls_done(), vblank);
                 }
                 if let Some(note) = replay.timing_note() {

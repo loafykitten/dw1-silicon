@@ -24,6 +24,10 @@ pub struct Replay {
     /// Redux counts VBlanks from power-on, the native clock from the game's ResetCallback.
     vblank_offset: i64,
     first_vblank_mismatch: Option<String>,
+    /// The recording's `final_vblank` header (emulator numbering).
+    final_vblank: Option<u32>,
+    /// Native VBlank of the most recent poll.
+    last_native: u32,
 }
 
 /// Symbol lists: address -> name, for main and every overlay.
@@ -78,6 +82,7 @@ impl Replay {
         let mut polls = Vec::new();
         let mut format_ok = false;
         let mut declared = None;
+        let mut final_vblank = None;
         for line in text.lines() {
             if line.starts_with('#') || line.trim().is_empty() {
                 continue;
@@ -93,6 +98,9 @@ impl Replay {
                 }
                 match f[..] {
                     ["format", "1"] => format_ok = true,
+                    ["final_vblank", n] => {
+                        final_vblank = Some(n.parse::<u32>().map_err(|e| format!("{line}: {e}"))?)
+                    }
                     ["polls", n] => {
                         declared = Some(n.parse::<usize>().map_err(|e| format!("{line}: {e}"))?)
                     }
@@ -130,6 +138,8 @@ impl Replay {
             next: 0,
             vblank_offset: 1144,
             first_vblank_mismatch: None,
+            final_vblank,
+            last_native: 0,
         })
     }
 
@@ -158,7 +168,20 @@ impl Replay {
             ));
         }
         self.next += 1;
+        self.last_native = vblank;
         Ok(p.mask)
+    }
+
+    /// The native VBlank at which the recording ends, once every poll has been consumed: the
+    /// last poll's native VBlank plus the recording's distance from its last poll to
+    /// `final_vblank`. None while polls remain, or if the header has no `final_vblank`.
+    pub fn end_vblank(&self) -> Option<u32> {
+        let last = self.polls.last()?;
+        if self.next != self.polls.len() {
+            return None;
+        }
+        let tail = self.final_vblank?.checked_sub(last.vblank)?;
+        Some(self.last_native + tail)
     }
 
     pub fn polls_done(&self) -> usize {
@@ -243,6 +266,8 @@ mod tests {
             next: 0,
             vblank_offset: 1144,
             first_vblank_mismatch: None,
+            final_vblank: Some(1654),
+            last_native: 0,
         };
         assert_eq!(replay.poll("MOV_playMovie", 507), Ok(0));
         assert!(replay.timing_note().is_none());
@@ -254,6 +279,8 @@ mod tests {
         );
         assert_eq!(replay.poll("MOV_playMovie", 510), Ok(0x800));
         assert!(replay.timing_note().unwrap().contains("poll 1"));
+        // Both polls used: the end is the last poll's frame plus 1654 - 1653.
+        assert_eq!(replay.end_vblank(), Some(511));
         assert!(
             replay
                 .poll("MOV_playMovie", 511)
