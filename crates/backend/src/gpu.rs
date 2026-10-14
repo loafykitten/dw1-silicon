@@ -461,16 +461,23 @@ impl Gpu {
             used.extend([3, 4]);
         }
         // [obs] Interpolation, fitted to Redux (about 900,000 textured and 400,000 shaded pixels
-        // checked; about one in a thousand still differs by one at a rounding tie, in long thin
-        // triangles and textured Gouraud ones). The vertices are taken top to bottom (then left
-        // to right), so the order they were sent in doesn't matter. The plane through them gives
-        // a step per pixel along x. The edge on the left of the row (the long edge, or the
-        // shorter one when it has the smaller x there) gives the value at the row's start, from
-        // its top vertex: its x as the offset from the top vertex truncated to 16.16, a texture
-        // coordinate as a step per row (truncated, 16.16) times the rows, a colour as the exact
-        // offset truncated. A pixel is the row's start plus the x step times its distance from
-        // the edge's x (all 16.16, truncated toward zero), rounded to the nearest integer with
-        // halves up.
+        // checked, plus the opt-in sets: 2,500 tiny triangles with 924 pixels on exact halves,
+        // and 1,500 thin ones where a step from the exact plane misses in 235; no polygon pixel
+        // differs, and the game's model frames are exact). The
+        // vertices are taken top to bottom (then left to right), so the order they were sent in
+        // doesn't matter. The step per pixel along x comes from the triangle's widest row, the
+        // one through the middle vertex, not from the exact plane: the long edge's position
+        // there is its height ratio (rows to the middle vertex over all rows, 16.16, truncated)
+        // times its x and attribute spans, and the step is (the long edge's attribute minus the
+        // middle vertex's) over (its x minus the middle vertex's), 16.16, truncated. The ratio's
+        // truncation puts the step a little off the plane's (by up to a few percent in thin
+        // triangles), and that decides which way exact halves round. The edge on the left of
+        // the row (the long edge, or the shorter one when it has the smaller x there) gives the
+        // value at the row's start, from its top vertex: its x as the offset from the top vertex
+        // truncated to 16.16, a texture coordinate as a step per row (truncated, 16.16) times
+        // the rows, a colour as the exact offset truncated. A pixel is the row's start plus the
+        // x step times its distance from the edge's x (16.16, rounded down), rounded to the
+        // nearest integer with halves up.
         // [obs] A textured Gouraud polygon without dither takes its colour once per pair of
         // pixels, counted from the row's first pixel (the texture coordinate is per pixel).
         let pairs = gouraud && t.is_some() && !dith && !semi;
@@ -478,13 +485,15 @@ impl Gpu {
         let mut sv = [*v0, *v1, *v2];
         sv.sort_by_key(|p| (p.y, p.x));
         let (tv, mv, bv) = (sv[0], sv[1], sv[2]);
-        let sden = (mv.x - tv.x) as i64 * (bv.y - tv.y) as i64
-            - (bv.x - tv.x) as i64 * (mv.y - tv.y) as i64;
+        // (the area isn't zero, so the triangle has at least two rows)
+        let ratio = (((mv.y - tv.y) as i64) << 16) / (bv.y - tv.y) as i64;
+        let width = ratio * (bv.x - tv.x) as i64 + (((tv.x - mv.x) as i64) << 16);
         let mut gx = [0i64; 5];
         for &i in &used {
-            let nx = (attr(&mv, i) - attr(&tv, i)) * (bv.y - tv.y) as i64
-                - (attr(&bv, i) - attr(&tv, i)) * (mv.y - tv.y) as i64;
-            gx[i] = (nx << 16) / sden;
+            let da = ratio * (attr(&bv, i) - attr(&tv, i)) + ((attr(&tv, i) - attr(&mv, i)) << 16);
+            // A widest row of zero width in 16.16 (very thin triangles only) is taken as flat:
+            // not measured.
+            gx[i] = if width == 0 { 0 } else { (da << 16) / width };
         }
         for y in miny..=maxy {
             // The left edge at this row: the long one (top to bottom) or the short one.
@@ -554,8 +563,10 @@ impl Gpu {
                     } else {
                         x as i64
                     };
-                    let q = base[i] + gx[i] * ((xi << 16) - xe) / 0x10000 + 0x8000;
-                    val[i] = (q >> 16) as i32;
+                    // (i128: a near-zero widest row makes the step huge)
+                    let d = (gx[i] as i128 * ((xi << 16) - xe) as i128) >> 16;
+                    let q = base[i] as i128 + d + 0x8000;
+                    val[i] = (q >> 16).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
                 }
                 let (mut r, mut g, mut b) = (v0.r, v0.g, v0.b);
                 if gouraud {

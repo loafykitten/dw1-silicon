@@ -150,8 +150,8 @@ fn model_matches_redux_on_game_frames() {
                 }
             }
         }
-        // A `known.txt` in the frame directory holds the accepted residue (pixel count):
-        // the exact-tie texture-coordinate roundings the model still gets wrong.
+        // A `known.txt` in the frame directory holds an accepted residue (pixel count), if any;
+        // none of the current frames has one (all exact).
         let known: usize = std::fs::read_to_string(d.join("known.txt"))
             .ok()
             .and_then(|s| s.trim().parse().ok())

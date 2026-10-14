@@ -6,8 +6,11 @@
 //! the test shows as ignored. Each case is replayed on a fresh model whose VRAM holds the same
 //! textures (see the generator's header), and the test rectangle must match pixel for pixel.
 //!
-//! A small residue is tolerated, case by case (`gpu_oracle_known.txt`): rounding ties that differ
-//! by one step in long thin triangles. Set `DW1_GPU_STRICT=1` to require an exact match.
+//! A small residue is tolerated, case by case (`gpu_oracle_known.txt`): line rounding ties and
+//! one blend-mode case (see the list's check below). Set `DW1_GPU_STRICT=1` to require an exact
+//! match. Opt-in sets (`--only tiny`, `--only spans`: thin triangles that tell the gradient rule
+//! apart) run the same way with `DW1_GPU_CAPTURE` pointing at their directory and
+//! `DW1_GPU_UPDATE=1` (their list is empty: every pixel matches).
 //!
 //! Debugging a failure: `DW1_GPU_SHOW=N` prints the first N mismatching cases with their words
 //! and the differing pixels.
@@ -137,8 +140,9 @@ mod oracle {
             "only {drawn} of {prims} line and rectangle cases draw anything"
         );
         // Known residue (`gpu_oracle_known.txt`): cases that still differ, with their exact
-        // pixel counts. A rounding tie in a long thin triangle can differ by one step (the
-        // model rounds as Redux does but not in the last bit of its fixed-point steps). Any
+        // pixel counts: lines whose minor coordinate lands on a tie (cases 558-615), and one
+        // semi-transparent Gouraud textured quad in blend mode B + F/4 (5481, green one step
+        // off). Every other polygon is exact. Any
         // case not listed, or a listed one with more pixels, fails; fewer pixels is reported
         // so the list gets tightened. `DW1_GPU_UPDATE=1` prints the list for the current run.
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
