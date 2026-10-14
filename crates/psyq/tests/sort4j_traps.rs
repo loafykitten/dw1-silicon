@@ -43,9 +43,9 @@ fn run_case(name: &str) {
         let pk = (&raw mut PACKETS).cast::<u32>();
         match name {
             "semi_mode" => {
-                // A semi-transparent quad (mode 0x3E) shares TG4L's slot and was never captured;
-                // the header is checked before anything else is read.
-                PRIM = triangle(0x3E, 0, [(0, 0), (0, 1), (1, 0)]);
+                // The raw-texture bit (mode 0x3D) shares TG4L's slot and was never captured; the
+                // header is checked before anything else is read.
+                PRIM = triangle(0x3D, 0, [(0, 0), (0, 1), (1, 0)]);
                 GsTMDfastTG4L((&raw const PRIM).cast(), vp, vp, pk, 1, 0, &mut ot, pk);
             }
             "two_sided" => {
