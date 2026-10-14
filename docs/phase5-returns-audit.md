@@ -1,6 +1,19 @@
 # Phase 5: missing returns in the game C (audit)
 
-2026-10-14. gpt-6.1-sol (high), read-only, over the 110 `-Wreturn-type` warnings of the native build (taken before `*_startEFE` was fixed; see docs/phase5-plan.md). Not yet acted on except `*_startEFE`; the USED-* entries are the next slice. Claude has not yet re-checked every entry.
+2026-10-14. gpt-6.1-sol (high), read-only, over the 110 `-Wreturn-type` warnings of the native build (taken before `*_startEFE` was fixed; see docs/phase5-plan.md). Claude checked the USED-* entries against the code; status (2026-10-14, dw1-native):
+
+- Fixed under `DW1_NATIVE`: `*_startEFE` (returns `EFE_ACTIVE_SECTION`), `flipTextboxPage`
+  (returns 2: measured on the naming screen, where the PS1 returned `tickNamingBox`'s address,
+  and read from the original code at all seven item-menu call sites; every caller tests `!= 0` or
+  `== 1`, which 2 decides as the PS1's values did), `loadStackedTIMEntry` (its last `LoadImage`'s
+  result), `loadSoundCompleteCallback` (`0x800E8CDC`), `*_setupLoadedEFEFile` (`fileId`, exact for
+  the unmatched-state path and most error paths), `playSound` (0 for unsupported ids, whose
+  results nobody uses), `_sin` (0, unreachable).
+- Trap natively (`dw1_native_fatal`) instead of guessing: `getEntityFromScriptId` without a
+  match (the PS1's result depends on the caller), `getItemOptionColor` with a mode outside 0-3
+  and `*_calculateElementBonus` with a factor outside the table's values (both unreachable today).
+- Left for when STD and VS run: `STD_getEntityIndex`, `STD_getEntityIndex2`,
+  `VS_getFirstSpecialMove` (each needs its caller's value passed in).
 
 
 Paths below are relative to `decomp/src`. Caller searches exclude `*_eu.c` and `*_jp*.c`. References inside conditional compilation branches of other files are retained and identified where relevant.
