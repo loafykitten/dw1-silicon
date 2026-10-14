@@ -2,7 +2,8 @@
 # Runs every certified replay natively and compares its canonical-state checkpoints with the
 # emulator's (tools/oracle/compare_canon.py). Exits non-zero if any replay fails or differs.
 #
-#   tools/replay-check.sh [--debug] [NAME...]     NAME: new-game file-city-walk care-fixture battle-fixture
+#   tools/replay-check.sh [--debug] [NAME...]     NAME: new-game file-city-walk care-fixture
+#                                                 battle-fixture battle-twice
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
@@ -22,12 +23,13 @@ fi
 bin=target/$profile/dw1
 
 # name  oracle dump dir  fixture card (- for fresh cards)
-# (the v3-* dumps are fresh Redux replays with the schema v3 canonical state; p5-battle-replay1
-# is the battle recording's certification run)
+# (the v3-* dumps are fresh Redux replays with the schema v3 canonical state; p5-*-replay1 are
+# the battle recordings' certification runs)
 table='new-game v3-new-game -
 file-city-walk v3-file-city-walk -
 care-fixture v3-care-fixture ember-day2-gabumon
-battle-fixture p5-battle-replay1 ember-save2-prefight'
+battle-fixture p5-battle-replay1 ember-save2-prefight
+battle-twice p5-twice-replay1 ember-save2-prefight'
 
 want="$*"
 echo "$table" | while read -r name oracle card; do

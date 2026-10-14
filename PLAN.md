@@ -5,7 +5,37 @@ same day after an adversarial review by GPT 6 Astra (high) (`docs/plan-review-1.
 whole before starting, and don't re-ask Ember anything answered here. Keep the
 "Where things stand" section current at the end of every session: it is the handoff.
 
-## Where things stand (2026-10-14, session 3): start here
+## Where things stand (2026-10-14, session 4): start here
+
+- **Phase 5 is under way: battles match the emulator** (`docs/phase5-plan.md`). Ember made a
+  fixture save in front of a wild ModokiBetamon (`captures/fixtures/ember-save2-prefight.mcd`,
+  save 2 on the card; `DW1ROUTE_PROFILE=continue-save2` loads it). Two certified replays:
+  `oracle/replays/battle-fixture.txt` (one won battle; 17 checkpoints, and all 90 of a run with
+  one every 50 polls, identical natively) and `oracle/replays/battle-twice.txt` (the same, then
+  the fight again with BTL loaded a second time, lost, the MURD "lost a life" overlay and
+  Jijimon's house; 28 of 28 identical). `tools/replay-check.sh` runs every certified replay
+  (all match: 19, 27, 37, 17, 28).
+  - **New in the oracle:** replay format 2 records CD timing (the game keeps running while the
+    PS1's drive reads; natively `CdReadSync` answers "busy" as often as the PS1 did, and any
+    mismatch is a divergence). Canonical state schema v3 adds the battle (`COMBAT_DATA`, the
+    enemies) and the animation state; every older oracle dump was regenerated
+    (`captures/oracle-runs/v3-*`, `p5-*-replay1`).
+  - **Finding a divergence** (how this session's bugs were found): dense checkpoints on both
+    sides (`DW1REPLAY_EVERY=50`, `DW1_CHECKPOINT_EVERY=50`), then `oracle/trace-efe.lua` against
+    the native effect opcodes, `capture-calls.lua` (now takes overlay functions) on the RNG and
+    the suspect functions, `DW1_RAND_LOG=1`, `DW1_CD_LOG=1`. Symbolise a native crash with the
+    build's objects: `llvm-objdump -d -l` on `target/debug/build/decomp-c-*/out/*-<file>.o`.
+  - **Overlay data lifetimes are modelled:** each overlay's initialised data is reset on every
+    `loadDynamicLibrary`, keeping resident variables and `.bss` (`crates/decomp-c/overlays.rs`).
+  - **Recurring native bug classes in the game C**, worth grepping for in each new overlay:
+    literal struct sizes and strides for structs holding pointers (`DW1_SIZEOF`), records with
+    pointers kept inside loaded files (EFE side tables), `(uint32_t)` indexes relying on 32-bit
+    wraparound (`DW1_WRAP_INDEX`), addresses passed as `u_long`/`int32_t` parameters, writes and
+    reads through NULL (the PS1 hit low RAM), and non-void functions without a return (the PS1
+    caller got v0: `docs/phase5-returns-audit.md`, 16 sites still to act on).
+- **Next:** the 16 missing-return sites; more battle coverage if cheap (another enemy, the
+  command menu); then TRN/TRN2 (training) with a route to a gym. Booklab still unreachable
+  (2026-10-14); one emulator at a time on this Mac.
 
 - **Phase 4's gate is met (2026-10-14):** `oracle/replays/file-city-walk.txt` (27 checkpoints,
   five map changes) and `care-fixture.txt` (Ember's save, 37 checkpoints, 07:00 to 14:16 game
@@ -27,7 +57,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 - **Release builds replay too:** the game C is built with `-fno-inline
   -fno-optimize-sibling-calls` so the PadRead caller check names the same function at any
   optimisation level; release runs `new-game` in about 7 s.
-- **Next:** Phase 5 (overlays, battles first: BTL, then TRN/TRN2). Optional Phase 4 leftovers: a
+- **Session 3's next (done in session 4: battles):** Phase 5 (overlays, battles first: BTL, then TRN/TRN2). Optional Phase 4 leftovers: a
   care replay that reaches a need (needs a fixture with food, or Redux hooks past VBlank 32768),
   the shops and other File City exits, line rasterisation ties (28 cases) and one B+F/4 quad
   in `gpu_oracle_known.txt`. No reviews open; no agents running. Older agents' local data is

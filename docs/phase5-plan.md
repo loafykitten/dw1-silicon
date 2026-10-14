@@ -24,6 +24,17 @@ all 90 of a run with a checkpoint every 50 polls (`DW1REPLAY_EVERY=50` on Redux,
 `DW1_CHECKPOINT_EVERY=50` natively; `captures/oracle-runs/p5-battle-dense`), with the canonical
 state's new battle and animation sections (below).
 
+## Loading it twice, and another overlay: done
+
+`oracle/replays/battle-twice.txt` (`DW1ROUTE_PROFILE=battle-twice`, 5,604 polls, 76 CD reads, to
+VBlank 13500): the first battle, then up to screen 112 and back into 109, where the ModokiBetamon
+has come back, and the fight again with BTL loaded a second time. Gabumon, on the 96 HP the first
+fight left, loses: the death countdown, the MURD overlay's "lost a life" scene, and Jijimon's house
+("Oh my gosh! You're back after losing."). Certified (`p5-twice-replay1`); natively 28 of 28
+checkpoints identical. MURD needed three native fixes: `loadTextureFile` writing its results
+through NULL, `MURD_storeDigimonTexture`'s buffer address passed as a 32-bit `u_long`, and empty
+entity slots read and written by `MURD_setOtherEntitiesVisible` (the PS1 hit low RAM).
+
 ## What it took
 
 ### Oracle and tools
@@ -94,10 +105,8 @@ The one-battle replay is unchanged by it; the two-battle replay below tests it.
 
 ## Next
 
-- **A second battle in one replay** (`DW1ROUTE_PROFILE=battle-twice`: the fight again after
-  leaving the screen and coming back; Gabumon, on the 96 HP the first left, loses, and the game
-  sends the tamer to Jijimon's house): recording, certification and the native run in progress;
-  then a battle after another overlay (alternation).
+- More battle coverage if cheap (another enemy species, the tamer's command menu, an item), and
+  a battle after an overlay other than BTL and MURD.
 - The 110 non-void functions without a return (`-Wreturn-type`): gpt-6.1-sol's audit
   (`docs/phase5-returns-audit.md`): 94 unused, 9 used with a determinable PS1 value, 7 unclear
   (among them the EFE loaders and `playSound`). Check and fix the 16.
