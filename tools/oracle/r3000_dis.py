@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Minimal R3000 disassembler for a DW1STATE dump's RAM (the instructions this project has needed:
-loads/stores, ALU, branches, COP0/COP2). Usage: dis.py dump.bin 0x8009ADC0 64"""
+loads/stores, ALU, branches, COP0/COP2). Usage: r3000_dis.py dump.bin 0x8009ADC0 64"""
 import sys,struct
 R=['zero','at','v0','v1','a0','a1','a2','a3','t0','t1','t2','t3','t4','t5','t6','t7','s0','s1','s2','s3','s4','s5','s6','s7','t8','t9','k0','k1','gp','sp','fp','ra']
 GD=['VXY0','VZ0','VXY1','VZ1','VXY2','VZ2','RGBC','OTZ','IR0','IR1','IR2','IR3','SXY0','SXY1','SXY2','SXYP','SZ0','SZ1','SZ2','SZ3','RGB0','RGB1','RGB2','RES1','MAC0','MAC1','MAC2','MAC3','IRGB','ORGB','LZCS','LZCR']

@@ -184,7 +184,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   capstone, freetype, ffmpeg and sdl3 were installed there for Redux. Check that nothing
   else (Wrath-Rust) is running before using it.
 - **Helper tools:** `tools/oracle/dumpstate.py` (reads `DW1STATE` dumps from
-  `capture-libgs.lua`), `tools/oracle/dis.py` (small R3000 disassembler over a dump's RAM),
+  `capture-libgs.lua`), `tools/oracle/r3000_dis.py` (small R3000 disassembler over a dump's RAM),
   `tools/oracle/stalevz.py` (the #2322 bone-matrix check).
 - **Local only (gitignored):** Ember's disc in `disc/` (`Digimon World (USA).bin` + `.cue`,
   MODE2/2352, and the original `.7z`; SHA-1 `5611645da66183e30d11fb6c11a2784ff47e1fdb`, the
