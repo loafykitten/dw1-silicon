@@ -123,6 +123,11 @@ fn main() {
         // Plain char is signed for MIPS GCC and for Apple arm64; pinned so it can't drift.
         // The retail CodeWarrior default is unconfirmed (docs/survey.md, item 8).
         .flag("-fsigned-char")
+        // Every game function keeps its own frame, so the replay host's caller check (the
+        // function that called `PadRead`, crates/psyq/src/libetc.rs) names the same function at
+        // any optimisation level: no inlining, no sibling calls.
+        .flag("-fno-inline")
+        .flag("-fno-optimize-sibling-calls")
         // Noise from matching-decomp style, not ABI hazards (docs/phase1-report.md).
         .flag("-Wno-unknown-pragmas")
         .flag("-Wno-unused-parameter");
