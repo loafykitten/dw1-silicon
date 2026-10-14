@@ -47,8 +47,14 @@ the tamer stands on a tile with trigger 80-109 and presses Cross; the map script
 `MAP_COLLISION_DATA` in a RAM dump of screen 112); 85 is Running, in the middle of the gym. The
 others are at x 750..1150 z -1450..-1150 (81), x 1250..1650 z 650..950 (82), x -650..-250
 z -2450..-2050 (83), x -950..-550 z -1350..-1150 (84) and x -2050..-950 z 850..1650 (86). One
-session uses all the partner's energy; "Bonus Try" (the slots, `trn_slots.c`) and the other five
-kinds are still to record (TRN2's gyms are elsewhere).
+session uses all the partner's energy (a second session still runs).
+
+`oracle/replays/training-bonus.txt` (`DW1ROUTE_PROFILE=training-bonus`, 4,129 polls, to VBlank
+12100): the speed session, then the HP sign ("Training: Boulder Moving", trigger 81, reached
+around the heart sign), Begin, Bonus Try: the slot game (`trn_slots.c`), the session, HP +176 and
+Offense +4. Certified (`p5-bonus-replay1`); natively 13 of 13, and 89 of 89 at every 50 polls.
+Still to record: the other four kinds (MP, Offense, Defense, Brains) and TRN2's gyms (elsewhere
+on the map).
 
 ## What it took
 

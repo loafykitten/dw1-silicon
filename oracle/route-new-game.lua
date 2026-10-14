@@ -66,6 +66,8 @@ local EXTRA = {
     ['care-fixture'] = { base = 'continue', file = '/route-care-schedule.lua' },
     ['battle-fixture'] = { base = 'continue-save2', file = '/route-battle-schedule.lua' },
     ['training-fixture'] = { base = 'continue-save2', file = '/route-training-schedule.lua' },
+    ['training-bonus'] = { base = 'continue-save2',
+                           file = { '/route-training-schedule.lua', '/route-training-bonus-schedule.lua' } },
     ['battle-twice'] = { base = 'continue-save2',
                          file = { '/route-battle-schedule.lua', '/route-battle-twice-schedule.lua' } },
 }
