@@ -48,54 +48,90 @@ pub const MC_ERR_BLOCK_FULL: i32 = 7;
 
 // ---- Timing ----
 //
-// Measured in PCSX-Redux on the new-game route (oracle/capture-calls.lua, VBlank numbers of
-// the Redux run; docs/phase2-plan.md "Time"). A polling game sees a command done when
-// `MemCardSync(1)` first returns 1; a blocking `MemCardSync(0)` returns at the same VBlank.
-// The recorded gaps between a blocking call and the next menu tick include the tick's own
-// `VSync` wait (+1), which the host adds natively, so the durations below are the call to
-// the end of the wait. The recording's sub-VBlank phase isn't modelled.
+// Measured in PCSX-Redux (docs/phase2-plan.md "Time"): the game's main-menu card flow with
+// `oracle/capture-calls.lua` (captures/oracle-runs/mcrd-timing, mcrd-idle; VBlank numbers of
+// that run) and every operation in isolation with `oracle/call-sdk.lua` and `DW1_TIMES=1`
+// (mcrd-lat; calls run back to back at the main menu, timed in VBlanks and CPU cycles). Card
+// commands finish on VBlank boundaries, so durations are whole VBlanks. A polling game sees a
+// command done when `MemCardSync(1)` first returns 1; a blocking `MemCardSync(0)` returns at
+// the same VBlank. Only the states measured are modelled: a formatted card with a game save
+// (the two cards Redux creates). Anything else (no card, an unformatted card, results not
+// listed below) is not measured, and the library traps on it (see `Controller::strict`).
+//
+// Where the game's next menu poll followed a blocking call, it landed 1 VBlank earlier than
+// the isolated call's length said (accept 78 here and 79 in the first isolated call, 78 in
+// the second; write 136); the native tick adds its own `VSync` wait, so those constants are
+// the ones that reproduce the recording's poll sequence.
 
 /// `MemCardExist`: issued at VBlank V, a polling `MemCardSync(1)` returns 0 at V+1..V+3 and 1
 /// at V+4, for both slots, over and over (V = 2092, 2097, ... every 5 VBlanks to 3205) [obs].
-/// Blocking after it returned at V+4 twice (2602 to 2606, 3220 to 3224) [obs].
+/// Blocking after it returned at V+4 (2602 to 2606, 3220 to 3224; isolated: 3.97 VBlanks).
 pub const EXIST_VBLANKS: u32 = 4;
-/// An exist issued at the boot's first command (V = 2088, done at 2091), or within a VBlank of
-/// the end of an accept, directory read, read or write (2685, 2849 and 3361: done 3 later;
-/// each of the three exists that follow one), is done at V+3 [obs; the rule is a guess].
+/// An exist issued as the first command after `MemCardStart` (the boot's, V = 2088, done at
+/// 2091), or within a VBlank of the end of an accept, directory read, read or write (2685, 2849
+/// and 3361: done 3 later; isolated: the exist issued right after another command, 3.00) is
+/// done at V+3 [obs; which commands count is a guess from these cases].
 pub const WARM_EXIST_VBLANKS: u32 = 3;
-/// The card driver's periodic re-check: an exist issued 1020 VBlanks after the first command
-/// after `MemCardStart` (V = 2088, 3108), and again 1722 VBlanks after each such exist (4830,
-/// 6552), is done 96 VBlanks later (3204, 4926; 6647 is 95) with an ordinary result. In the
-/// idle slot-select menu the three stalls and nothing else break the 5-VBlank loop (the run
-/// to 8000 with the game's inputs held off, `DW1ROUTE_PRESS_UNTIL`) [obs]. Why is unknown:
-/// something in the emulator's BIOS card driver or SIO; modelled as a timer [guess].
+/// The card driver's periodic re-check. In the idle slot-select menu (the run to 8000 with
+/// the game's inputs held off, `DW1ROUTE_PRESS_UNTIL`) the exist loop is broken three times by
+/// an exist that stays busy: issued at 3108, 4830 and 6552 and first seen done by
+/// `MemCardSync(1)` at 3204, 4926 and 6646 (96, 96 and 94 VBlanks; the loop's next exist comes
+/// the VBlank after, 3205, 4927, 6647) [obs]. The first is 1020 VBlanks after the first
+/// command (2088); each later one is the first exist at or after the previous completion
+/// plus 1626 (3204 + 1626 = 4830, 4926 + 1626 = 6552) [obs].
+/// Why is unknown: something in the emulator's BIOS card driver or SIO; modelled as this
+/// schedule [guess]. After the three observed, 95 VBlanks.
 pub const RECHECK_FIRST_VBLANKS: u32 = 1020;
-pub const RECHECK_PERIOD_VBLANKS: u32 = 1722;
-pub const RECHECK_EXIST_VBLANKS: u32 = 96;
-/// `MemCardAccept`: the call at 2606 blocks until 2684, and the next tick polls at 2685
-/// [obs]. Same for every result; only the first accept after boot was measured [guess for
-/// the rest].
+pub const RECHECK_GAP_VBLANKS: u32 = 1626;
+pub const RECHECK_VBLANKS: [u32; 3] = [96, 96, 94];
+pub const RECHECK_LATER_VBLANKS: u32 = 95;
+/// `MemCardAccept` (result 0 on a card whose new-card flag an exist cleared): the call at 2606
+/// blocks until 2684, and the next tick polls at 2685 [obs]; isolated 78.0 and 79.0.
 pub const ACCEPT_VBLANKS: u32 = 78;
-/// `MemCardGetDirentry`: blocks for 80 VBlanks, both for the wildcard listing of 15 entries
-/// (call at 2688, the next call at 2768) and a single named file (2768 to 2848) [obs].
-/// Charged whether the call succeeds or not [guess].
+/// `MemCardGetDirentry` on a formatted card: blocks for 80 VBlanks, for the wildcard listing
+/// of 15 entries (call at 2688, the next call at 2768), a single named file (2768 to 2848) and
+/// on an empty card (isolated: 80.00) [obs].
 pub const DIRENTRY_VBLANKS: u32 = 80;
-/// `MemCardCreateFile` (1 block): called at 3209, returns by 3219 (the next tick polls at
-/// 3220) [obs].
+/// `MemCardCreateFile` of one block: called at 3209, returns by 3219 (the next tick polls at
+/// 3220) [obs]; isolated 9.03 to 9.68. Other block counts aren't modelled (a 2-block create
+/// took 14.7, so it isn't linear from this one).
 pub const CREATE_VBLANKS: u32 = 10;
-/// `MemCardDeleteFile` and `MemCardFormat`: not measured; as create [guess].
-pub const DELETE_VBLANKS: u32 = 10;
-pub const FORMAT_VBLANKS: u32 = 10;
-/// `MemCardWriteFile` of one block (64 frames of 128 bytes): called at 3224, the blocking sync
-/// returns at 3360 (the next tick polls at 3361) [obs].
-pub const BLOCK_IO_VBLANKS: u32 = 136;
+/// `MemCardCreateFile` of a name that exists (result 6): 2 VBlanks (1.4 to 2.3, five times) [obs].
+pub const CREATE_EXISTS_VBLANKS: u32 = 2;
+/// `MemCardDeleteFile` of an existing file: 5 + 2 per block (7.0 for one block, twice; 9.0
+/// for two) [obs]; linear beyond that is a guess.
+pub const DELETE_BASE_VBLANKS: u32 = 5;
+/// `MemCardDeleteFile` of a name that is not there (result 5): 81 VBlanks (80.0 to 81.0, five
+/// times, on a card with and without other files) [obs].
+pub const DELETE_MISSING_VBLANKS: u32 = 81;
+/// `MemCardFormat` of a formatted card: 72 (72.0, 72.3, 72.3; also 75.0 and 79.3 once each,
+/// unexplained: not tied to the file count) [obs].
+pub const FORMAT_VBLANKS: u32 = 72;
+/// Reads and writes take a base plus 2 VBlanks per 128-byte frame: read 6 + 2n (8, 10, 14, 22,
+/// 70, 134 VBlanks for 1, 2, 4, 8, 32, 64 frames), write 8 + 2n (10, 12, 24 and 136 for 1, 2, 8
+/// and 64 frames: the game's save, 3224 to 3360) [obs].
+pub const READ_BASE_VBLANKS: u32 = 6;
+pub const WRITE_BASE_VBLANKS: u32 = 8;
+pub const FRAME_VBLANKS: u32 = 2;
+/// A read or write of a file that is not there (result 5) is done after 6 VBlanks whatever
+/// the size (5.0 once, 5.7 once, 6.0 twelve times, reads and writes, 128 to 8192 bytes) [obs].
+pub const IO_MISSING_VBLANKS: u32 = 6;
 
-/// VBlanks a read or write of `bytes` takes: [`BLOCK_IO_VBLANKS`] per 64 frames, rounded up
-/// [guess: linear in frames, as only the one-block write was measured; reads as writes].
-pub fn io_vblanks(bytes: usize) -> u32 {
-    ((bytes / FRAME) as u32 * BLOCK_IO_VBLANKS)
-        .div_ceil(64)
-        .max(1)
+/// VBlanks a read (`write` false) or write of `bytes` takes with this McErr `result`; `None`
+/// for a result nobody measured.
+pub fn io_vblanks(write: bool, result: i32, bytes: usize) -> Option<u32> {
+    match result {
+        MC_ERR_NONE => {
+            let base = if write {
+                WRITE_BASE_VBLANKS
+            } else {
+                READ_BASE_VBLANKS
+            };
+            Some(base + FRAME_VBLANKS * (bytes / FRAME) as u32)
+        }
+        MC_ERR_FILE_NOT_EXIST => Some(IO_MISSING_VBLANKS),
+        _ => None,
+    }
 }
 
 // ---- The card image ----
@@ -421,8 +457,13 @@ pub struct Controller {
     result: u32,
     /// No command has run since `MemCardStart`.
     fresh: bool,
-    /// When the next exist takes [`RECHECK_EXIST_VBLANKS`].
+    /// When the next exist is a periodic re-check, and how many have run.
     recheck_at: Option<u32>,
+    rechecks: usize,
+    /// VBlanks the last synchronous command (create, delete, format, directory read) took.
+    cost: u32,
+    /// Trap (panic) on card states and results whose timing wasn't measured.
+    strict: bool,
     /// When the card bus was last busy with an accept, directory read, read or write.
     bus_end: Option<u32>,
 }
@@ -453,7 +494,35 @@ impl Controller {
             fresh: true,
             bus_end: None,
             recheck_at: None,
+            rechecks: 0,
+            cost: 0,
+            strict: false,
         }
+    }
+
+    /// The same controller, but unmeasured timings panic (the library's global one is like
+    /// this: a state nobody measured must not pass silently).
+    pub fn strict() -> Controller {
+        Controller {
+            strict: true,
+            ..Controller::new()
+        }
+    }
+
+    /// A latency, or the trap for one that wasn't measured.
+    fn timing(&self, what: &str, vblanks: Option<u32>) -> u32 {
+        match vblanks {
+            Some(v) => v,
+            None if self.strict => {
+                panic!("libmcrd: the timing of {what} wasn't measured in the oracle")
+            }
+            None => 1,
+        }
+    }
+
+    /// VBlanks the last synchronous command took; clears it.
+    pub fn take_cost(&mut self) -> u32 {
+        std::mem::take(&mut self.cost)
     }
 
     /// A directory read ended at `now`.
@@ -518,8 +587,13 @@ impl Controller {
                 .recheck_at
                 .is_some_and(|t| now.wrapping_sub(t) < 0x8000_0000);
         let vblanks = if rechecking {
-            self.recheck_at = Some(now.wrapping_add(RECHECK_PERIOD_VBLANKS));
-            RECHECK_EXIST_VBLANKS
+            let v = RECHECK_VBLANKS
+                .get(self.rechecks)
+                .copied()
+                .unwrap_or(RECHECK_LATER_VBLANKS);
+            self.rechecks += 1;
+            self.recheck_at = Some(now.wrapping_add(v + RECHECK_GAP_VBLANKS));
+            v
         } else if cmd == MC_FUNC_EXIST && warm {
             vblanks.min(WARM_EXIST_VBLANKS)
         } else {
@@ -552,7 +626,11 @@ impl Controller {
             Some(_) if std::mem::take(&mut slot.new_card) => MC_ERR_NEW_CARD,
             Some(_) => MC_ERR_NONE,
         };
-        self.start(now, MC_FUNC_EXIST, r, EXIST_VBLANKS)
+        let v = self.timing(
+            "an exist with no card",
+            (r != MC_ERR_CARD_NOT_EXIST).then_some(EXIST_VBLANKS),
+        );
+        self.start(now, MC_FUNC_EXIST, r, v)
     }
 
     /// `MemCardAccept`: checks the card is usable. Result 1 no card, 4 unformatted, 3 new card
@@ -580,7 +658,11 @@ impl Controller {
             }
             Some(_) => MC_ERR_NONE,
         };
-        self.start(now, MC_FUNC_ACCEPT, r, ACCEPT_VBLANKS)
+        let v = self.timing(
+            "an accept with no card, an unformatted card or a new card",
+            (r == MC_ERR_NONE).then_some(ACCEPT_VBLANKS),
+        );
+        self.start(now, MC_FUNC_ACCEPT, r, v)
     }
 
     /// `MemCardReadFile`. False if busy, the channel is bad or the range isn't valid.
@@ -602,7 +684,11 @@ impl Controller {
             None => MC_ERR_CARD_NOT_EXIST,
             Some(c) => c.read(name, ofs, buf).err().unwrap_or(MC_ERR_NONE),
         };
-        self.start(now, MC_FUNC_READ_FILE, r, io_vblanks(buf.len()))
+        let v = self.timing(
+            "a read that fails other than with a missing file",
+            io_vblanks(false, r, buf.len()),
+        );
+        self.start(now, MC_FUNC_READ_FILE, r, v)
     }
 
     /// `MemCardWriteFile`; as [`Controller::read_file`].
@@ -624,36 +710,68 @@ impl Controller {
             None => MC_ERR_CARD_NOT_EXIST,
             Some(c) => c.write(name, ofs, data).err().unwrap_or(MC_ERR_NONE),
         };
-        self.start(now, MC_FUNC_WRITE_FILE, r, io_vblanks(data.len()))
+        let v = self.timing(
+            "a write that fails other than with a missing file",
+            io_vblanks(true, r, data.len()),
+        );
+        self.start(now, MC_FUNC_WRITE_FILE, r, v)
     }
 
-    /// Runs `f` on the card for the synchronous commands. -1 if a command is running or the
-    /// channel is bad [guess], 1 for no card [doc: McErrCardNotExist].
-    fn with_card(&mut self, now: u32, chan: i32, f: impl FnOnce(&mut Card) -> i32) -> i32 {
+    /// Runs `f` on the card for the synchronous commands, which return their McErr code and
+    /// how long they took (`None`: not measured). -1 if a command is running or the channel is
+    /// bad [guess], 1 for no card [doc: McErrCardNotExist; its time wasn't measured].
+    fn with_card(
+        &mut self,
+        now: u32,
+        chan: i32,
+        what: &str,
+        f: impl FnOnce(&mut Card) -> (i32, Option<u32>),
+    ) -> i32 {
+        self.cost = 0;
         let Some(s) = Self::slot_of(chan) else {
             return -1;
         };
         if self.busy(now) {
             return -1;
         }
-        match &mut self.slots[s].card {
-            None => MC_ERR_CARD_NOT_EXIST,
+        let (status, vblanks) = match &mut self.slots[s].card {
+            None => (MC_ERR_CARD_NOT_EXIST, None),
             Some(c) => f(c),
-        }
+        };
+        self.cost = self.timing(what, vblanks);
+        status
     }
 
     pub fn create_file(&mut self, now: u32, chan: i32, name: &[u8], blocks: usize) -> i32 {
-        self.with_card(now, chan, |c| c.create(name, blocks).err().unwrap_or(0))
+        self.with_card(now, chan, "this create", |c| {
+            let r = c.create(name, blocks).err().unwrap_or(0);
+            let v = match (r, blocks) {
+                (0, 1) => Some(CREATE_VBLANKS),
+                (MC_ERR_ALREADY_EXIST, _) => Some(CREATE_EXISTS_VBLANKS),
+                _ => None,
+            };
+            (r, v)
+        })
     }
 
     pub fn delete_file(&mut self, now: u32, chan: i32, name: &[u8]) -> i32 {
-        self.with_card(now, chan, |c| c.delete(name).err().unwrap_or(0))
+        self.with_card(now, chan, "this delete", |c| {
+            let blocks = c.find_exact(name).map(|f| f.blocks.len() as u32);
+            let r = c.delete(name).err().unwrap_or(0);
+            let v = match (r, blocks) {
+                (0, Some(b)) => Some(DELETE_BASE_VBLANKS + 2 * b),
+                (MC_ERR_FILE_NOT_EXIST, _) => Some(DELETE_MISSING_VBLANKS),
+                _ => None,
+            };
+            (r, v)
+        })
     }
 
     pub fn format(&mut self, now: u32, chan: i32) -> i32 {
-        self.with_card(now, chan, |c| {
+        self.with_card(now, chan, "formatting an unformatted card", |c| {
+            let v = c.is_formatted().then_some(FORMAT_VBLANKS);
             c.format();
-            0
+            (0, v)
         })
     }
 
@@ -668,12 +786,12 @@ impl Controller {
         max: usize,
     ) -> Result<Vec<FileInfo>, i32> {
         let mut found = Vec::new();
-        let status = self.with_card(now, chan, |c| {
+        let status = self.with_card(now, chan, "a directory read of an unformatted card", |c| {
             if !c.is_formatted() {
-                return MC_ERR_NOT_FORMAT;
+                return (MC_ERR_NOT_FORMAT, None);
             }
             found = c.find(pattern);
-            0
+            (0, Some(DIRENTRY_VBLANKS))
         });
         if status != 0 {
             return Err(status);
@@ -715,7 +833,7 @@ fn with<T>(f: impl FnOnce(&mut Controller) -> T) -> T {
     f(CONTROLLER
         .lock()
         .unwrap()
-        .get_or_insert_with(Controller::new))
+        .get_or_insert_with(Controller::strict))
 }
 
 /// Puts a card (or none) in slot 1 or 2 (`slot` 0 or 1). The default is a fresh formatted
@@ -737,12 +855,14 @@ fn name_bytes<'a>(name: *const c_char) -> &'a [u8] {
 
 // ---- The exported calls ----
 
-/// A synchronous command that took `vblanks` returned `status`: the call blocks, so the clock
-/// runs. A refused command (-1: one is in flight, or a bad channel) takes no time.
-fn block(status: i32, vblanks: u32) {
-    if status != -1 {
+/// A synchronous command just ran: the call blocks, so the virtual clock runs for as long as
+/// it took (a refused command, -1, took none). Returns the VBlanks it took.
+fn block() -> u32 {
+    let vblanks = with(|c| c.take_cost());
+    if vblanks > 0 {
         libetc::advance_to(libetc::vblank_count().wrapping_add(vblanks));
     }
+    vblanks
 }
 
 /// `MemCardInit(flg)`: initialises the card library [doc: flg 1 shares the controller ports'
@@ -810,7 +930,7 @@ pub unsafe extern "C" fn MemCardWriteFile(
 pub unsafe extern "C" fn MemCardCreateFile(chan: i32, fnam: *const c_char, blocks: i32) -> i32 {
     let name = name_bytes(fnam);
     let r = with(|c| c.create_file(libetc::vblank_count(), chan, name, blocks.max(0) as usize));
-    block(r, CREATE_VBLANKS);
+    block();
     r
 }
 
@@ -820,14 +940,14 @@ pub unsafe extern "C" fn MemCardCreateFile(chan: i32, fnam: *const c_char, block
 pub unsafe extern "C" fn MemCardDeleteFile(chan: i32, fnam: *const c_char) -> i32 {
     let name = name_bytes(fnam);
     let r = with(|c| c.delete_file(libetc::vblank_count(), chan, name));
-    block(r, DELETE_VBLANKS);
+    block();
     r
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn MemCardFormat(chan: i32) -> i32 {
     let r = with(|c| c.format(libetc::vblank_count(), chan));
-    block(r, FORMAT_VBLANKS);
+    block();
     r
 }
 
@@ -887,8 +1007,7 @@ pub unsafe extern "C" fn MemCardGetDirentry(
             max.max(0) as usize,
         )
     });
-    if r.as_ref().err() != Some(&-1) {
-        block(0, DIRENTRY_VBLANKS);
+    if block() > 0 {
         with(|c| c.bus_done(libetc::vblank_count()));
     }
     let list = match r {
@@ -1087,7 +1206,6 @@ mod tests {
         // freshly inserted card is new until an accept (or exist) sees it.
         m.insert(1, Some(Card::formatted()));
         assert!(m.accept(20, 0x10));
-        assert_eq!(m.busy_until(20), Some(20 + ACCEPT_VBLANKS));
         assert_eq!(
             m.sync(20, true),
             SyncState::Done {
@@ -1096,6 +1214,7 @@ mod tests {
             }
         );
         assert!(m.accept(21, 0x10));
+        assert_eq!(m.busy_until(21), Some(21 + ACCEPT_VBLANKS));
         assert_eq!(
             m.sync(21, true),
             SyncState::Done {
@@ -1181,7 +1300,7 @@ mod tests {
         assert!(matches!(m.sync(3224, true), SyncState::Done { .. }));
         // WriteFile of 0x2000 bytes at 3224; the blocking sync returns at 3360 and the next
         // tick polls at 3361 [obs].
-        assert_eq!(io_vblanks(0x2000), 136);
+        assert_eq!(io_vblanks(true, 0, 0x2000), Some(136));
         assert!(m.write_file(3224, 0, b"BASLUS-01032DMR0", 0, &vec![1u8; 0x2000]));
         assert_eq!(m.busy_until(3224), Some(3360));
         assert_eq!(m.sync(3359, false), SyncState::Busy);
@@ -1213,37 +1332,62 @@ mod tests {
         assert_eq!(m.busy_until(2685), Some(2688));
     }
 
-    /// The three periodic re-checks of the idle menu: 3108 (1020 after the first command), 4830
-    /// and 6552 (1722 after the one before) [obs: calls in captures/oracle-runs/mcrd-idle].
     #[test]
-    fn redux_periodic_recheck() {
-        let mut m = Controller::new();
-        assert!(m.exist(2088, 0x10));
-        m.sync(2091, false);
-        let mut t = 2103;
-        let mut stalls = Vec::new();
-        while t < 6700 {
-            assert_eq!(m.sync(t, false), SyncState::Idle);
-            assert!(m.exist(t, 0));
-            let until = m.busy_until(t).unwrap();
-            if until - t != EXIST_VBLANKS {
-                stalls.push((t, until - t));
-            }
-            assert!(matches!(m.sync(until, true), SyncState::Done { .. }));
-            t = until + 1;
+    fn io_times_are_the_measured_ones() {
+        // Reads: 1, 2, 4, 8, 32, 64 frames took 8, 10, 14, 22, 70, 134 VBlanks [obs].
+        for (bytes, vb) in [
+            (128, 8),
+            (256, 10),
+            (512, 14),
+            (1024, 22),
+            (4096, 70),
+            (8192, 134),
+        ] {
+            assert_eq!(io_vblanks(false, 0, bytes), Some(vb), "read {bytes}");
         }
-        assert_eq!(
-            stalls,
-            [(3108, 96), (4830, 96), (6552, 96)],
-            "stalls at the exist the loop reaches first"
-        );
+        // Writes: 1, 2, 8, 64 frames took 10, 12, 24, 136 [obs].
+        for (bytes, vb) in [(128, 10), (256, 12), (1024, 24), (8192, 136)] {
+            assert_eq!(io_vblanks(true, 0, bytes), Some(vb), "write {bytes}");
+        }
+        // A missing file: 6 whatever the size; other errors weren't measured.
+        for bytes in [128, 8192] {
+            assert_eq!(io_vblanks(false, 5, bytes), Some(6));
+            assert_eq!(io_vblanks(true, 5, bytes), Some(6));
+        }
+        assert_eq!(io_vblanks(false, 1, 128), None);
     }
 
     #[test]
-    fn io_time_scales_with_frames() {
-        assert_eq!(io_vblanks(128), 3);
-        assert_eq!(io_vblanks(0x2000), BLOCK_IO_VBLANKS);
-        assert_eq!(io_vblanks(0), 1);
+    #[should_panic(expected = "wasn't measured")]
+    fn strict_controller_traps_unmeasured_states() {
+        let mut m = Controller::strict();
+        m.insert(0, None);
+        m.exist(0, 0);
+    }
+
+    #[test]
+    fn sync_command_costs() {
+        let mut m = Controller::strict();
+        let name = b"BASLUS-01032DMR0";
+        assert_eq!(m.create_file(0, 0, name, 1), 0);
+        assert_eq!(m.take_cost(), 10);
+        assert_eq!(m.create_file(0, 0, name, 1), MC_ERR_ALREADY_EXIST);
+        assert_eq!(m.take_cost(), 2);
+        assert_eq!(m.dirents(0, 0, b"*", 0, 15).unwrap().len(), 1);
+        assert_eq!(m.take_cost(), 80);
+        assert_eq!(
+            m.delete_file(0, 0, b"BASLUS-01032DMR1"),
+            MC_ERR_FILE_NOT_EXIST
+        );
+        assert_eq!(m.take_cost(), 81);
+        assert_eq!(m.delete_file(0, 0, name), 0);
+        assert_eq!(m.take_cost(), 7);
+        assert_eq!(m.format(0, 0), 0);
+        assert_eq!(m.take_cost(), 72);
+        // A refused command costs nothing.
+        assert!(m.exist(0, 0));
+        assert_eq!(m.create_file(0, 0, name, 1), -1);
+        assert_eq!(m.take_cost(), 0);
     }
 
     #[test]
