@@ -46,7 +46,11 @@ impl State {
         s
     }
 
+    /// The word at a PS1 address: the scratchpad's 1 KB at 0x1F800000, else main RAM.
     pub fn r32(&self, addr: u32) -> u32 {
+        if (0x1F80_0000..0x1F80_0400).contains(&addr) {
+            return word(&self.scratch, (addr - 0x1F80_0000) as usize / 4);
+        }
         word(&self.ram, (addr as usize & (PS1_RAM_SIZE - 1)) / 4)
     }
 }

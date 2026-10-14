@@ -1,4 +1,4 @@
-//! The canonical game-state record (schema v2, `docs/canonical-state.md`), collected from the
+//! The canonical game-state record (schema v3, `docs/canonical-state.md`), collected from the
 //! native game's globals and encoded byte for byte like `oracle/canonical-state.lua`, so the
 //! port's state at a checkpoint can be compared with the emulator's.
 //!
@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 
 use decomp_c::bindings as c;
 
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 pub const MAGIC: &[u8; 8] = b"DW1CANON";
 pub const HEADER_LEN: usize = 16;
 
@@ -194,6 +194,63 @@ pub const FIELDS: &[Field] = &[
     f("progress.tournaments_won", S16, 1, false),
     f("progress.tournament_wins", S16, 1, false),
     f("progress.tournaments_lost", S16, 1, false),
+    f("battle.enemy_count", S16, 1, false),
+    f("battle.is_predefined", U8, 1, false),
+    f("battle.fighter.status_fx_id", S32, 4, false),
+    f("battle.fighter.effect_slot", S32, 16, false),
+    f("battle.fighter.active_effect_slot", S32, 4, false),
+    f("battle.fighter.finisher_goal", S16, 4, false),
+    f("battle.fighter.finisher_progress", S16, 4, false),
+    f("battle.fighter.poison_timer", S16, 4, false),
+    f("battle.fighter.confusion_timer", S16, 4, false),
+    f("battle.fighter.stun_timer", S16, 4, false),
+    f("battle.fighter.flat_timer", S16, 4, false),
+    f("battle.fighter.flat_attack_timer", S16, 4, false),
+    f("battle.fighter.invulnerable_timer", S16, 4, false),
+    f("battle.fighter.cooldown", S16, 4, false),
+    f("battle.fighter.senile_timer", S16, 4, false),
+    f("battle.fighter.unk15", S16, 4, false),
+    f("battle.fighter.hp_damage_buffer", S16, 4, false),
+    f("battle.fighter.mp_damage_buffer", S16, 4, false),
+    f("battle.fighter.speed_buffer", S16, 4, false),
+    f("battle.fighter.flags", U16, 4, false),
+    f("battle.fighter.move_range", S8, 4, false),
+    f("battle.fighter.target_id", U8, 4, false),
+    f("battle.fighter.queued_anim", U8, 4, false),
+    f("battle.fighter.buffs_remaining", U8, 4, false),
+    f("battle.fighter.buff_prio_timer", U8, 4, false),
+    f("battle.fighter.collided_while_distance_cmd", U8, 4, false),
+    f("battle.player.hit_count", U16, 1, false),
+    f("battle.player.blocked_count", U16, 1, false),
+    f("battle.player.statused_count", U16, 1, false),
+    f("battle.player.starting_hp", S16, 1, false),
+    f("battle.player.command_delay", S16, 2, false),
+    f("battle.player.current_command", U8, 2, false),
+    f("battle.player.buffered_command", U8, 2, false),
+    f("battle.player.hovered_command", S8, 2, false),
+    f("battle.player.available_commands", U8, 18, false),
+    f("battle.player.num_commands", U8, 2, false),
+    f("battle.player.finisher_chargeup", U8, 2, false),
+    f("battle.player.remaining_chargeup_time", S8, 2, false),
+    f("battle.player.entity_ids", U8, 4, false),
+    f("battle.player.change_target", U8, 1, false),
+    f("battle.player.used_moves", U8, 12, false),
+    f("battle.enemy.valid", U8, 3, false),
+    f("battle.enemy.species", S32, 3, false),
+    f("battle.enemy.max_hp", S16, 3, false),
+    f("battle.enemy.max_mp", S16, 3, false),
+    f("battle.enemy.cur_hp", S16, 3, false),
+    f("battle.enemy.cur_mp", S16, 3, false),
+    f("battle.enemy.pos_valid", U8, 3, false),
+    f("battle.enemy.pos", S32, 9, false),
+    f("battle.enemy.yaw", S16, 3, false),
+    f("anim.id", U8, 5, false),
+    f("anim.frame", S16, 5, false),
+    f("anim.frame_count", S16, 5, false),
+    f("anim.loop_end_frame", S16, 5, false),
+    f("anim.loop_count", U8, 5, false),
+    f("anim.flag", U8, 5, false),
+    f("anim.loc", S32, 15, false),
 ];
 
 /// The values of every field, in [`FIELDS`] order. Each value is widened to i64 (a scalar is a
@@ -299,7 +356,7 @@ impl Record {
     }
 }
 
-/// Body length in bytes (818 for schema v2).
+/// Body length in bytes (1309 for schema v3).
 #[cfg(test)]
 pub fn body_len() -> usize {
     FIELDS.iter().map(|f| f.ty.size() * f.count).sum()
@@ -359,6 +416,10 @@ unsafe extern "C" {
     static mut TOURNAMENTS_WON: i16;
     static mut TOURNAMENT_WINS: i16;
     static mut TOURNAMENTS_LOST: i16;
+    static mut COMBAT_DATA: c::CombatData;
+    static mut ENEMY_COUNT: i16;
+    static mut IS_PREDEFINED_BATTLE: u8;
+    static mut ENTITY_TABLE: [*mut c::Entity; 10];
 }
 
 /// Reads a game global (the game is single-threaded and paused while we read).
@@ -623,6 +684,124 @@ pub fn collect() -> Record {
     b.one("progress.tournament_wins", g!(TOURNAMENT_WINS));
     b.one("progress.tournaments_lost", g!(TOURNAMENTS_LOST));
 
+    // Schema v3: the battle. COMBAT_DATA has no pointers (its PS1 layout is the native one; the
+    // tests check the offsets the Lua uses); the fighters' table1/table2 and PlayerData's unk
+    // members are excluded.
+    b.one("battle.enemy_count", g!(ENEMY_COUNT));
+    b.one("battle.is_predefined", g!(IS_PREDEFINED_BATTLE));
+    let cd = g!(COMBAT_DATA);
+    let fighters = |f: &dyn Fn(&c::FighterData) -> Vec<i64>| -> Vec<i64> {
+        cd.fighter.iter().flat_map(f).collect()
+    };
+    b.many("battle.fighter.status_fx_id", fighters(&|x| vec![x.statusFxId.into()]));
+    b.many(
+        "battle.fighter.effect_slot",
+        fighters(&|x| x.effectSlot.iter().map(|&v| v.into()).collect()),
+    );
+    b.many(
+        "battle.fighter.active_effect_slot",
+        fighters(&|x| vec![x.activeEffectSlot.into()]),
+    );
+    macro_rules! fighter {
+        ($($name:literal => $field:ident),* $(,)?) => {
+            $(b.many(concat!("battle.fighter.", $name), fighters(&|x| vec![x.$field.into()]));)*
+        };
+    }
+    fighter! {
+        "finisher_goal" => finisherGoal, "finisher_progress" => finisherProgress,
+        "poison_timer" => poisonTimer, "confusion_timer" => confusionTimer,
+        "stun_timer" => stunTimer, "flat_timer" => flatTimer,
+        "flat_attack_timer" => flatAttackTimer, "invulnerable_timer" => invulnerableTimer,
+        "cooldown" => cooldown, "senile_timer" => senileTimer, "unk15" => unk15,
+        "hp_damage_buffer" => hpDamageBuffer, "mp_damage_buffer" => mpDamageBuffer,
+        "speed_buffer" => speedBuffer, "flags" => flags, "move_range" => moveRange,
+        "target_id" => targetId, "queued_anim" => queuedAnim,
+        "buffs_remaining" => buffsRemaining, "buff_prio_timer" => buffPrioTimer,
+        "collided_while_distance_cmd" => hasCollidedWhileDistanceCmd,
+    }
+    let pl = &cd.player;
+    let list = |a: &[i64]| a.to_vec();
+    b.one("battle.player.hit_count", pl.hitCount);
+    b.one("battle.player.blocked_count", pl.blockedCount);
+    b.one("battle.player.statused_count", pl.statusedCount);
+    b.one("battle.player.starting_hp", pl.startingHP);
+    b.many("battle.player.command_delay", list(&pl.commandDelay.map(i64::from)));
+    b.many("battle.player.current_command", bytes(&pl.currentCommand));
+    b.many("battle.player.buffered_command", bytes(&pl.bufferedCommand));
+    b.many("battle.player.hovered_command", list(&pl.hoveredCommand.map(i64::from)));
+    b.many(
+        "battle.player.available_commands",
+        bytes(pl.availableCommands.as_flattened()),
+    );
+    b.many("battle.player.num_commands", bytes(&pl.numCommands));
+    b.many("battle.player.finisher_chargeup", bytes(&pl.finisherChargeup));
+    b.many(
+        "battle.player.remaining_chargeup_time",
+        list(&pl.remainingChargeupTime.map(i64::from)),
+    );
+    b.many("battle.player.entity_ids", bytes(&pl.entityIds));
+    b.one("battle.player.change_target", pl.changeTarget);
+    b.many("battle.player.used_moves", bytes(&pl.usedMoves));
+    // The enemy in combat slot k (1..3): ENTITY_TABLE[entityIds[k]] while GAME_STATE is nonzero
+    // (a battle), for slots 2..9 holding an entity; otherwise zeros. Every enemy is a
+    // DigimonEntity (Entity first).
+    let enemies: Vec<Option<c::DigimonEntity>> = (1..4)
+        .map(|k| {
+            let id = usize::from(pl.entityIds[k]);
+            if g!(GAME_STATE) == 0 || !(2..=9).contains(&id) {
+                return None;
+            }
+            let e = g!(ENTITY_TABLE)[id];
+            (!e.is_null()).then(|| unsafe { e.cast::<c::DigimonEntity>().read() })
+        })
+        .collect();
+    let per_enemy = |n: usize, f: &dyn Fn(&c::DigimonEntity) -> Vec<i64>| -> Vec<i64> {
+        enemies
+            .iter()
+            .flat_map(|e| e.as_ref().map_or(vec![0; n], f))
+            .collect()
+    };
+    b.many("battle.enemy.valid", per_enemy(1, &|_| vec![1]));
+    b.many("battle.enemy.species", per_enemy(1, &|e| vec![e.entity.type_.into()]));
+    b.many("battle.enemy.max_hp", per_enemy(1, &|e| vec![e.stats.base.hp.into()]));
+    b.many("battle.enemy.max_mp", per_enemy(1, &|e| vec![e.stats.base.mp.into()]));
+    b.many(
+        "battle.enemy.cur_hp",
+        per_enemy(1, &|e| vec![e.stats.current.currentHP.into()]),
+    );
+    b.many(
+        "battle.enemy.cur_mp",
+        per_enemy(1, &|e| vec![e.stats.current.currentMP.into()]),
+    );
+    b.many(
+        "battle.enemy.pos_valid",
+        per_enemy(1, &|e| vec![position(e.entity.posData).0]),
+    );
+    b.many("battle.enemy.pos", per_enemy(3, &|e| position(e.entity.posData).1));
+    b.many("battle.enemy.yaw", per_enemy(1, &|e| vec![position(e.entity.posData).2]));
+
+    // Animation state of the tamer, the partner and the enemy slots (pointers excluded).
+    let anims: Vec<Option<c::EntityAnim>> = [Some(tamer.entity.anim), Some(digi.entity.anim)]
+        .into_iter()
+        .chain(enemies.iter().map(|e| e.as_ref().map(|e| e.entity.anim)))
+        .collect();
+    let per_anim = |n: usize, f: &dyn Fn(&c::EntityAnim) -> Vec<i64>| -> Vec<i64> {
+        anims
+            .iter()
+            .flat_map(|a| a.as_ref().map_or(vec![0; n], f))
+            .collect()
+    };
+    b.many("anim.id", per_anim(1, &|a| vec![a.animId.into()]));
+    b.many("anim.frame", per_anim(1, &|a| vec![a.animFrame.into()]));
+    b.many("anim.frame_count", per_anim(1, &|a| vec![a.frameCount.into()]));
+    b.many("anim.loop_end_frame", per_anim(1, &|a| vec![a.loopEndFrame.into()]));
+    b.many("anim.loop_count", per_anim(1, &|a| vec![a.loopCount.into()]));
+    b.many("anim.flag", per_anim(1, &|a| vec![a.animFlag.into()]));
+    b.many(
+        "anim.loc",
+        per_anim(3, &|a| [a.locX, a.locY, a.locZ].map(i64::from).to_vec()),
+    );
+
     let rec = Record { values: b.values };
     rec.check();
     rec
@@ -674,17 +853,17 @@ mod tests {
             assert_eq!(field.ty.size() * field.count, *size, "{name} size");
             off += size;
         }
-        assert_eq!(off, 834);
-        assert_eq!(body_len(), 818);
+        assert_eq!(off, 1325);
+        assert_eq!(body_len(), 1309);
     }
 
     #[test]
     fn native_collection_follows_the_field_list() {
         // Builder asserts every name and count; the globals are zero or initialised statics.
         let bytes = collect().encode();
-        assert_eq!(bytes.len(), 834);
+        assert_eq!(bytes.len(), 1325);
         assert_eq!(&bytes[..8], b"DW1CANON");
-        assert_eq!(&bytes[8..16], &[2, 0, 0, 0, 0x32, 3, 0, 0]);
+        assert_eq!(&bytes[8..16], &[3, 0, 0, 0, 0x1D, 5, 0, 0]);
     }
 
     fn sample() -> Record {
@@ -714,18 +893,18 @@ mod tests {
     fn encode_decode_round_trip_and_signedness() {
         let rec = sample();
         let bytes = rec.encode();
-        assert_eq!(bytes.len(), 834);
+        assert_eq!(bytes.len(), 1325);
         assert_eq!(Record::decode(&bytes).unwrap(), rec);
         // A signed byte is two's complement.
         let mut r = rec.clone();
         r.values[0] = vec![-3];
         assert_eq!(r.encode()[HEADER_LEN], 0xFD);
-        assert!(Record::decode(&bytes[..833]).is_err());
+        assert!(Record::decode(&bytes[..1324]).is_err());
         let mut bad = bytes.clone();
         bad[0] = b'X';
         assert!(Record::decode(&bad).is_err());
         let mut bad = bytes;
-        bad[8] = 3;
+        bad[8] = 2;
         assert!(Record::decode(&bad).unwrap_err().contains("version"));
     }
 
@@ -740,7 +919,7 @@ mod tests {
         rec.values[at("tamer.pos")] = vec![-1, 2, -2735];
         rec.values[at("mode.main_state")] = vec![-1];
         let text = rec.render();
-        assert!(text.starts_with("# dw1 canonical state schema v2\n"));
+        assert!(text.starts_with("# dw1 canonical state schema v3\n"));
         assert!(text.contains("\nrng.custom_val2 = 0x0013cc25\n"));
         assert!(text.contains("\npartner.learned_moves = 0x00000004 0x00000000\n"));
         assert!(text.contains("\npartner.moves = 46 255 255 53\n"));
@@ -762,15 +941,42 @@ mod tests {
         assert_eq!(norm_script(0x10, 0, 0), (3, 0));
     }
 
+    /// The PS1 offsets `oracle/canonical-state.lua` reads `COMBAT_DATA` at are the native
+    /// struct's: it holds no pointers, so the layouts agree.
+    #[test]
+    fn combat_data_offsets_match_the_lua() {
+        use std::mem::{offset_of, size_of};
+        assert_eq!(size_of::<c::FighterData>(), 0x168);
+        assert_eq!(offset_of!(c::CombatData, player), 0x5A0);
+        assert_eq!(offset_of!(c::FighterData, activeEffectSlot), 0x14);
+        assert_eq!(offset_of!(c::FighterData, finisherGoal), 0x18);
+        assert_eq!(offset_of!(c::FighterData, speedBuffer), 0x32);
+        assert_eq!(offset_of!(c::FighterData, flags), 0x34);
+        assert_eq!(offset_of!(c::FighterData, hasCollidedWhileDistanceCmd), 0x3B);
+        assert_eq!(offset_of!(c::PlayerData, hitCount), 0xA0);
+        assert_eq!(offset_of!(c::PlayerData, startingHP), 0xA8);
+        assert_eq!(offset_of!(c::PlayerData, commandDelay), 0xAA);
+        assert_eq!(offset_of!(c::PlayerData, currentCommand), 0xAE);
+        assert_eq!(offset_of!(c::PlayerData, hoveredCommand), 0xB2);
+        assert_eq!(offset_of!(c::PlayerData, availableCommands), 0xB4);
+        assert_eq!(offset_of!(c::PlayerData, numCommands), 0xC6);
+        assert_eq!(offset_of!(c::PlayerData, finisherChargeup), 0xC8);
+        assert_eq!(offset_of!(c::PlayerData, remainingChargeupTime), 0xCA);
+        assert_eq!(offset_of!(c::PlayerData, entityIds), 0xCC);
+        assert_eq!(offset_of!(c::PlayerData, changeTarget), 0xD4);
+        assert_eq!(offset_of!(c::PlayerData, usedMoves), 0xD5);
+    }
+
     /// Round trip through the emulator's own files when they are present (local, gitignored):
     /// decode each `.bin`, re-encode it, and check that rendering gives its `.txt`.
     #[test]
     fn emulator_records_round_trip_when_present() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../captures/oracle-runs/s08-replay/v2");
+            .join("../../captures/oracle-runs/p5-battle-replay1");
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return;
         };
+        let mut checked = 0;
         for e in entries.flatten() {
             let p = e.path();
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
@@ -782,6 +988,8 @@ mod tests {
             assert_eq!(rec.encode(), bytes, "{}", p.display());
             let txt = std::fs::read_to_string(p.with_extension("txt")).unwrap();
             assert_eq!(rec.render(), txt, "{}", p.display());
+            checked += 1;
         }
+        assert!(checked > 0, "no records in {}", dir.display());
     }
 }

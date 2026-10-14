@@ -41,7 +41,37 @@ pub extern "C" fn dw1_bios_rand() -> i32 {
     // The game is single-threaded; the atomic only keeps this safe Rust.
     let (next, value) = rand_step(RAND_STATE.load(Ordering::Relaxed));
     RAND_STATE.store(next, Ordering::Relaxed);
+    if rand_log() {
+        log_rand_call(value);
+    }
     value
+}
+
+/// `DW1_RAND_LOG=1`: print every `rand()` call with its VBlank and callers, to find where a run's
+/// RNG use departs from the emulator's (`oracle/capture-calls.lua` with `DW1_CAPTURE_FUNCS=rand`).
+fn rand_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("DW1_RAND_LOG").is_some())
+}
+
+#[inline(never)]
+fn log_rand_call(value: i32) {
+    unsafe extern "C" {
+        fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
+        fn backtrace_symbols_fd(buffer: *const *mut std::ffi::c_void, size: i32, fd: i32);
+    }
+    eprintln!(
+        "dw1: rand {value:#06x} at vblank {}",
+        crate::libetc::vblank_count()
+    );
+    let mut frames = [std::ptr::null_mut(); 5];
+    unsafe {
+        let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
+        // Skip this function and dw1_bios_rand.
+        if n > 2 {
+            backtrace_symbols_fd(frames.as_ptr().add(2), (n - 2).min(2), 2);
+        }
+    }
 }
 
 /// BIOS A(30h) `srand(seed)`. DW1's C never calls it (S0.5 survey); kept for tests and the

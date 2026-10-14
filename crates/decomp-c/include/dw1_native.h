@@ -53,6 +53,14 @@ extern uint8_t dw1_ps1_ram[];
 void *dw1_ptr32_decode(uint32_t value);
 #define DW1_TMD_ADDR(field) dw1_ptr32_decode(field)
 
+/* Stops the program with a message: a native-only limit the PS1 code doesn't have was hit
+ * (crates/psyq/src/trap.rs). */
+_Noreturn void dw1_native_fatal(const char *what);
+
+/* The game is loading overlay `lib` (its Overlay number): its initialised data goes back to
+ * the file's values, as the PS1's load of the file would do (crates/decomp-c/src/overlays.rs). */
+void dw1_overlay_reset(int32_t lib);
+
 /* BIOS A(2Fh)/A(30h), reached through the SDK's libc stubs on the PS1. */
 #define rand dw1_bios_rand
 #define srand dw1_bios_srand

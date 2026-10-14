@@ -20,6 +20,8 @@ pub struct Poll {
 
 pub struct Replay {
     pub polls: Vec<Poll>,
+    /// Format 2's CD timing per read (`psyq::libcd`); None for a format 1 recording.
+    pub cd_reads: Option<Vec<psyq::libcd::RecordedRead>>,
     next: usize,
     /// Redux counts VBlanks from power-on, the native clock from the game's ResetCallback.
     vblank_offset: i64,
@@ -92,7 +94,9 @@ impl Replay {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let tables = symbols(symbols_dir)?;
         let mut polls = Vec::new();
-        let mut format_ok = false;
+        let mut format = 0;
+        let mut cd_reads = Vec::new();
+        let mut declared_cd = None;
         let mut declared = None;
         let mut final_vblank = None;
         let mut cards = [None, None];
@@ -111,7 +115,22 @@ impl Replay {
                     ));
                 }
                 match f[..] {
-                    ["format", "1"] => format_ok = true,
+                    ["format", "1"] => format = 1,
+                    ["format", "2"] => format = 2,
+                    ["cd_reads", n] => {
+                        declared_cd = Some(n.parse::<usize>().map_err(|e| format!("{line}: {e}"))?)
+                    }
+                    ["cd", k, issue, busy, sectors] => {
+                        let num = |s: &str| s.parse::<u32>().map_err(|e| format!("{line}: {e}"));
+                        if num(k)? as usize != cd_reads.len() {
+                            return Err(format!("{}: cd line out of order: {line}", path.display()));
+                        }
+                        cd_reads.push(psyq::libcd::RecordedRead {
+                            issue: num(issue)?,
+                            busy: num(busy)?,
+                            sectors: num(sectors)?,
+                        });
+                    }
                     ["final_vblank", n] => {
                         final_vblank = Some(n.parse::<u32>().map_err(|e| format!("{line}: {e}"))?)
                     }
@@ -140,8 +159,18 @@ impl Replay {
                 callers: callers_of(ra, &tables),
             });
         }
-        if !format_ok {
-            return Err(format!("{}: not a format 1 pad replay", path.display()));
+        if format == 0 {
+            return Err(format!("{}: not a format 1 or 2 pad replay", path.display()));
+        }
+        if format == 2 && declared_cd != Some(cd_reads.len()) {
+            return Err(format!(
+                "{}: the header declares {declared_cd:?} CD reads, the file has {}",
+                path.display(),
+                cd_reads.len()
+            ));
+        }
+        if format == 1 && !cd_reads.is_empty() {
+            return Err(format!("{}: cd lines in a format 1 replay", path.display()));
         }
         if declared != Some(polls.len()) {
             return Err(format!(
@@ -152,6 +181,7 @@ impl Replay {
         }
         Ok(Replay {
             polls,
+            cd_reads: (format == 2).then_some(cd_reads),
             next: 0,
             vblank_offset: 1144,
             first_vblank_mismatch: None,
@@ -265,6 +295,29 @@ mod tests {
         let header = "# test\nformat 1\npolls 2\n";
         let ok = load(&format!("{header}0 1651 0 80010620\n1 1653 800 80010620\n")).unwrap();
         assert_eq!(ok.polls.len(), 2);
+        assert_eq!(ok.cd_reads, None);
+        // Format 2: CD reads between the header and the polls, counted by the header.
+        let polls = "0 1651 0 80010620\n1 1653 800 80010620\n";
+        let v2 = "# test\nformat 2\npolls 2\ncd_reads 2\ncd 0 0 3 16\ncd 1 1 0 1\n";
+        let read = |issue, busy, sectors| psyq::libcd::RecordedRead {
+            issue,
+            busy,
+            sectors,
+        };
+        assert_eq!(
+            load(&format!("{v2}{polls}")).unwrap().cd_reads,
+            Some(vec![read(0, 3, 16), read(1, 0, 1)])
+        );
+        let short = "# test\nformat 2\npolls 2\ncd_reads 3\ncd 0 0 3 16\n";
+        assert!(load(&format!("{short}{polls}")).err().unwrap().contains("CD reads"));
+        let unordered = "# test\nformat 2\npolls 2\ncd_reads 1\ncd 1 0 3 16\n";
+        assert!(load(&format!("{unordered}{polls}")).err().unwrap().contains("out of order"));
+        assert!(
+            load(&format!("{header}cd 0 0 3 16\n{polls}"))
+                .err()
+                .unwrap()
+                .contains("format 1")
+        );
         assert!(load(header).err().unwrap().contains("truncated"));
         assert!(
             load(&format!("{header}0 1651 0 80010620\n"))
@@ -307,6 +360,7 @@ mod tests {
         assert!(callers_of(0x8000_0000, &tables).is_empty());
 
         let mut replay = Replay {
+            cd_reads: None,
             polls: vec![
                 Poll {
                     vblank: 1651,

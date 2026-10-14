@@ -1,4 +1,4 @@
-//! libgs's 2D sort calls: `GsSortBoxFill`, `GsSortPoly` and `GsSortSprite`.
+//! libgs's 2D sort calls: `GsSortBoxFill`, `GsSortPoly`, `GsSortSprite` and `GsSortFastSprite`.
 //!
 //! Clean-room like the rest of libgs: the struct layouts and attribute bits from the Psy-Q
 //! headers, the GPU packet formats from psx-spx, the details from calls captured in PCSX-Redux
@@ -8,9 +8,9 @@
 //! Each call writes one packet at the work base (`GsGetWorkBase`), advances the work base past
 //! it and links it into the ordering table at the head of entry `pri`. Over the route to Jijimon's
 //! name entry (Redux VBlanks 3570-5240) the game makes 941 `GsSortBoxFill` and 164 `GsSortPoly`
-//! calls, and in File City's clock (VBlank 12773 on) `GsSortSprite`; no `GsSortFastSprite`
-//! call occurs anywhere on the routes so far, so that stays a trapping stub
-//! (`stubs.rs`) until a scene that uses it is captured.
+//! calls, and in File City's clock (VBlank 12773 on) `GsSortSprite`. The first battle (Phase 5,
+//! `captures/oracle-runs/p5-btl-calls`) adds scaled, semi-transparent and coloured sprites and
+//! `GsSortFastSprite`.
 
 use super::{GsGetWorkBase, GsOt, GsSetWorkBase};
 use crate::memory::link_of;
@@ -170,26 +170,91 @@ pub unsafe extern "C" fn GsSortPoly(pp: *const u32, ot: *mut GsOt, pri: u16) {
     }
 }
 
+/// `GsSPRITE` attribute bits [hdr: libgs.h]: brightness (colour modulation) off, the colour mode
+/// (0 4-bit, 1 8-bit, 2 15-bit CLUT-less), the semi-transparency rate, semi-transparency on, and
+/// display off.
+const ATTR_BRIGHT_OFF: u32 = 1 << 6;
+const ATTR_COLOR_MODE: u32 = 3 << 24;
+const ATTR_ALPHA_RATE: u32 = 3 << 28;
+const ATTR_DISPLAY_OFF: u32 = 1 << 31;
+
+/// The attribute's draw-mode bits for a sprite's packets: the command's flags and the texture
+/// page word.
+///
+/// [obs] (`libgs-sprite-btl`: every combination of brightness off, colour modes 0-3, the four
+/// rates with and without `GsALON`, on both entry points and in every form): the packet's command
+/// gets bit 0 (raw texture) from brightness off and bit 1 (semi-transparent) from `GsALON`; the
+/// texture page word takes the page's position bits (0-4) from `tpage` and its rate (bits 5-6) and
+/// colour mode (bits 7-8) from the attribute, whether or not `GsALON` is set.
+fn sprite_mode(attribute: u32, tpage: u16) -> (u32, u32) {
+    let rate = (attribute & ATTR_ALPHA_RATE) >> 28;
+    let color_mode = (attribute & ATTR_COLOR_MODE) >> 24;
+    let mut flags = 0;
+    if attribute & ATTR_BRIGHT_OFF != 0 {
+        flags |= 1;
+    }
+    if attribute & ATTR_ALPHA_ON != 0 {
+        flags |= 2;
+    }
+    (flags, u32::from(tpage & 0x1F) | rate << 5 | color_mode << 7)
+}
+
+/// Whether a sprite draws at all, or `Err` for what hasn't been observed (the caller stops the
+/// program).
+///
+/// [obs] Display off (attribute bit 31) or a side of 0 draws nothing and leaves the work base, on
+/// both entry points, whatever the other fields. Attribute bits outside the ones above (bits
+/// 0-5, 7-23 and 26-27) and sides over 300 (the largest observed) haven't been observed.
+fn sprite_drawn(s: &GsSprite) -> Result<bool, &'static str> {
+    let known = ATTR_BRIGHT_OFF | ATTR_COLOR_MODE | ATTR_ALPHA_RATE | ATTR_ALPHA_ON | ATTR_DISPLAY_OFF;
+    if s.attribute & !known != 0 {
+        return Err("an unobserved attribute bit");
+    }
+    if s.w > 300 || s.h > 300 {
+        return Err("a side over 300 (unobserved)");
+    }
+    Ok(s.attribute & ATTR_DISPLAY_OFF == 0 && s.w != 0 && s.h != 0)
+}
+
+/// Writes one `SPRT` packet with its draw-mode word (six words with the tag) and links it at
+/// `slot`: `[len 5 | link]`, `E1000200 | page`, `(64 | flags) BBGGRR`, `yyyyxxxx`,
+/// `clut << 16 | v << 8 | u`, `h << 16 | w` [obs].
+unsafe fn write_sprt(slot: *mut u32, s: &GsSprite, flags: u32, page: u32, x: i32, y: i32) {
+    unsafe {
+        let pk = GsGetWorkBase().cast::<u32>();
+        let clut = u32::from(crate::libgpu::GetClut(s.cx.into(), s.cy.into()));
+        let rgb = u32::from(s.b) << 16 | u32::from(s.g) << 8 | u32::from(s.r);
+        pk.add(1).write(0xE100_0200 | page);
+        pk.add(2).write((0x64 | flags) << 24 | rgb);
+        pk.add(3).write((y as u16 as u32) << 16 | x as u16 as u32);
+        pk.add(4)
+            .write(clut << 16 | u32::from(s.v) << 8 | u32::from(s.u));
+        pk.add(5).write(u32::from(s.h) << 16 | u32::from(s.w));
+        link_in(slot, pk, 5);
+        GsSetWorkBase(pk.add(6).cast());
+    }
+}
+
 /// `GsSortSprite(sp, ot, pri)`: a textured sprite `w` by `h` whose reference point `(mx, my)`
 /// sits at `(x, y)`, from texture page `tpage` at `(u, v)` with the CLUT at `(cx, cy)`, drawn at
-/// priority `pri`, turned by `rotate` (1/4096 degrees, clockwise on screen) around that point
-/// [doc; obs].
+/// priority `pri`, scaled by `scalex`/`scaley` (4096 is 1.0) and turned by `rotate` (1/4096
+/// degrees, clockwise on screen) around that point [doc; obs].
 ///
-/// [obs] Unscaled sprites (`scalex` = `scaley` = 4096 meaning 1.0) with attribute 0 and colour
-/// 128/128/128 come in two forms, told apart by `rotate`:
-/// - `rotate` 0: one `SPRT` packet of five words: `[len 5 | link]`, `E1000200 | (tpage & 0x1F)`,
-///   `64BBGGRR`, `(y - my) << 16 | (x - mx)`, `clut << 16 | v << 8 | u`, `h << 16 | w`;
-/// - otherwise one `POLY_FT4` of nine words: `[len 9 | link]`, `2CBBGGRR`, then per corner (top
-///   left, top right, bottom left, bottom right) its XY and a texture word: the CLUT with
-///   `(u, v)`, then `(tpage & 0x1F) << 16` with `(u + w - 1, v)`, then `(u, v + h - 1)`, then
-///   `(u + w - 1, v + h - 1)`. The corner `(dx, dy)` from the reference point (`-mx` or
-///   `w - mx`, `-my` or `h - my`) is turned by the angle `a = rotate / 360` (truncating, in
-///   libgte's 4096-per-turn units) with `rcos`/`rsin`, through the GTE (see below). Checked
-///   against all 60 angles of the clock hand and 600 random rotations (`libgs-sprite`,
-///   `tests/libgs_sprite_oracle.rs`) and 49 captured calls.
+/// [obs] A sprite that isn't drawn (`sprite_drawn`) leaves the work base. Otherwise a sprite
+/// with `rotate` 0 and both scales 4096 is one `SPRT` (`write_sprt`) at `(x - mx, y - my)`; any
+/// other is one `POLY_FT4` of nine words: `[len 9 | link]`, `(2C | flags) BBGGRR`, then per corner
+/// (top left, top right, bottom left, bottom right) its XY and a texture word: the CLUT with
+/// `(u, v)`, then the texture page word (`sprite_mode`) << 16 with `(u + w - 1, v)`, then
+/// `(u, v + h - 1)`, then `(u + w - 1, v + h - 1)`. The corner `(dx, dy)` from the reference point
+/// (`-mx` or `w - mx`, `-my` or `h - my`) goes through the GTE (below) with the matrix of the turn
+/// by `a = rotate / 360` (truncating, in libgte's 4096-per-turn units: `rcos`/`rsin`), and when
+/// either scale isn't 4096, that matrix's columns multiplied by `scalex`, `scaley` and 0
+/// (`(m * s) >> 12`; so the third row's 4096 becomes 0). Checked against all 60 angles of the
+/// clock hand and 600 random rotations (`libgs-sprite`), 1,525 battle-set requests with scales,
+/// colours, every attribute combination and odd sizes (`libgs-sprite-btl`;
+/// `tests/libgs_sprite_oracle.rs`), and 49 captured calls.
 ///
-/// Scaling, blend and colour-mode bits, perspective, other colours, and sprites with a side of 0 or
-/// over 255 haven't been observed and stop the program.
+/// What `sprite_drawn` rejects hasn't been observed and stops the program.
 ///
 /// # Safety
 /// `sp` must be valid, `ot` an ordering table in the link window, and the work base a packet
@@ -198,56 +263,56 @@ pub unsafe extern "C" fn GsSortPoly(pp: *const u32, ot: *mut GsOt, pri: u16) {
 pub unsafe extern "C" fn GsSortSprite(sp: *const GsSprite, ot: *mut GsOt, pri: u16) {
     unsafe {
         let s = read_arg(sp);
-        if s.attribute != 0 {
-            unimplemented("GsSortSprite with an unobserved attribute (blend, colour mode, ...)");
+        match sprite_drawn(&s) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(what) => unimplemented(&format!("GsSortSprite with {what}")),
         }
-        if s.scalex != 4096 || s.scaley != 4096 {
-            unimplemented("GsSortSprite with scaling (unobserved)");
-        }
-        if (s.r, s.g, s.b) != (128, 128, 128) || s.w == 0 || s.h == 0 || s.w > 255 || s.h > 255 {
-            unimplemented("GsSortSprite with an unobserved colour or size");
-        }
+        let (flags, page) = sprite_mode(s.attribute, s.tpage);
         let slot = entry("GsSortSprite", ot, pri);
-        let pk = GsGetWorkBase().cast::<u32>();
-        let clut = u32::from(crate::libgpu::GetClut(s.cx.into(), s.cy.into()));
-        let rgb = u32::from(s.b) << 16 | u32::from(s.g) << 8 | u32::from(s.r);
-        let xy = |x: i32, y: i32| (y as u16 as u32) << 16 | x as u16 as u32;
-        // [obs] Only the texture page's position bits (0-4) survive; its blend and colour-mode
-        // bits come from the attribute, which is 0 here.
-        let tpage = u32::from(s.tpage & 0x1F);
-        let (u, v) = (u32::from(s.u), u32::from(s.v));
-        if s.rotate == 0 {
-            let (x, y) = (
+        let scaled = s.scalex != 4096 || s.scaley != 4096;
+        if s.rotate == 0 && !scaled {
+            write_sprt(
+                slot,
+                &s,
+                flags,
+                page,
                 i32::from(s.x) - i32::from(s.mx),
                 i32::from(s.y) - i32::from(s.my),
             );
-            pk.add(1).write(0xE100_0200 | tpage);
-            pk.add(2).write(0x6400_0000 | rgb);
-            pk.add(3).write(xy(x, y));
-            pk.add(4).write(clut << 16 | v << 8 | u);
-            pk.add(5).write(u32::from(s.h) << 16 | u32::from(s.w));
-            link_in(slot, pk, 5);
-            GsSetWorkBase(pk.add(6).cast());
             return;
         }
-        // [obs] The corners go through the GTE: RT is the turn about the Z axis, TR is the
-        // sprite's position with Z set to the projection distance H (so H / SZ3 is exactly 1,
-        // and with OFX = OFY = 0, as the game leaves them, SXY is the turned point), RTPT on the
-        // first three corners, RTPS on the fourth. The GTE registers it leaves (RT, TR, the
-        // vertices, the screen FIFO) are the SDK's: the rotation matrix and translation are
+        let pk = GsGetWorkBase().cast::<u32>();
+        let clut = u32::from(crate::libgpu::GetClut(s.cx.into(), s.cy.into()));
+        let rgb = u32::from(s.b) << 16 | u32::from(s.g) << 8 | u32::from(s.r);
+        let (u, v) = (u32::from(s.u), u32::from(s.v));
+        // [obs] The corners go through the GTE: RT is the (scaled) turn about the Z axis, TR is
+        // the sprite's position with Z set to the projection distance H (so H / SZ3 is exactly
+        // 1, and with OFX = OFY = 0, as the game leaves them, SXY is the transformed point), RTPT
+        // on the first three corners, RTPS on the fourth. The GTE registers it leaves (RT, TR,
+        // the vertices, the screen FIFO) are the SDK's: the rotation matrix and translation are
         // compared against the captures, the data registers are scratch.
         let angle = s.rotate / 360;
         let (c, sn) = (crate::libgte::rcos(angle), crate::libgte::rsin(angle));
+        let mut m = [[c, -sn, 0], [sn, c, 0], [0, 0, 0x1000]];
+        if scaled {
+            let scale = [i32::from(s.scalex), i32::from(s.scaley), 0];
+            for row in &mut m {
+                for (e, k) in row.iter_mut().zip(scale) {
+                    *e = (*e * k) >> 12;
+                }
+            }
+        }
         let (w, h) = (i32::from(s.w), i32::from(s.h));
         let (mx, my) = (i32::from(s.mx), i32::from(s.my));
         let corners = [(-mx, -my), (w - mx, -my), (-mx, h - my), (w - mx, h - my)];
         let half = |lo: i32, hi: i32| (hi as u16 as u32) << 16 | lo as u16 as u32;
         let sxy = crate::gte::with(|g| {
-            g.ctc2(0, half(c, -sn));
-            g.ctc2(1, half(0, sn));
-            g.ctc2(2, half(c, 0));
-            g.ctc2(3, 0);
-            g.ctc2(4, 0x1000);
+            g.ctc2(0, half(m[0][0], m[0][1]));
+            g.ctc2(1, half(m[0][2], m[1][0]));
+            g.ctc2(2, half(m[1][1], m[1][2]));
+            g.ctc2(3, half(m[2][0], m[2][1]));
+            g.ctc2(4, m[2][2] as u16 as u32);
             g.ctc2(5, i32::from(s.x) as u32);
             g.ctc2(6, i32::from(s.y) as u32);
             let proj = g.cfc2(26);
@@ -271,16 +336,41 @@ pub unsafe extern "C" fn GsSortSprite(sp: *const GsSprite, ot: *mut GsOt, pri: u
             u.wrapping_add(w as u32 - 1) & 0xFF,
             v.wrapping_add(h as u32 - 1) & 0xFF,
         );
-        pk.add(1).write(0x2C00_0000 | rgb);
+        pk.add(1).write((0x2C | flags) << 24 | rgb);
         pk.add(2).write(sxy[0]);
         pk.add(3).write(clut << 16 | v << 8 | u);
         pk.add(4).write(sxy[1]);
-        pk.add(5).write(tpage << 16 | v << 8 | u1);
+        pk.add(5).write(page << 16 | v << 8 | u1);
         pk.add(6).write(sxy[2]);
         pk.add(7).write(v1 << 8 | u);
         pk.add(8).write(sxy[3]);
         pk.add(9).write(v1 << 8 | u1);
         link_in(slot, pk, 9);
         GsSetWorkBase(pk.add(10).cast());
+    }
+}
+
+/// `GsSortFastSprite(sp, ot, pri)`: `GsSortSprite` without rotation, scaling or a reference
+/// point [doc; obs].
+///
+/// [obs] (`libgs-sprite-btl`, 470 requests): always one `SPRT` (`write_sprt`) with its top left
+/// corner at `(x, y)`; `mx`, `my`, `scalex`, `scaley` and `rotate` are ignored, the attribute bits
+/// act as in `GsSortSprite`, and the same sprites aren't drawn (`sprite_drawn`; the battle's
+/// gauges pass a width of 0 when empty). What `sprite_drawn` rejects stops the program.
+///
+/// # Safety
+/// As `GsSortSprite`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn GsSortFastSprite(sp: *const GsSprite, ot: *mut GsOt, pri: u16) {
+    unsafe {
+        let s = read_arg(sp);
+        match sprite_drawn(&s) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(what) => unimplemented(&format!("GsSortFastSprite with {what}")),
+        }
+        let (flags, page) = sprite_mode(s.attribute, s.tpage);
+        let slot = entry("GsSortFastSprite", ot, pri);
+        write_sprt(slot, &s, flags, page, s.x.into(), s.y.into());
     }
 }

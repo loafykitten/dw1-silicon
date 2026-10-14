@@ -217,7 +217,49 @@ fn main() {
         );
         return;
     }
+    // The overlays' initialised data as linked, for their reloads (decomp_c::overlays).
+    decomp_c::overlays::snapshot();
     // The game's main() never returns on the PS1.
     let status = unsafe { decomp_c::dw1_game_main() };
     eprintln!("dw1: the game's main() returned {status}");
+}
+
+/// Overlay data lifetimes (decomp_c::overlays), in this binary because it links every overlay
+/// object the way the app does.
+#[cfg(test)]
+mod overlay_tests {
+    #[test]
+    fn every_overlay_has_a_section_and_reset_restores_it() {
+        use decomp_c::overlays::{dw1_overlay_reset, section_info, sections, snapshot};
+        snapshot();
+        let found = sections();
+        // Every overlay unit but SHOP (resident) has initialised data.
+        let ids: Vec<u32> = found.iter().map(|s| s.0).collect();
+        for id in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16] {
+            assert!(ids.contains(&id), "overlay {id} has no data section: {found:?}");
+        }
+        // BTL's resident initialised variables (its section's size depends on what the linker
+        // keeps: the test binary dead-strips the game code that uses most of the data).
+        let btl = found.iter().find(|s| s.0 == 1).unwrap();
+        assert!(btl.1 > 0 && btl.2 >= 20, "BTL section {btl:?}");
+        // A reset puts the linked bytes back but keeps the resident variables' values.
+        let (start, len, keeps) = section_info(1).unwrap();
+        let kept_byte = |p: *mut u8| keeps.iter().any(|&(a, n)| p >= a && (p as usize) < a as usize + n);
+        unsafe {
+            let (kept, _) = keeps[0];
+            let old_kept = kept.read();
+            kept.write(old_kept ^ 0xA5);
+            let probe = (0..len).map(|i| start.add(i)).find(|&p| !kept_byte(p));
+            let old_probe = probe.map(|p| p.read());
+            if let Some(p) = probe {
+                p.write(old_probe.unwrap() ^ 0x5A);
+            }
+            dw1_overlay_reset(1);
+            if let Some(p) = probe {
+                assert_eq!(p.read(), old_probe.unwrap(), "reset didn't restore the section");
+            }
+            assert_eq!(kept.read(), old_kept ^ 0xA5, "reset didn't keep the resident variable");
+            kept.write(old_kept);
+        }
+    }
 }

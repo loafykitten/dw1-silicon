@@ -11,8 +11,9 @@
 //! equal kind, and calls the function the game installed in `GsFCALL4` for each run, exactly as
 //! the SDK does; a kind whose slot is empty stops the program. The handlers live here too:
 //! `GsTMDfastTG3L` and `GsTMDfastTG4L` (light-calculated, Gouraud, textured triangles and quads)
-//! are what the characters' models use. The other `GsTMD*` handlers are trapping stubs
-//! (`stubs.rs`) until a capture exercises them.
+//! are what the characters' models use; `GsTMDfastTNF4` (unlit, flat, textured quads) is what
+//! the battle's effect models use (Phase 5, `s4j-btl-effect`). The other `GsTMD*` handlers are
+//! trapping stubs (`stubs.rs`) until a capture exercises them.
 //!
 //! Natively the pieces are native objects: the `GsDOBJ2` has a native layout, its TMD record and
 //! the primitive data hold 32-bit encoded pointers (`memory::ptr32_of`), the packet area is
@@ -177,6 +178,21 @@ unsafe fn check_indices(
 ) {
     // Lit Gouraud textured triangles and quads: (normal, vertex) halfword pairs after the
     // header and one texture word per vertex. [doc: TMD primitive layouts]
+    if (mode & !0x03, flag & 1) == (0x2C, 1) {
+        // Unlit flat textured quads: four vertex halfwords after the header, four texture
+        // words and the colour word. [doc]
+        for i in 0..n {
+            let idx = unsafe { op.add(i * (1 + words) + 6).cast::<u16>() };
+            for k in 0..4 {
+                let vertex = usize::from(unsafe { idx.add(k).read() });
+                if vertex >= n_vert {
+                    eprintln!("psyq: TMD primitive {i} of a run: vertex {vertex} of {n_vert}");
+                    unimplemented("GsSortObject4J on a primitive indexing past its TMD lists");
+                }
+            }
+        }
+        return;
+    }
     let nv = match (mode & !0x03, flag & 1) {
         (0x34, 0) => 3,
         (0x3C, 0) => 4,
@@ -237,6 +253,100 @@ pub unsafe extern "C" fn GsTMDfastTG4L(
     _scratch: *mut u32,
 ) -> *mut u32 {
     unsafe { crate::gte::with(|gte| tg_run(gte, 4, op, vp, np, pk, n, shift, ot)) }
+}
+
+/// `GsTMDfastTNF4`: a run of unlit, flat, textured quads (flag 1: no light calculation,
+/// one-sided).
+///
+/// [doc] A primitive is a header word, the four vertices' texture words (u, v, and the CLUT in
+/// the first's high half, the texture page in the second's), the colour word (r, g, b), then
+/// the four vertex indices as halfwords, the first at the lower address. [obs] (`s4j-btl-effect`:
+/// 20 primitives of mode 0x2F, 12 drawn) The first three vertices go through RTPT and NCLIP, a
+/// result of 0 or less drops the quad, the fourth through RTPS, then AVSZ4 gives the OTZ. The
+/// packet is a `POLY_FT4`: the colour with command 0x2E (mode 0x2F loses its bit 0), then per
+/// vertex its screen XY and its texture word as stored; it goes at the head of entry
+/// `OTZ >> shift`. Only mode 0x2F has been observed; any other mode or flag stops the program.
+///
+/// # Safety
+/// As [`GsTMDfastTG3L`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn GsTMDfastTNF4(
+    op: *const u32,
+    vp: *const Vert,
+    _np: *const Vert,
+    pk: *mut u32,
+    n: i32,
+    shift: i32,
+    ot: *mut GsOt,
+    _scratch: *mut u32,
+) -> *mut u32 {
+    unsafe { crate::gte::with(|gte| tnf4_run(gte, op, vp, pk, n, shift, ot)) }
+}
+
+unsafe fn tnf4_run(
+    gte: &mut Gte,
+    mut op: *const u32,
+    vp: *const Vert,
+    mut pk: *mut u32,
+    n: i32,
+    shift: i32,
+    ot: *mut GsOt,
+) -> *mut u32 {
+    unsafe {
+        let ot_entries = 1u32.checked_shl((*ot).length).unwrap_or(0);
+        let ot_org = (*ot).org;
+        for _ in 0..n {
+            let header = op.read();
+            let tex = op.add(1);
+            let color = op.add(5).read();
+            let idx = op.add(6).cast::<u16>();
+            op = op.add(8);
+            if header >> 16 != 0x2F01 {
+                eprintln!(
+                    "psyq: TMD mode {:#04x} flag {:#04x} in the TNF4 handler",
+                    header >> 24,
+                    (header >> 16) & 0xFF
+                );
+                unimplemented("GsTMDfastTNF4 with an unobserved mode or flag");
+            }
+            let vertex = |k: usize| &*vp.add(usize::from(idx.add(k).read()));
+            for k in 0..3 {
+                let (xy, z) = pair(vertex(k));
+                gte.mtc2(dreg::VXY0 + 2 * k, xy);
+                gte.mtc2(dreg::VZ0 + 2 * k, z);
+            }
+            gte.execute(cmd::RTPT);
+            gte.execute(cmd::NCLIP);
+            if gte.mfc2(dreg::MAC0) as i32 <= 0 {
+                continue;
+            }
+            let mut sxy = [0u32; 4];
+            for (k, s) in sxy.iter_mut().take(3).enumerate() {
+                *s = gte.mfc2(dreg::SXY0 + k);
+            }
+            let (xy, z) = pair(vertex(3));
+            gte.mtc2(dreg::VXY0, xy);
+            gte.mtc2(dreg::VZ0, z);
+            gte.execute(cmd::RTPS);
+            sxy[3] = gte.mfc2(dreg::SXY2);
+            gte.execute(cmd::AVSZ4);
+            let ot_index = gte.mfc2(dreg::OTZ) >> shift;
+            if ot_index >= ot_entries {
+                unimplemented("GsTMDfastTNF4 with OTZ past the ordering table");
+            }
+            pk.add(1).write(0x2E00_0000 | (color & 0x00FF_FFFF));
+            for (k, &xy) in sxy.iter().enumerate() {
+                pk.add(2 + 2 * k).write(xy);
+                pk.add(3 + 2 * k).write(tex.add(k).read());
+            }
+            let slot = ot_org.add(ot_index as usize);
+            let old = slot.read();
+            pk.write(9 << 24 | (old & 0x00FF_FFFF));
+            slot.write((old & 0xFF00_0000) | link_of(pk.cast()));
+            pk = pk.add(10);
+        }
+        pk
+    }
 }
 
 /// The transformation of one vertex from a TMD list as the GTE's packed (XY, Z) register pair.

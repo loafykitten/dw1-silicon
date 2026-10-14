@@ -12,9 +12,13 @@
 //! **Timing:** every command completes at once and deterministically: `CdRead` copies its
 //! sectors into the caller's buffer before returning and `CdReadSync` reports done. The
 //! PS1's drive takes tens of milliseconds to seek and reads at 75 (or 150) sectors a second,
-//! and the game's frames between a request and its completion (the file queue's states) depend
-//! on that; a replay that has to stay in step with Redux's CD timing will need completions
-//! scheduled on the VBlank clock instead (docs/phase2-plan.md, "Time").
+//! and the game keeps running while it waits: the file queue checks `CdReadSync(1, NULL)` once a
+//! frame, and a battle's loading loop moves the fighters and polls the pad every frame until its
+//! overlay has arrived, so a read's length changes the game's state. Replays recorded with CD
+//! timing (`oracle/replay.lua` format 2) carry, per read, how many non-blocking `CdReadSync`
+//! calls the PS1 answered "still reading"; [`set_read_schedule`] makes `CdReadSync` answer the
+//! same, and checks each read starts at the recorded poll. Without a schedule (play, format 1
+//! replays) reads finish at once.
 //!
 //! Rules are tagged `[doc]` (psx-spx's CDROM chapters, the API reference and header comments)
 //! or `[obs]` (what the game's call sites show it relies on).
@@ -441,23 +445,164 @@ pub unsafe extern "C" fn CdControlB(com: u8, param: *const u8, result: *mut u8) 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn CdRead(sectors: i32, buf: *mut u8, mode: i32) -> i32 {
     let sectors = usize::try_from(sectors).unwrap_or(0);
-    with_drive("CdRead", |d| {
+    let started = with_drive("CdRead", |d| {
         let mode = mode as u8;
         let out = unsafe { std::slice::from_raw_parts_mut(buf, sectors * d.sector_size(mode)) };
         d.read(sectors, mode, out)?;
         Ok(1)
-    })
+    });
+    let polls = crate::libetc::polls();
+    let mut schedule = SCHEDULE.lock().unwrap();
+    if std::env::var_os("DW1_CD_LOG").is_some() {
+        let k = schedule.as_ref().map_or(0, |s| s.next);
+        eprintln!("dw1: CD read {k} at poll {polls}, {sectors} sectors");
+    }
+    if let Some(s) = schedule.as_mut()
+        && let Err(e) = s.start(polls, sectors as u32)
+    {
+        replay_diverged(&e);
+    }
+    started
 }
 
-/// `CdReadSync(mode, result)`: 0 when the last read has finished (always, here), else the
-/// sectors still to read, or -1 on an error. `result` receives the status byte. [doc: API
-/// reference]
+/// One read of a replay's CD timing: the poll it started at (polls done), how many
+/// non-blocking `CdReadSync` calls answered "still reading", and its sector count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordedRead {
+    pub issue: u32,
+    pub busy: u32,
+    pub sectors: u32,
+}
+
+/// A replay's CD timing: per read, the poll it starts at and how many non-blocking
+/// `CdReadSync` calls answer "still reading" (module docs).
+struct ReadSchedule {
+    reads: Vec<RecordedRead>,
+    next: usize,
+    busy_left: u32,
+}
+
+impl ReadSchedule {
+    /// The game started its next read with `polls` polls done; Err if the recording's read
+    /// started elsewhere, there is none, or the last read's busy answers weren't all given (the
+    /// run has diverged).
+    fn start(&mut self, polls: u32, sectors: u32) -> Result<(), String> {
+        let Some(&RecordedRead {
+            issue,
+            busy,
+            sectors: want_sectors,
+        }) = self.reads.get(self.next)
+        else {
+            return Err(format!(
+                "CD read {} started at poll {polls}, past the {} recorded reads",
+                self.next,
+                self.reads.len()
+            ));
+        };
+        if self.busy_left > 0 {
+            return Err(format!(
+                "CD read {} started with {} of read {}'s recorded busy answers unused",
+                self.next,
+                self.busy_left,
+                self.next - 1
+            ));
+        }
+        if issue != polls || want_sectors != sectors {
+            return Err(format!(
+                "CD read {} started at poll {polls} for {sectors} sectors, recorded at poll {issue} \
+                 for {want_sectors}",
+                self.next
+            ));
+        }
+        self.next += 1;
+        self.busy_left = busy;
+        Ok(())
+    }
+
+    /// A `CdReadSync(mode)`: Ok(true) to answer "still reading", Ok(false) for done; Err for a
+    /// blocking call while the PS1 still had busy answers for non-blocking ones (the calls
+    /// differ).
+    fn sync(&mut self, mode: i32) -> Result<bool, String> {
+        if self.busy_left == 0 {
+            return Ok(false);
+        }
+        if mode != 0 {
+            self.busy_left -= 1;
+            return Ok(true);
+        }
+        Err(format!(
+            "a blocking CdReadSync with {} of read {}'s recorded busy answers unused",
+            self.busy_left,
+            self.next - 1
+        ))
+    }
+
+    fn finished(&self) -> Result<(), String> {
+        if self.next < self.reads.len() {
+            return Err(format!(
+                "{} of the recording's {} CD reads were never started",
+                self.reads.len() - self.next,
+                self.reads.len()
+            ));
+        }
+        if self.busy_left > 0 {
+            return Err(format!(
+                "CD read {}'s last {} recorded busy answers were never given",
+                self.next - 1,
+                self.busy_left
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn replay_diverged(what: &str) -> ! {
+    eprintln!("dw1: divergence: {what}");
+    std::process::exit(1);
+}
+
+static SCHEDULE: Mutex<Option<ReadSchedule>> = Mutex::new(None);
+
+/// At a replay's end: Err if the recording has reads the port never started, or busy answers
+/// it never gave (the runs differ even if every checkpoint so far matched).
+pub fn read_schedule_finished() -> Result<(), String> {
+    SCHEDULE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(Ok(()), ReadSchedule::finished)
+}
+
+/// Gives replays the recorded CD timing, per read in order.
+pub fn set_read_schedule(reads: Vec<RecordedRead>) {
+    *SCHEDULE.lock().unwrap() = Some(ReadSchedule {
+        reads,
+        next: 0,
+        busy_left: 0,
+    });
+}
+
+/// `CdReadSync(mode, result)`: 0 when the last read has finished, else the sectors still to
+/// read, or -1 on an error; mode 0 waits for the end, any other mode returns at once. `result`
+/// receives the status byte. [doc: API reference]
+///
+/// Reads finish at once, so this is 0, but for a replay with CD timing (module docs): a
+/// non-blocking call answers 1 ("still reading") as many times as the PS1 did for that read; a
+/// blocking one ends the read.
 ///
 /// # Safety
 /// `result` must be NULL or point to at least one byte.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn CdReadSync(_mode: i32, result: *mut u8) -> i32 {
+pub unsafe extern "C" fn CdReadSync(mode: i32, result: *mut u8) -> i32 {
     with_drive("CdReadSync", |_| Ok(()));
+    if let Some(s) = SCHEDULE.lock().unwrap().as_mut() {
+        match s.sync(mode) {
+            // [obs] The game only tests the sign; the PS1's value (sectors to go) isn't recorded.
+            Ok(true) => return 1,
+            Ok(false) => {}
+            Err(e) => replay_diverged(&e),
+        }
+    }
     if !result.is_null() {
         unsafe { result.write(STATUS_IDLE) };
     }
@@ -721,5 +866,56 @@ mod tests {
         assert_eq!(unsafe { CdIntToPos(23, &mut pos) }, &raw mut pos);
         assert_eq!(pos, int_to_pos(23));
         assert!(unsafe { CdSearchFile(&mut file, c"\\NOPE;1".as_ptr()) }.is_null());
+    }
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+
+    fn schedule(reads: &[(u32, u32, u32)]) -> ReadSchedule {
+        ReadSchedule {
+            reads: reads
+                .iter()
+                .map(|&(issue, busy, sectors)| RecordedRead {
+                    issue,
+                    busy,
+                    sectors,
+                })
+                .collect(),
+            next: 0,
+            busy_left: 0,
+        }
+    }
+
+    #[test]
+    fn busy_answers_follow_the_recording() {
+        let mut s = schedule(&[(5, 2, 10), (9, 0, 1)]);
+        assert!(s.start(4, 10).is_err(), "wrong poll");
+        let mut s = schedule(&[(5, 2, 10), (9, 0, 1)]);
+        assert!(s.start(5, 11).is_err(), "wrong sector count");
+        let mut s = schedule(&[(5, 2, 10), (9, 0, 1)]);
+        s.start(5, 10).unwrap();
+        assert_eq!(s.sync(1), Ok(true));
+        assert!(s.finished().is_err(), "a busy answer left");
+        assert_eq!(s.sync(1), Ok(true));
+        assert_eq!(s.sync(1), Ok(false));
+        assert!(s.finished().is_err(), "a read left");
+        s.start(9, 1).unwrap();
+        assert_eq!(s.sync(0), Ok(false));
+        assert_eq!(s.finished(), Ok(()));
+        assert!(s.start(12, 1).is_err(), "past the recorded reads");
+    }
+
+    #[test]
+    fn unused_busy_answers_are_a_divergence() {
+        // A blocking wait while the PS1 still answered "busy" to non-blocking calls.
+        let mut s = schedule(&[(0, 1, 4), (3, 0, 4)]);
+        s.start(0, 4).unwrap();
+        assert!(s.sync(0).is_err());
+        // The next read starting before the busy answers were given.
+        let mut s = schedule(&[(0, 1, 4), (0, 0, 4)]);
+        s.start(0, 4).unwrap();
+        assert!(s.start(0, 4).is_err());
     }
 }

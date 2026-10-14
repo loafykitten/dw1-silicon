@@ -11,7 +11,8 @@
 --
 -- Env (all optional):
 --   DW1_SHOTS=first:last:step   screenshots shot_<vblank>.raw/.txt (oracle/raw2png.py)
---   DW1_CAPTURE_FUNCS=A,B,...   functions to record (names from decomp/config/us/symbols.txt)
+--   DW1_CAPTURE_FUNCS=A,B,...   functions to record (names from decomp/config/us/symbols*.txt;
+--                               an overlay's only while it's loaded)
 --   DW1_CAPTURE_FROM=<vblank>   arm the breakpoints at this VBlank (default 2000)
 --   DW1_CAPTURE_VBLANKS=<n>     window length (default 2)
 --   DW1_CAPTURE_MAX=<n>         most calls recorded (default 400)
@@ -21,6 +22,8 @@
 --                               attribute and the (mode/flag) histogram of its TMD primitives
 --   DW1_CAPTURE_VRAM=0          skip the per-VBlank VRAM dumps (long windows)
 --   DW1_CAPTURE_DEREF=1         append the words at a1 and a2 after each call (MemCardSync's cmd/result)
+--   DW1_CAPTURE_ARG0_BYTES=<n>  append the n bytes at a0 at entry (RAM or scratchpad), in hex, after v0
+--                               (a GsSPRITE is 36)
 --   DW1_CAPTURE_STOP=<vblank>   end the run here (default: after the window and the last shot),
 --                               once every recorded call has returned
 --   DW1_CAPTURE_GRACE=<n>       VBlanks to wait for those returns before failing (default 600)
@@ -61,14 +64,34 @@ local MAX_CALLS = num('DW1_CAPTURE_MAX', 400)
 local STATES = os.getenv('DW1_CAPTURE_STATES') == '1'
 local DEREF = os.getenv('DW1_CAPTURE_DEREF') == '1'
 local KINDS = os.getenv('DW1_CAPTURE_KINDS') == '1'
+local ARG0_BYTES = num('DW1_CAPTURE_ARG0_BYTES', 0)
 local kindLines = {}
+
+-- The n bytes at a PS1 address in main RAM or the scratchpad, as a 0-based Lua table, or nil.
+local function argBytes(addr, n)
+    local src
+    if addr >= 0x80000000 and (addr % 0x80000000) + n <= 0x200000 then
+        src = ffi.cast('uint8_t*', PCSX.getMemPtr()) + (addr % 0x80000000)
+    elseif addr >= 0x1F800000 and addr + n <= 0x1F800400 then
+        src = ffi.cast('uint8_t*', PCSX.getScratchPtr()) + (addr - 0x1F800000)
+    else
+        return nil
+    end
+    local t = {}
+    for i = 0, n - 1 do t[i] = src[i] end
+    return t
+end
 
 -- A GsDOBJ2's attribute and the histogram of its TMD object's primitive modes (TMD layout from
 -- psx-spx; primitives are stored in runs after GsLinkObject4, a run header has ilen 0).
 local function describeObject(objp)
     local mem = ffi.cast('uint8_t*', PCSX.getMemPtr())
     local function r32(a) return ffi.cast('uint32_t*', mem + (a % 0x200000))[0] end
-    local attr, tmd = r32(objp), r32(objp + 8)
+    -- the object itself may sit in the scratchpad (the battle's are built there)
+    local obj = argBytes(objp, 12)
+    if not obj then return 'attr=? (object outside RAM and scratchpad)' end
+    local function o32(i) return obj[i] + obj[i + 1] * 256 + obj[i + 2] * 65536 + obj[i + 3] * 16777216 end
+    local attr, tmd = o32(0), o32(8)
     local npm, a = r32(tmd + 20), r32(tmd + 16)
     local left, hist = npm, {}
     while left > 0 do
@@ -99,16 +122,24 @@ local funcs = {}
 do
     local wanted = {}
     for name in (os.getenv('DW1_CAPTURE_FUNCS') or ''):gmatch('[^,%s]+') do wanted[name] = true end
-    local f = io.open(ROOT .. '/decomp/config/us/symbols.txt', 'r')
-    if not f then DW1ROUTE_FAIL('cannot read decomp/config/us/symbols.txt') end
-    for line in f:lines() do
-        local name, addr = line:match('^([%w_]+)%s*=%s*0x(%x+);')
-        if name and wanted[name] then
-            funcs[#funcs + 1] = { name = name, addr = tonumber(addr, 16) }
-            wanted[name] = nil
+    -- Main's symbols, then the overlays' (an overlay function's breakpoint only means something
+    -- while that overlay is loaded).
+    for _, list in ipairs({ 'symbols', 'symbols_btl', 'symbols_std', 'symbols_vs', 'symbols_trn',
+        'symbols_trn2', 'symbols_evl', 'symbols_fish', 'symbols_kar', 'symbols_doo2', 'symbols_dooa',
+        'symbols_dget', 'symbols_eab', 'symbols_endi', 'symbols_murd', 'symbols_mov' }) do
+        local f = io.open(ROOT .. '/decomp/config/us/' .. list .. '.txt', 'r')
+        if not f and list == 'symbols' then DW1ROUTE_FAIL('cannot read decomp/config/us/symbols.txt') end
+        if f then
+            for line in f:lines() do
+                local name, addr = line:match('^([%w_]+)%s*=%s*0x(%x+);')
+                if name and wanted[name] then
+                    funcs[#funcs + 1] = { name = name, addr = tonumber(addr, 16) }
+                    wanted[name] = nil
+                end
+            end
+            f:close()
         end
     end
-    f:close()
     for name in pairs(wanted) do DW1ROUTE_FAIL('no symbol ' .. name) end
 end
 
@@ -147,7 +178,7 @@ local function finish()
     done = true
     for _, bp in ipairs(entryBps) do bp:remove() end
     local lines = { '# n vblank name a0 a1 a2 a3 sp ra v0\n' }
-    for i = 1, #index do lines[#lines + 1] = index[i].line .. ' ' .. (index[i].v0 or '-') .. '\n' end
+    for i = 1, #index do lines[#lines + 1] = index[i].line .. ' ' .. (index[i].v0 or '-') .. (index[i].a0hex or '') .. '\n' end
     DW1ROUTE_WRITE('calls.txt', table.concat(lines))
     if KINDS then DW1ROUTE_WRITE('kinds.txt', table.concat(kindLines)) end
     print(string.format('DW1CAPTURE done calls=%d vblank=%d', calls, vblank))
@@ -162,6 +193,14 @@ local function onEntry(fn)
         local r = PCSX.getRegisters().GPR.n
         local rec = { line = string.format('%04d %d %s %08x %08x %08x %08x %08x %08x',
             n, vblank, fn.name, r.a0, r.a1, r.a2, r.a3, r.sp, r.ra) }
+        if ARG0_BYTES > 0 then
+            local b = argBytes(r.a0, ARG0_BYTES)
+            if b then
+                local hex = {}
+                for i = 0, ARG0_BYTES - 1 do hex[#hex + 1] = string.format('%02x', b[i]) end
+                rec.a0hex = ' a0=' .. table.concat(hex)
+            end
+        end
         index[#index + 1] = rec
         if KINDS and fn.name == 'GsSortObject4J' then
             kindLines[#kindLines + 1] = string.format('%04d %d shift=%d %s\n', n, vblank, r.a2,

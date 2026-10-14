@@ -49,8 +49,18 @@ struct Checkpoints {
     final_done: bool,
 }
 
-/// Poll interval of the `every<N>` checkpoints.
-const CHECKPOINT_EVERY: usize = 600;
+/// Poll interval of the `every<N>` checkpoints: 600, like `oracle/replay.lua`, or
+/// `DW1_CHECKPOINT_EVERY` (the Lua's `DW1REPLAY_EVERY`) to find where a run diverges.
+fn checkpoint_every() -> usize {
+    static EVERY: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *EVERY.get_or_init(|| {
+        std::env::var("DW1_CHECKPOINT_EVERY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(600)
+    })
+}
 
 impl Checkpoints {
     fn write(&mut self, out: &std::path::Path, why: &str, poll: usize, vblank: u32) {
@@ -88,7 +98,7 @@ impl Checkpoints {
                 self.last[i] = Some(now[i]);
             }
         }
-        if poll > 0 && poll.is_multiple_of(CHECKPOINT_EVERY) {
+        if poll > 0 && poll.is_multiple_of(checkpoint_every()) {
             self.write(out, &format!("every{poll}"), poll, vblank);
         }
     }
@@ -184,6 +194,9 @@ impl Headless {
                 r.check_cards()?;
                 Ok(r)
             });
+            if let Ok(Some(reads)) = replay.as_ref().map(|r| r.cd_reads.clone()) {
+                psyq::libcd::set_read_schedule(reads);
+            }
             replay.unwrap_or_else(|e| {
                 eprintln!("dw1: {e}");
                 std::process::exit(2);
@@ -269,6 +282,10 @@ impl psyq::libetc::Host for Headless {
             if let Some(note) = replay.timing_note() {
                 eprintln!("dw1: {note}");
             }
+            if let Err(e) = psyq::libcd::read_schedule_finished() {
+                eprintln!("dw1: divergence: {e}");
+                std::process::exit(1);
+            }
             std::process::exit(0);
         }
         if self.stop_at == Some(vblank) {
@@ -332,7 +349,11 @@ impl psyq::libetc::Host for Headless {
                 if let Some(note) = replay.timing_note() {
                     eprintln!("dw1: {note}");
                 }
-                let ok = replay.polls_done() == replay.polls.len();
+                let mut ok = replay.polls_done() == replay.polls.len();
+                if ok && let Err(e) = psyq::libcd::read_schedule_finished() {
+                    eprintln!("dw1: divergence: {e}");
+                    ok = false;
+                }
                 std::process::exit(if ok { 0 } else { 1 });
             }
         }

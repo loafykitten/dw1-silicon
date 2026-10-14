@@ -15,6 +15,9 @@
 //!   resolve (in `psyq`, or here), and a build check fails if the game C would bind to a
 //!   macOS libc function instead of the PS1 one.
 
+#[path = "overlays.rs"]
+mod overlays;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -64,6 +67,7 @@ const BOUND_HEADERS: &[&str] = &[
     "dw/entity.h",
     "dw/script.h",
     "dw/item.h",
+    "dw/combat.h",
 ];
 
 fn main() {
@@ -131,9 +135,17 @@ fn main() {
         // Noise from matching-decomp style, not ABI hazards (docs/phase1-report.md).
         .flag("-Wno-unknown-pragmas")
         .flag("-Wno-unused-parameter");
+    // Overlay files whose initialised data the PS1 reloads with the overlay are compiled
+    // through wrappers into a second archive (overlays.rs).
+    let overlay_build_base = build.clone();
+    let mut overlay_build = build.clone();
+    let overlay_data = overlays::overlay_data_files(&decomp);
+    let resident = overlays::resident_names(&decomp);
+    let wrappers_dir = out.join("overlays");
+    let mut overlay_files: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let texts: Vec<(PathBuf, String)> = sources
         .iter()
-        .map(|rel| {
+        .map(|(_, rel)| {
             let path = decomp.join(rel);
             let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel}: {e}"));
             (path, text)
@@ -145,24 +157,54 @@ fn main() {
             .iter()
             .flat_map(|(_, text)| literals::literal_chars(text)),
     );
-    for ((path, text), rel) in texts.iter().zip(&sources) {
-        match literals::encode_literals(text, rel, &mut |c| cp932.get(&c).cloned()) {
-            None => {
-                build.file(path);
-            }
+    for ((path, text), (unit, rel)) in texts.iter().zip(&sources) {
+        let file = match literals::encode_literals(text, rel, &mut |c| cp932.get(&c).cloned()) {
+            None => path.clone(),
             Some(encoded) => {
                 let copy = objects_dir.join(rel);
                 fs::create_dir_all(copy.parent().unwrap()).unwrap();
                 // Diagnostics and debug info keep pointing at the original file.
                 let body = format!("#line 1 \"{}\"\n{encoded}", path.display());
                 write_if_changed(&copy, &body);
-                build.file(&copy);
+                copy
             }
+        };
+        let is_overlay = overlays::OVERLAY_IDS.iter().any(|(u, _)| u == unit);
+        if is_overlay && overlay_data.contains(rel) {
+            // The file's file-scope definitions, from its preprocessed text (so definitions
+            // built by macros count).
+            let pre = Command::new(overlay_build_base.get_compiler().path())
+                .args(["-E", "-P", "-std=gnu99", "-fsigned-char"])
+                .args(&cpp_args)
+                .arg(&file)
+                .output()
+                .unwrap_or_else(|e| panic!("preprocessing {rel}: {e}"));
+            assert!(
+                pre.status.success(),
+                "preprocessing {rel}: {}",
+                String::from_utf8_lossy(&pre.stderr)
+            );
+            let defs = overlays::top_level_definitions(&String::from_utf8_lossy(&pre.stdout))
+                .unwrap_or_else(|e| panic!("{rel}: {e}; overlays.rs can't keep it"));
+            let keeps = overlays::keeps(&defs, &resident);
+            let wrapper = wrappers_dir.join(rel);
+            fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
+            write_if_changed(&wrapper, &overlays::wrapper(unit, rel, &file, &keeps));
+            overlay_build.file(&wrapper);
+            overlay_files.entry(unit.to_string()).or_default().push(rel.clone());
+        } else {
+            build.file(&file);
         }
     }
+    let bounds = out.join("overlay_bounds.c");
+    write_if_changed(&bounds, &overlays::bounds_c(&overlay_files));
+    overlay_build.file(&bounds);
     build.compile("decomp");
+    overlay_build.compile("decomp_overlays");
+    write_if_changed(&out.join("overlays_table.rs"), &overlays::table(&overlay_files));
 
     check_host_symbols(&out.join("libdecomp.a"));
+    check_host_symbols(&out.join("libdecomp_overlays.a"));
 
     generate_bindings(&cpp_args, &out);
 
@@ -173,12 +215,15 @@ fn main() {
         decomp.join("text"),
         decomp.join("tools/gen_text.py"),
         decomp.join("mk/version/us.mk"),
+        decomp.join("config/us/overlay.ld"),
+        decomp.join("config/us/symbols.txt"),
         psyq_include,
         native_include,
     ] {
         println!("cargo:rerun-if-changed={}", dir.display());
     }
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=overlays.rs");
     println!("cargo:rerun-if-changed=src/literals.rs");
     println!("cargo:rerun-if-env-changed=DW1_WARNINGS");
     println!("cargo:rerun-if-env-changed=DW1_PYTHON");
@@ -200,8 +245,9 @@ fn preprocessor_args(include_dirs: &[&Path]) -> Vec<String> {
     args
 }
 
-/// The C files of every unit in `UNITS`, from the `<UNIT>_C_SRC := \` lists in `us.mk`.
-fn c_sources(decomp: &Path) -> Vec<String> {
+/// The C files of every unit in `UNITS`, from the `<UNIT>_C_SRC := \` lists in `us.mk`, with
+/// their unit.
+fn c_sources(decomp: &Path) -> Vec<(&'static str, String)> {
     let mk = fs::read_to_string(decomp.join("mk/version/us.mk")).unwrap();
     let mut sources = Vec::new();
     for unit in UNITS {
@@ -215,7 +261,7 @@ fn c_sources(decomp: &Path) -> Vec<String> {
                 break;
             }
             if !EXCLUDED.contains(&file) {
-                sources.push(file.to_string());
+                sources.push((*unit, file.to_string()));
             }
         }
         assert!(sources.len() > before, "us.mk lists no files for {unit}");
@@ -386,6 +432,7 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("PartnerPara")
         .allowlist_type("TamerEntity")
         .allowlist_type("PartnerEntity")
+        .allowlist_type("CombatData")
         .allowlist_type("PositionData")
         .allowlist_type("ScriptState")
         .allowlist_type("Inventory")

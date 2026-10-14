@@ -177,26 +177,38 @@ fn libgpu_capture() {
 
 /// Sets `cfg(have_libgs_sprite_capture)` when the `GsSortSprite` oracle run
 /// (`tools/oracle/sprite_requests.py`'s requests, `req.txt` and `results.txt`) exists:
-/// `DW1_LIBGS_SPRITE_CAPTURE`, default `<workspace>/captures/oracle-runs/libgs-sprite`. Without it
-/// `tests/libgs_sprite_oracle.rs` is ignored.
+/// `DW1_LIBGS_SPRITE_CAPTURE`, default `<workspace>/captures/oracle-runs/libgs-sprite`, and
+/// `cfg(have_libgs_sprite_btl_capture)` for its `--set battle` run (`DW1_LIBGS_SPRITE_BTL_CAPTURE`,
+/// default `libgs-sprite-btl`). Without them `tests/libgs_sprite_oracle.rs`'s tests are ignored.
 fn sprite_capture() {
-    println!("cargo::rustc-check-cfg=cfg(have_libgs_sprite_capture)");
-    println!("cargo::rerun-if-env-changed=DW1_LIBGS_SPRITE_CAPTURE");
-    let dir = match std::env::var_os("DW1_LIBGS_SPRITE_CAPTURE") {
+    request_run("have_libgs_sprite_capture", "DW1_LIBGS_SPRITE_CAPTURE", "libgs-sprite");
+    request_run(
+        "have_libgs_sprite_btl_capture",
+        "DW1_LIBGS_SPRITE_BTL_CAPTURE",
+        "libgs-sprite-btl",
+    );
+}
+
+/// Sets `cfg(<cfg>)` when an `oracle/call-sdk.lua` run's `req.txt` and `results.txt` exist in
+/// `$<env>`, default `<workspace>/captures/oracle-runs/<default>`.
+fn request_run(cfg: &str, env: &str, default: &str) {
+    println!("cargo::rustc-check-cfg=cfg({cfg})");
+    println!("cargo::rerun-if-env-changed={env}");
+    let dir = match std::env::var_os(env) {
         Some(d) => PathBuf::from(d),
-        None => {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs/libgs-sprite")
-        }
+        None => Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../captures/oracle-runs")
+            .join(default),
     };
     println!(
         "cargo::rerun-if-changed={}",
         dir.join("results.txt").display()
     );
     if dir.join("req.txt").exists() && dir.join("results.txt").exists() {
-        println!("cargo::rustc-cfg=have_libgs_sprite_capture");
+        println!("cargo::rustc-cfg={cfg}");
     } else {
         println!(
-            "cargo::warning=GsSortSprite oracle run not found ({}): tests/libgs_sprite_oracle.rs will be ignored",
+            "cargo::warning=oracle run not found ({}): tests needing cfg({cfg}) will be ignored",
             dir.display()
         );
     }

@@ -18,6 +18,18 @@
 --           should match; Redux is deterministic) but a mismatch is not an error by itself.
 --           Stops at the recorded final VBlank and fails if the poll count differs.
 --
+-- CD reads (format 2, Phase 5): native reads finish at once, but the game keeps running (and
+-- polling the pad) while the PS1's drive reads, so how long a read takes changes the game's state
+-- (battle loading moves the fighters every frame). Both modes hook libcd's CdRead (0x800B2BB4) and
+-- CdReadSync (0x800B2CB4) and count, per read that CdRead started (returned 1), the poll it was
+-- issued at, its sector count, and how many CdReadSync calls with a nonzero mode returned "still
+-- reading" (> 0) before it finished. A recording writes them as
+-- "cd <k> <issue poll> <busy count> <sectors>" lines
+-- between the header and the polls; a replay checks its own against them. An error result
+-- (< 0) fails the run (never seen). The port's CdReadSync answers "still reading" as many times
+-- (crates/psyq/src/libcd.rs). Reads made inside CdSearchFile (0x800B23C0: the SDK reading the
+-- disc's directory, which the port's CdSearchFile looks up in the pack instead) aren't counted.
+--
 -- Both modes write canonical state dumps (oracle/canonical-state.lua) into the cwd as
 -- ckpt_NNNN_<why>.bin/.txt: at every change of MAIN_STATE, GAME_STATE or CURRENT_SCREEN (checked
 -- at each poll return), every 600 polls, and "final". Run from a fresh empty directory under
@@ -37,9 +49,12 @@ local MODE = DW1REPLAY_MODE or os.getenv('DW1REPLAY_MODE') or 'record'
 local TARGET = DW1REPLAY_TARGET or os.getenv('DW1REPLAY_TARGET') or 'gameplay'
 local OUT = os.getenv('DW1REPLAY_OUT') or 'replay.txt'
 local FILE = os.getenv('DW1REPLAY_FILE') or (HERE .. '/replays/new-game.txt')
-local CHECKPOINT_EVERY = 600
+-- DW1REPLAY_EVERY changes the every-N-polls checkpoints (the port's DW1_CHECKPOINT_EVERY), to find
+-- where a run diverges.
+local CHECKPOINT_EVERY = tonumber(os.getenv('DW1REPLAY_EVERY') or '') or 600
 
 local PAD_READ = 0x80091BE8
+local CD_READ, CD_READ_SYNC, CD_SEARCH_FILE = 0x800B2BB4, 0x800B2CB4, 0x800B23C0
 local REDUX_COMMIT = '26bfd693'
 local BIOS_SHA1 = '649895efd79d14790eabb362e94eb0622093dfb9'
 local DISC_SHA1 = '5611645da66183e30d11fb6c11a2784ff47e1fdb'
@@ -69,7 +84,7 @@ local mem = ffi.cast('uint8_t*', PCSX.getMemPtr())
 local function ru8(addr) return mem[addr - 0x80000000] end
 
 -- Replay data (replay mode).
-local rec = { vblank = {}, value = {}, ra = {} }
+local rec = { vblank = {}, value = {}, ra = {}, cd = {} }
 local header = {}
 if MODE == 'replay' then
     local f, err = io.open(FILE, 'rb')
@@ -78,7 +93,11 @@ if MODE == 'replay' then
         if line:sub(1, 1) ~= '#' and line ~= '' then
             local k, v = line:match('^(%a[%w_]*)%s+(.*)$')
             local seq, vb, val, ra = line:match('^(%d+) (%d+) (%x+) (%x+)$')
-            if seq then
+            local ck, cissue, cbusy, csectors = line:match('^cd (%d+) (%d+) (%d+) (%d+)$')
+            if ck then
+                if tonumber(ck) ~= #rec.cd then fail('replay file: cd lines out of order at ' .. ck) return end
+                rec.cd[#rec.cd + 1] = { issue = tonumber(cissue), busy = tonumber(cbusy), sectors = tonumber(csectors) }
+            elseif seq then
                 local n = tonumber(seq)
                 if n ~= #rec.value then fail('replay file: poll lines out of order at ' .. seq) return end
                 rec.vblank[n + 1], rec.value[n + 1], rec.ra[n + 1] = tonumber(vb), tonumber(val, 16), tonumber(ra, 16)
@@ -88,7 +107,11 @@ if MODE == 'replay' then
         end
     end
     f:close()
-    if tonumber(header.format) ~= 1 then fail('replay file: unsupported format ' .. tostring(header.format)) return end
+    local fmt = tonumber(header.format)
+    if fmt ~= 1 and fmt ~= 2 then fail('replay file: unsupported format ' .. tostring(header.format)) return end
+    -- Format 1 recordings predate the CD lines: their reads aren't checked.
+    rec.checkCd = fmt == 2
+    if fmt == 2 and tonumber(header.cd_reads) ~= #rec.cd then fail('replay file: header says ' .. tostring(header.cd_reads) .. ' CD reads, found ' .. #rec.cd) return end
     if tonumber(header.polls) ~= #rec.value then fail('replay file: header says ' .. tostring(header.polls) .. ' polls, found ' .. #rec.value) return end
     if tonumber(header.final_vblank) == nil then fail('replay file: no final_vblank') return end
 end
@@ -167,7 +190,7 @@ end
 -- acts only when its address is the one the pending call will return to. Handles are kept
 -- referenced for the whole run: Redux removes a Lua breakpoint when its handle is
 -- garbage-collected.
-local entryBp
+local entryBp, cdReadBp, cdSyncBp, cdSearchBp
 local returnBps = {}
 local pendingRa = nil -- the caller address of the PadRead call whose return we are waiting for
 
@@ -228,6 +251,63 @@ local onEntry = guard(function()
     return true
 end)
 
+-- ---- CD read hooks (format 2) ----
+local cdReads = {}        -- { issue = poll, busy = count } per read CdRead started
+local cdReadRa, cdSyncRa, cdSyncMode, cdReadSectors = nil, nil, nil, nil
+local cdBps = {}          -- persistent return breakpoints, by function and return address
+local cdSearchRa = nil    -- set while CdSearchFile runs (its own directory reads aren't counted)
+
+local function cdReturn(kind, ra)
+    return guard(function()
+        if finished or failed then return true end
+        local v0 = tonumber(PCSX.getRegisters().GPR.n.v0)
+        if kind == 'search' then
+            if cdSearchRa == ra then cdSearchRa = nil end
+            return true
+        end
+        if cdSearchRa then return true end
+        if kind == 'read' then
+            if cdReadRa ~= ra then return true end
+            cdReadRa = nil
+            if v0 == 1 then cdReads[#cdReads + 1] = { issue = polls, busy = 0, sectors = cdReadSectors } end
+        else
+            if cdSyncRa ~= ra then return true end
+            cdSyncRa = nil
+            if v0 >= 0x80000000 then fail(string.format('CdReadSync returned an error (%d) at poll %d', v0 - 0x100000000, polls)) return true end
+            if cdSyncMode ~= 0 and v0 > 0 then
+                if #cdReads == 0 then fail('CdReadSync busy before any CdRead') return true end
+                cdReads[#cdReads].busy = cdReads[#cdReads].busy + 1
+            end
+        end
+        return true
+    end)
+end
+
+local function cdEntry(kind)
+    return guard(function()
+        if finished or failed then return true end
+        local r = PCSX.getRegisters().GPR.n
+        local ra = tonumber(r.ra)
+        if kind == 'search' then
+            if cdSearchRa then fail('CdSearchFile re-entered') return true end
+            cdSearchRa = ra
+        elseif cdSearchRa then
+            return true
+        elseif kind == 'read' then
+            if cdReadRa then fail('CdRead re-entered') return true end
+            cdReadRa, cdReadSectors = ra, tonumber(r.a0)
+        else
+            if cdSyncRa then fail('CdReadSync re-entered') return true end
+            cdSyncRa, cdSyncMode = ra, tonumber(r.a0)
+        end
+        local key = kind .. ra
+        if not cdBps[key] then
+            cdBps[key] = PCSX.addBreakpoint(ra, 'Exec', 4, string.format('%s return %08x', kind, ra), cdReturn(kind, ra))
+        end
+        return true
+    end)
+end
+
 -- ---- run control ----
 local function finish(v)
     if finished then return end
@@ -247,12 +327,25 @@ local function finish(v)
     -- new-game route); replay mode checks the poll count against the recording separately.
     if nret == 0 then print('DW1REPLAY note: no PadRead call was seen before the target') end
     if pendingRa then return fail(string.format('PadRead (caller 0x%08x) still pending at the end', pendingRa)) end
+    if not cdReadBp:isEnabled() or not cdSyncBp:isEnabled() or not cdSearchBp:isEnabled() then
+        return fail('a CD entry breakpoint is gone')
+    end
+    if cdSearchRa then return fail('CdSearchFile still running at the end') end
+    for key, bp in pairs(cdBps) do
+        if not bp:isEnabled() then return fail('CD return breakpoint ' .. key .. ' is gone') end
+    end
     entryBp:remove()
+    cdReadBp:remove()
+    cdSyncBp:remove()
+    cdSearchBp:remove()
+    local cdLines = {}
+    for k, r in ipairs(cdReads) do cdLines[k] = string.format('cd %d %d %d %d\n', k - 1, r.issue, r.busy, r.sectors) end
     if MODE == 'record' then
         local hdr = {
             '# dw1-silicon pad replay: PadRead (0x80091BE8) results keyed to poll sequence number.',
-            '# Pad states only, no game data. Lines after the header: seq vblank mask(hex) caller_ra(hex).',
-            'format 1',
+            '# Pad states only, no game data. Lines after the header: CD reads "cd k issue_poll busy_count sectors",',
+            '# then polls "seq vblank mask(hex) caller_ra(hex)".',
+            'format 2',
             'redux ' .. REDUX_COMMIT,
             'core interpreter',
             'gpu softgpu',
@@ -265,9 +358,10 @@ local function finish(v)
             'target ' .. TARGET,
             'final_vblank ' .. v,
             'polls ' .. #log,
+            'cd_reads ' .. #cdReads,
         }
-        write(OUT, table.concat(hdr, '\n') .. '\n' .. table.concat(log))
-        print(string.format('DW1REPLAY recorded polls=%d final_vblank=%d checkpoints=%d out=%s', #log, v, ckpt, OUT))
+        write(OUT, table.concat(hdr, '\n') .. '\n' .. table.concat(cdLines) .. table.concat(log))
+        print(string.format('DW1REPLAY recorded polls=%d cd_reads=%d final_vblank=%d checkpoints=%d out=%s', #log, #cdReads, v, ckpt, OUT))
     else
         local want = #rec.value
         print(string.format('DW1REPLAY replayed polls=%d of %d final_vblank=%d checkpoints=%d vblank_mismatches=%d',
@@ -277,6 +371,18 @@ local function finish(v)
         if polls ~= want then
             return fail(string.format('divergence: %d polls consumed, %d recorded', polls, want))
         end
+        if rec.checkCd then
+            if #cdReads ~= #rec.cd then
+                return fail(string.format('CD reads: %d here, %d recorded', #cdReads, #rec.cd))
+            end
+            for k, r in ipairs(cdReads) do
+                local w = rec.cd[k]
+                if r.issue ~= w.issue or r.busy ~= w.busy or r.sectors ~= w.sectors then
+                    return fail(string.format('CD read %d: poll %d busy %d sectors %d, recorded %d busy %d sectors %d', k - 1, r.issue, r.busy, r.sectors, w.issue, w.busy, w.sectors))
+                end
+            end
+            print(string.format('DW1REPLAY cd_reads=%d match the recording', #cdReads))
+        end
     end
     succeed()
 end
@@ -284,6 +390,9 @@ end
 -- Turn the debugger on before anything runs (breakpoints are inert without it).
 PCSX.settings.emulator.Debug.Debug = true
 entryBp = PCSX.addBreakpoint(PAD_READ, 'Exec', 4, 'PadRead', onEntry)
+cdReadBp = PCSX.addBreakpoint(CD_READ, 'Exec', 4, 'CdRead', cdEntry('read'))
+cdSyncBp = PCSX.addBreakpoint(CD_READ_SYNC, 'Exec', 4, 'CdReadSync', cdEntry('sync'))
+cdSearchBp = PCSX.addBreakpoint(CD_SEARCH_FILE, 'Exec', 4, 'CdSearchFile', cdEntry('search'))
 
 if MODE == 'record' then
     DW1ROUTE_TARGET = TARGET

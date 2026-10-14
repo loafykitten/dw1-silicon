@@ -1,7 +1,7 @@
-# Canonical state schema v2
+# Canonical state schema v3
 
 2026-10-13. `oracle/canonical-state.lua` serializes the game's semantic state from PS1 RAM into a
-versioned, fixed-width, little-endian binary (834 bytes) and a text rendering for diffs. The
+versioned, fixed-width, little-endian binary (1325 bytes) and a text rendering for diffs. The
 oracle writes one at every checkpoint of a replay (`docs/s08-oracle.md`); the port will write the
 same record from its own memory and compare. It is the "canonical schema" of PLAN.md's oracle
 section: never a raw struct dump (padding, `jmp_buf`, pointers), with documented exclusions.
@@ -13,7 +13,7 @@ frame of the new-game route (below). No game data is in this document.
 
 ## File format
 
-`"DW1CANON"` (8 bytes), u32 schema version (2), u32 body length (818), then every field in the
+`"DW1CANON"` (8 bytes), u32 schema version (3), u32 body length (1309), then every field in the
 table order, arrays inline, no padding, no alignment. Signed types are two's complement. The
 `.txt` rendering has one `name = value` line per field (arrays space-separated; byte arrays and
 RNG words in hex). Any change to the field list or encoding bumps the version.
@@ -50,6 +50,22 @@ RNG words in hex). Any change to the field list or encoding bumps the version.
 - RNGs: `custom_val1/2` are the game's `customRandom` states (`s = s * 0x41C650AD + 0x3039`,
   VAL2 starts at 0x0013CC25, VAL1 at 0); `bios_rand_state` is the BIOS `rand()` state at RAM
   0x9010 (`x = x * 0x41C64E6D + 0x3039`, see `docs/s08-oracle.md`).
+
+## v3 changes
+
+2026-10-14 (Phase 5). The battle, appended after `progress.*` (so every v2 field keeps its
+offset): `ENEMY_COUNT`, `IS_PREDEFINED_BATTLE`, the four `COMBAT_DATA` fighters (the partner, then
+up to three enemies: effect slots, finisher goal and progress, every status timer, the damage
+buffers, flags, target, queued animation, buffs), the player's command state (`PlayerData`:
+hit/block/status counts, starting HP, command delays, current, buffered and hovered commands,
+the available command lists, finisher charge-up, the combat slots' entity ids, used moves), and
+each enemy (`ENTITY_TABLE[entityIds[k]]` for k = 1..3: species, maximum and current HP and MP,
+position and yaw), and the animation state of the tamer, the partner and the three enemy slots
+(`Entity.anim`: animation id, frame, frame count, loop end and count, flags, and the
+animation's root-motion position; its pointers excluded). `COMBAT_DATA` holds no pointers, so its PS1 offsets are also the native ones
+(`crates/dw1/src/canon.rs` tests them). Excluded: the fighters' `table1`/`table2` (300 bytes of
+AI scratch each) and `PlayerData`'s `unk*` members. The enemy fields are zero outside a battle
+(`GAME_STATE` 0) and for combat slots that don't name entity 2..9 with a pointer inside RAM.
 
 ## v2 changes
 
@@ -230,4 +246,63 @@ value in RAM is what the game holds.
 | 0x033E | 2 | `progress.tournament_wins` | s16 | TOURNAMENT_WINS 0x80134FCE |
 | 0x0340 | 2 | `progress.tournaments_lost` | s16 | TOURNAMENTS_LOST 0x80134FD0 |
 
-Total: 834 bytes (16-byte header + 818 body).
+| 0x0342 | 2 | `battle.enemy_count` | s16 | ENEMY_COUNT 0x80134D6C |
+| 0x0344 | 1 | `battle.is_predefined` | u8 | IS_PREDEFINED_BATTLE 0x80134E84 |
+| 0x0345 | 16 | `battle.fighter.status_fx_id` | s32[4] | COMBAT_DATA.fighter[i] +0x00 (stride 0x168) |
+| 0x0355 | 64 | `battle.fighter.effect_slot` | s32[16] | COMBAT_DATA.fighter[i] +0x04 (stride 0x168) |
+| 0x0395 | 16 | `battle.fighter.active_effect_slot` | s32[4] | COMBAT_DATA.fighter[i] +0x14 (stride 0x168) |
+| 0x03A5 | 8 | `battle.fighter.finisher_goal` | s16[4] | COMBAT_DATA.fighter[i] +0x18 (stride 0x168) |
+| 0x03AD | 8 | `battle.fighter.finisher_progress` | s16[4] | COMBAT_DATA.fighter[i] +0x1A (stride 0x168) |
+| 0x03B5 | 8 | `battle.fighter.poison_timer` | s16[4] | COMBAT_DATA.fighter[i] +0x1C (stride 0x168) |
+| 0x03BD | 8 | `battle.fighter.confusion_timer` | s16[4] | COMBAT_DATA.fighter[i] +0x1E (stride 0x168) |
+| 0x03C5 | 8 | `battle.fighter.stun_timer` | s16[4] | COMBAT_DATA.fighter[i] +0x20 (stride 0x168) |
+| 0x03CD | 8 | `battle.fighter.flat_timer` | s16[4] | COMBAT_DATA.fighter[i] +0x22 (stride 0x168) |
+| 0x03D5 | 8 | `battle.fighter.flat_attack_timer` | s16[4] | COMBAT_DATA.fighter[i] +0x24 (stride 0x168) |
+| 0x03DD | 8 | `battle.fighter.invulnerable_timer` | s16[4] | COMBAT_DATA.fighter[i] +0x26 (stride 0x168) |
+| 0x03E5 | 8 | `battle.fighter.cooldown` | s16[4] | COMBAT_DATA.fighter[i] +0x28 (stride 0x168) |
+| 0x03ED | 8 | `battle.fighter.senile_timer` | s16[4] | COMBAT_DATA.fighter[i] +0x2A (stride 0x168) |
+| 0x03F5 | 8 | `battle.fighter.unk15` | s16[4] | COMBAT_DATA.fighter[i] +0x2C (stride 0x168) |
+| 0x03FD | 8 | `battle.fighter.hp_damage_buffer` | s16[4] | COMBAT_DATA.fighter[i] +0x2E (stride 0x168) |
+| 0x0405 | 8 | `battle.fighter.mp_damage_buffer` | s16[4] | COMBAT_DATA.fighter[i] +0x30 (stride 0x168) |
+| 0x040D | 8 | `battle.fighter.speed_buffer` | s16[4] | COMBAT_DATA.fighter[i] +0x32 (stride 0x168) |
+| 0x0415 | 8 | `battle.fighter.flags` | u16[4] | COMBAT_DATA.fighter[i] +0x34 (stride 0x168) |
+| 0x041D | 4 | `battle.fighter.move_range` | s8[4] | COMBAT_DATA.fighter[i] +0x36 (stride 0x168) |
+| 0x0421 | 4 | `battle.fighter.target_id` | u8[4] | COMBAT_DATA.fighter[i] +0x37 (stride 0x168) |
+| 0x0425 | 4 | `battle.fighter.queued_anim` | u8[4] | COMBAT_DATA.fighter[i] +0x38 (stride 0x168) |
+| 0x0429 | 4 | `battle.fighter.buffs_remaining` | u8[4] | COMBAT_DATA.fighter[i] +0x39 (stride 0x168) |
+| 0x042D | 4 | `battle.fighter.buff_prio_timer` | u8[4] | COMBAT_DATA.fighter[i] +0x3A (stride 0x168) |
+| 0x0431 | 4 | `battle.fighter.collided_while_distance_cmd` | u8[4] | COMBAT_DATA.fighter[i] +0x3B (stride 0x168) |
+| 0x0435 | 2 | `battle.player.hit_count` | u16 | COMBAT_DATA.player.hitCount 0x8013DC80 |
+| 0x0437 | 2 | `battle.player.blocked_count` | u16 | COMBAT_DATA.player.blockedCount 0x8013DC82 |
+| 0x0439 | 2 | `battle.player.statused_count` | u16 | COMBAT_DATA.player.statusedCount 0x8013DC84 |
+| 0x043B | 2 | `battle.player.starting_hp` | s16 | COMBAT_DATA.player.startingHP 0x8013DC88 |
+| 0x043D | 4 | `battle.player.command_delay` | s16[2] | COMBAT_DATA.player.commandDelay 0x8013DC8A |
+| 0x0441 | 2 | `battle.player.current_command` | u8[2] | COMBAT_DATA.player.currentCommand 0x8013DC8E |
+| 0x0443 | 2 | `battle.player.buffered_command` | u8[2] | COMBAT_DATA.player.bufferedCommand 0x8013DC90 |
+| 0x0445 | 2 | `battle.player.hovered_command` | s8[2] | COMBAT_DATA.player.hoveredCommand 0x8013DC92 |
+| 0x0447 | 18 | `battle.player.available_commands` | u8[18] | COMBAT_DATA.player.availableCommands 0x8013DC94 |
+| 0x0459 | 2 | `battle.player.num_commands` | u8[2] | COMBAT_DATA.player.numCommands 0x8013DCA6 |
+| 0x045B | 2 | `battle.player.finisher_chargeup` | u8[2] | COMBAT_DATA.player.finisherChargeup 0x8013DCA8 |
+| 0x045D | 2 | `battle.player.remaining_chargeup_time` | s8[2] | COMBAT_DATA.player.remainingChargeupTime 0x8013DCAA |
+| 0x045F | 4 | `battle.player.entity_ids` | u8[4] | COMBAT_DATA.player.entityIds 0x8013DCAC |
+| 0x0463 | 1 | `battle.player.change_target` | u8 | COMBAT_DATA.player.changeTarget 0x8013DCB4 |
+| 0x0464 | 12 | `battle.player.used_moves` | u8[12] | COMBAT_DATA.player.usedMoves 0x8013DCB5 |
+| 0x0470 | 3 | `battle.enemy.valid` | u8[3] | ENTITY_TABLE[entityIds[k]] in a battle (k = 1..3) |
+| 0x0473 | 12 | `battle.enemy.species` | s32[3] | entity.type |
+| 0x047F | 6 | `battle.enemy.max_hp` | s16[3] | stats.base.hp (+0x48) |
+| 0x0485 | 6 | `battle.enemy.max_mp` | s16[3] | stats.base.mp (+0x4A) |
+| 0x048B | 6 | `battle.enemy.cur_hp` | s16[3] | stats.current.currentHP (+0x4C) |
+| 0x0491 | 6 | `battle.enemy.cur_mp` | s16[3] | stats.current.currentMP (+0x4E) |
+| 0x0497 | 3 | `battle.enemy.pos_valid` | u8[3] | entity.posData (non-null, inside RAM) |
+| 0x049A | 36 | `battle.enemy.pos` | s32[9] | *posData + 0x78 |
+| 0x04BE | 6 | `battle.enemy.yaw` | s16[3] | *posData + 0x72 |
+
+| 0x04C4 | 5 | `anim.id` | u8[5] | Entity.anim animId (+0x2E) (tamer, partner, enemies 1-3) |
+| 0x04C9 | 10 | `anim.frame` | s16[5] | Entity.anim animFrame (+0x1C) (tamer, partner, enemies 1-3) |
+| 0x04D3 | 10 | `anim.frame_count` | s16[5] | Entity.anim frameCount (+0x1E) (tamer, partner, enemies 1-3) |
+| 0x04DD | 10 | `anim.loop_end_frame` | s16[5] | Entity.anim loopEndFrame (+0x28) (tamer, partner, enemies 1-3) |
+| 0x04E7 | 5 | `anim.loop_count` | u8[5] | Entity.anim loopCount (+0x2F) (tamer, partner, enemies 1-3) |
+| 0x04EC | 5 | `anim.flag` | u8[5] | Entity.anim animFlag (+0x30) (tamer, partner, enemies 1-3) |
+| 0x04F1 | 60 | `anim.loc` | s32[15] | Entity.anim locX..locZ (+0x10) (tamer, partner, enemies 1-3) |
+
+Total: 1325 bytes (16-byte header + 1309 body).

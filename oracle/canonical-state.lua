@@ -1,4 +1,4 @@
--- Canonical game-state dump, schema v2 (docs/canonical-state.md).
+-- Canonical game-state dump, schema v3 (docs/canonical-state.md).
 --
 -- A versioned, fixed-width, little-endian serialization of the semantic game state, read from
 -- PS1 RAM, plus a text rendering for diffs. Never a raw struct dump: padding, unused fields,
@@ -16,7 +16,7 @@
 -- the order of C.fields, arrays inline, no padding. C.layout() lists offsets.
 
 local C = {}
-C.VERSION = 2
+C.VERSION = 3
 
 local SIZE = { u8 = 1, s8 = 1, u16 = 2, s16 = 2, u32 = 4, s32 = 4 }
 local SIGNED = { s8 = true, s16 = true, s32 = true }
@@ -88,6 +88,8 @@ local A = {
     PARTNER_PARA = 0x80138460, INVENTORY = 0x8013D474,
     MERIT = 0x80134FC4, BATTLES_STARTED = 0x80134FC8, BATTLES_FLED = 0x80134FCA,
     TOURNAMENTS_WON = 0x80134FCC, TOURNAMENT_WINS = 0x80134FCE, TOURNAMENTS_LOST = 0x80134FD0,
+    COMBAT_DATA = 0x8013D640, ENEMY_COUNT = 0x80134D6C, IS_PREDEFINED_BATTLE = 0x80134E84,
+    ENTITY_TABLE = 0x8012F344,
 }
 C.ADDR = A
 
@@ -282,6 +284,112 @@ abs('progress.battles_fled', 's16', A.BATTLES_FLED, 'BATTLES_FLED')
 abs('progress.tournaments_won', 's16', A.TOURNAMENTS_WON, 'TOURNAMENTS_WON')
 abs('progress.tournament_wins', 's16', A.TOURNAMENT_WINS, 'TOURNAMENT_WINS')
 abs('progress.tournaments_lost', 's16', A.TOURNAMENTS_LOST, 'TOURNAMENTS_LOST')
+
+-- ---- battle (schema v3) ----
+-- COMBAT_DATA (include/dw/combat.h; no pointers, so the PS1 offsets below are also the native
+-- ones, which crates/dw1/src/canon.rs's tests check): four FighterData of 0x168 bytes (the
+-- player's partner, then up to three enemies), then PlayerData at +0x5A0. Excluded: the fighters'
+-- table1/table2 (300 bytes of AI scratch each), PlayerData's unk members. The enemies are
+-- ENTITY_TABLE[entityIds[1..3]], read only while GAME_STATE is nonzero (a battle) and the slot is
+-- 2..9 with a pointer inside RAM; otherwise zero.
+local CD = A.COMBAT_DATA
+abs('battle.enemy_count', 's16', A.ENEMY_COUNT, 'ENEMY_COUNT')
+abs('battle.is_predefined', 'u8', A.IS_PREDEFINED_BATTLE, 'IS_PREDEFINED_BATTLE')
+local function fighterField(name, ty, off, count)
+    count = count or 1
+    derived('battle.fighter.' .. name, ty, 4 * count,
+        string.format('COMBAT_DATA.fighter[i] +0x%02X (stride 0x168)', off), function()
+            local t = {}
+            for i = 0, 3 do
+                for k = 0, count - 1 do t[#t + 1] = rd(CD + 0x168 * i + off + SIZE[ty] * k, ty) end
+            end
+            return t
+        end)
+end
+fighterField('status_fx_id', 's32', 0x00)
+fighterField('effect_slot', 's32', 0x04, 4)
+fighterField('active_effect_slot', 's32', 0x14)
+for i, name in ipairs({ 'finisher_goal', 'finisher_progress', 'poison_timer', 'confusion_timer',
+    'stun_timer', 'flat_timer', 'flat_attack_timer', 'invulnerable_timer', 'cooldown', 'senile_timer',
+    'unk15', 'hp_damage_buffer', 'mp_damage_buffer', 'speed_buffer' }) do
+    fighterField(name, 's16', 0x18 + 2 * (i - 1))
+end
+fighterField('flags', 'u16', 0x34)
+fighterField('move_range', 's8', 0x36)
+fighterField('target_id', 'u8', 0x37)
+fighterField('queued_anim', 'u8', 0x38)
+fighterField('buffs_remaining', 'u8', 0x39)
+fighterField('buff_prio_timer', 'u8', 0x3A)
+fighterField('collided_while_distance_cmd', 'u8', 0x3B)
+local PD = CD + 0x5A0
+abs('battle.player.hit_count', 'u16', PD + 0xA0, 'COMBAT_DATA.player.hitCount')
+abs('battle.player.blocked_count', 'u16', PD + 0xA2, 'COMBAT_DATA.player.blockedCount')
+abs('battle.player.statused_count', 'u16', PD + 0xA4, 'COMBAT_DATA.player.statusedCount')
+abs('battle.player.starting_hp', 's16', PD + 0xA8, 'COMBAT_DATA.player.startingHP')
+absArray('battle.player.command_delay', 's16', PD + 0xAA, 2, 'COMBAT_DATA.player.commandDelay')
+absArray('battle.player.current_command', 'u8', PD + 0xAE, 2, 'COMBAT_DATA.player.currentCommand')
+absArray('battle.player.buffered_command', 'u8', PD + 0xB0, 2, 'COMBAT_DATA.player.bufferedCommand')
+absArray('battle.player.hovered_command', 's8', PD + 0xB2, 2, 'COMBAT_DATA.player.hoveredCommand')
+absArray('battle.player.available_commands', 'u8', PD + 0xB4, 18, 'COMBAT_DATA.player.availableCommands')
+absArray('battle.player.num_commands', 'u8', PD + 0xC6, 2, 'COMBAT_DATA.player.numCommands')
+absArray('battle.player.finisher_chargeup', 'u8', PD + 0xC8, 2, 'COMBAT_DATA.player.finisherChargeup')
+absArray('battle.player.remaining_chargeup_time', 's8', PD + 0xCA, 2,
+    'COMBAT_DATA.player.remainingChargeupTime')
+absArray('battle.player.entity_ids', 'u8', PD + 0xCC, 4, 'COMBAT_DATA.player.entityIds')
+abs('battle.player.change_target', 'u8', PD + 0xD4, 'COMBAT_DATA.player.changeTarget')
+absArray('battle.player.used_moves', 'u8', PD + 0xD5, 12, 'COMBAT_DATA.player.usedMoves')
+-- The enemy entity in combat slot k (1..3), or nil.
+local function enemy(k)
+    if rd(A.GAME_STATE, 's8') == 0 then return nil end
+    local id = rd(PD + 0xCC + k, 'u8')
+    if id < 2 or id > 9 then return nil end
+    local e = rd(A.ENTITY_TABLE + 4 * id, 'u32')
+    if e < 0x80000000 or e + 0x50 > 0x80200000 then return nil end
+    return e
+end
+local function enemyField(name, ty, count, src, fn)
+    derived('battle.enemy.' .. name, ty, 3 * count, src, function()
+        local t = {}
+        for k = 1, 3 do
+            local e = enemy(k)
+            local v = e and fn(e) or 0
+            if type(v) ~= 'table' then v = { v } end
+            for j = 1, count do t[#t + 1] = e and v[j] or 0 end
+        end
+        return t
+    end)
+end
+enemyField('valid', 'u8', 1, 'ENTITY_TABLE[entityIds[k]] in a battle (k = 1..3)', function() return 1 end)
+enemyField('species', 's32', 1, 'entity.type', function(e) return rd(e, 's32') end)
+enemyField('max_hp', 's16', 1, 'stats.base.hp (+0x48)', function(e) return rd(e + 0x48, 's16') end)
+enemyField('max_mp', 's16', 1, 'stats.base.mp (+0x4A)', function(e) return rd(e + 0x4A, 's16') end)
+enemyField('cur_hp', 's16', 1, 'stats.current.currentHP (+0x4C)', function(e) return rd(e + 0x4C, 's16') end)
+enemyField('cur_mp', 's16', 1, 'stats.current.currentMP (+0x4E)', function(e) return rd(e + 0x4E, 's16') end)
+enemyField('pos_valid', 'u8', 1, 'entity.posData (non-null, inside RAM)', function(e) return posValid(e) end)
+enemyField('pos', 's32', 3, '*posData + 0x78', function(e) return posXYZ(e) end)
+enemyField('yaw', 's16', 1, '*posData + 0x72', function(e) return posYaw(e) end)
+-- Animation state (Entity.anim at +0x0C; pointers excluded) of the tamer, the partner and the
+-- three enemy slots (zero where `enemy(k)` is nil).
+local function animEntities()
+    return { A.TAMER_ENTITY, P, enemy(1), enemy(2), enemy(3) }
+end
+local function animField(name, ty, count, off, src)
+    derived('anim.' .. name, ty, 5 * count, 'Entity.anim ' .. src .. ' (tamer, partner, enemies 1-3)', function()
+        local t, list = {}, animEntities()
+        for j = 1, 5 do -- not ipairs: missing enemies are nil holes
+            local e = list[j]
+            for k = 0, count - 1 do t[#t + 1] = e and rd(e + off + SIZE[ty] * k, ty) or 0 end
+        end
+        return t
+    end)
+end
+animField('id', 'u8', 1, 0x2E, 'animId (+0x2E)')
+animField('frame', 's16', 1, 0x1C, 'animFrame (+0x1C)')
+animField('frame_count', 's16', 1, 0x1E, 'frameCount (+0x1E)')
+animField('loop_end_frame', 's16', 1, 0x28, 'loopEndFrame (+0x28)')
+animField('loop_count', 'u8', 1, 0x2F, 'loopCount (+0x2F)')
+animField('flag', 'u8', 1, 0x30, 'animFlag (+0x30)')
+animField('loc', 's32', 3, 0x10, 'locX..locZ (+0x10)')
 
 -- ---- collection / encoding / rendering ----
 

@@ -5,6 +5,8 @@
 // Keep the psyq symbols the C needs in the link.
 use psyq as _;
 
+pub mod overlays;
+
 #[allow(
     non_camel_case_types,
     non_snake_case,

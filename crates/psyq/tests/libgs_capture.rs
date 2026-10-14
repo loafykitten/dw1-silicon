@@ -39,7 +39,7 @@ mod capture {
     use psyq::globals::GsFCALL4;
     use psyq::libgs::{
         GsDobj2, GsGetWorkBase, GsOt, GsSetWorkBase, GsSortObject4J, GsTMDfastTG3L, GsTMDfastTG4L,
-        TmdHandler,
+        GsTMDfastTNF4, TmdHandler,
     };
     use psyq::memory::{PS1_RAM_SIZE, dw1_scratchpad, ps1_ram_ptr, ptr32_of};
     use std::path::{Path, PathBuf};
@@ -129,8 +129,12 @@ mod capture {
             point: input.r32(c.otp + 12),
             tag: native(input.r32(c.otp + 16)).cast(),
         };
-        // The game installs these in initializeGsTMDMap: tg3[NDIV][NORMAL] and tg4[NDIV][NORMAL].
+        // The game installs these in initializeGsTMDMap: tg3[NDIV][NORMAL], tg4[NDIV][NORMAL] and
+        // ntf4[NDIV].
         unsafe {
+            GsFCALL4[54] = Some(std::mem::transmute::<TmdHandler, unsafe extern "C" fn()>(
+                GsTMDfastTNF4,
+            ));
             GsFCALL4[24] = Some(std::mem::transmute::<TmdHandler, unsafe extern "C" fn()>(
                 GsTMDfastTG3L,
             ));

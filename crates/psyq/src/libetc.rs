@@ -122,12 +122,22 @@ pub extern "C" fn VSync(mode: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn PadInit(_mode: i32) {}
 
+/// `PadRead` calls so far (a replay's poll sequence number of the next poll, once the current
+/// one has returned).
+static POLLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// How many times the game has called `PadRead`, counting the one in progress.
+pub fn polls() -> u32 {
+    POLLS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// `PadRead(id)`: the buttons held on both pads [doc: pad 1 in the low half, pad 2 in the
 /// high half, 1 = pressed]. DW1 passes 0 or 1; both read both pads [doc].
 #[unsafe(no_mangle)]
 pub extern "C" fn PadRead(_id: i32) -> u32 {
     let caller = caller_address();
     let host = CLOCK.lock().unwrap().host.take();
+    POLLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     match host {
         Some(mut host) => {
             let pad = host.pad(caller);

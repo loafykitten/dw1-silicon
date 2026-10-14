@@ -56,25 +56,35 @@ local MILESTONES = {
 -- DW1ROUTE_ON_TARGET (called at that VBlank instead of quitting) before dofile'ing this one.
 -- DW1ROUTE_PROFILE=continue (env or global) swaps in the CONTINUE GAME schedule, for a fixture
 -- card in the cwd's memcard1.mcd (see docs/oracle-route.md, "Continue route"); file-city-walk and
--- care-fixture extend new-game and continue.
+-- care-fixture extend new-game and continue; continue-save2 loads the card's second save and
+-- battle-fixture (Phase 5) extends it, battle-twice extends that.
 local PROFILE = DW1ROUTE_PROFILE or os.getenv('DW1ROUTE_PROFILE') or 'new-game'
 -- Profiles that continue a base profile with more input: the extra file returns PRESSES and
 -- MILESTONES to append (its last milestone becomes the target). Both are Phase 4 routes.
 local EXTRA = {
     ['file-city-walk'] = { base = 'new-game', file = '/route-file-city-walk-schedule.lua' },
     ['care-fixture'] = { base = 'continue', file = '/route-care-schedule.lua' },
+    ['battle-fixture'] = { base = 'continue-save2', file = '/route-battle-schedule.lua' },
+    ['battle-twice'] = { base = 'continue-save2',
+                         file = { '/route-battle-schedule.lua', '/route-battle-twice-schedule.lua' } },
 }
 local base = PROFILE
 if EXTRA[PROFILE] then base = EXTRA[PROFILE].base end
 if base == 'continue' then
     PRESSES, MILESTONES = dofile(CONTINUE_SCHEDULE_FILE or (HERE .. '/route-continue-schedule.lua'))
+elseif base == 'continue-save2' then
+    PRESSES, MILESTONES = dofile(HERE .. '/route-continue-save2-schedule.lua')
 elseif base ~= 'new-game' then
     error('unknown DW1ROUTE_PROFILE ' .. tostring(PROFILE))
 end
 if EXTRA[PROFILE] then
-    local morePresses, moreMilestones = dofile(HERE .. EXTRA[PROFILE].file)
-    for _, p in ipairs(morePresses) do PRESSES[#PRESSES + 1] = p end
-    for _, m in ipairs(moreMilestones) do MILESTONES[#MILESTONES + 1] = m end
+    local files = EXTRA[PROFILE].file
+    if type(files) == 'string' then files = { files } end
+    for _, file in ipairs(files) do
+        local morePresses, moreMilestones = dofile(HERE .. file)
+        for _, p in ipairs(morePresses) do PRESSES[#PRESSES + 1] = p end
+        for _, m in ipairs(moreMilestones) do MILESTONES[#MILESTONES + 1] = m end
+    end
 end
 local TARGET = DW1ROUTE_TARGET or MILESTONES[#MILESTONES][2]
 

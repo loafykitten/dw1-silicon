@@ -42,3 +42,14 @@ macro_rules! stubs {
 }
 
 pub(crate) use stubs;
+
+/// `dw1_native_fatal(what)`: the game C's native-only code (under `DW1_NATIVE`) hit a limit the
+/// PS1 code doesn't have, such as a side table's size; stops the program like a trapping stub.
+///
+/// # Safety
+/// `what` must be a NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dw1_native_fatal(what: *const std::ffi::c_char) -> ! {
+    let what = unsafe { std::ffi::CStr::from_ptr(what) }.to_string_lossy();
+    unimplemented(&format!("native limit: {what}"));
+}

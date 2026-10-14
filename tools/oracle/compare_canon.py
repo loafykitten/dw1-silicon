@@ -22,6 +22,7 @@ from pathlib import Path
 NAME = re.compile(r"^ckpt_(\d{4})_(.+)\.txt$")
 SIZES = {"u8": 1, "s8": 1, "u16": 2, "s16": 2, "u32": 4, "s32": 4}
 DOC = Path(__file__).resolve().parents[2] / "docs" / "canonical-state.md"
+VERSION = 3  # the schema docs/canonical-state.md describes
 
 
 def schema() -> list[tuple[str, int, int]]:
@@ -47,8 +48,8 @@ def check_bin(path: Path) -> str | None:
         return "bad or missing DW1CANON header"
     version = int.from_bytes(data[8:12], "little")
     body = int.from_bytes(data[12:16], "little")
-    if version != 2:
-        return f"schema version {version}, expected 2"
+    if version != VERSION:
+        return f"schema version {version}, expected {VERSION}"
     if body != BODY_LEN or len(data) != 16 + body:
         return f"body length {body}, file {len(data)} bytes, expected body {BODY_LEN}"
     return None
@@ -66,7 +67,7 @@ def checkpoints(directory: Path) -> dict[str, Path]:
 def parse(path: Path) -> dict[str, str]:
     """The .txt's fields; raises ValueError unless it has exactly the schema's fields."""
     lines = path.read_text().splitlines()
-    if not lines or lines[0] != "# dw1 canonical state schema v2":
+    if not lines or lines[0] != f"# dw1 canonical state schema v{VERSION}":
         raise ValueError("missing or wrong schema header line")
     fields = {}
     for line in lines[1:]:
