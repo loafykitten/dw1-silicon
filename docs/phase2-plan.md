@@ -84,13 +84,15 @@ TMD map, the file queue, fonts, scripts, UI, clock...), `loadTIMFile` twice, the
    `SetDrawOffset`, `SetDispMask`), primitive setters and `AddPrim`, TIM parsing, and libgs's
    display buffers, ordering tables, sprites, box fills and clears. Check: packets against
    Redux captures of the landing screen (S0.7's method), then pixels.
-5. **Clock, pad, frames (in progress: virtual VSync clock, replay host with caller checks,
-   headless PNG output done; the window isn't):** `VSync`, `PadRead` from a replay file (S0.8's format) or the
+5. **Clock, pad, frames (done 2026-10-13: virtual VSync clock, replay host with caller checks
+   and `DW1_REPLAY_LOG`, headless PNG output, the SDL3 window):** `VSync`, `PadRead` from a replay file (S0.8's format) or the
    keyboard/gamepad, headless PNG output and the window.
 6. **Silent sound (done 2026-10-13):** libsnd/libspu state.
 6b. **Memory cards (done 2026-10-13):** libmcrd over 128 KB images, two fresh formatted cards
    by default (byte-identical to the emulator's), the async `MemCardSync` protocol.
-6c. **libgte (in progress):** all 29 functions, fitted against `oracle/call-sdk.lua`.
+6c. **libgte (done 2026-10-13, f190f54 and f70599c):** all 29 functions and `GsSetRefView2`,
+   bit-exact on 56,160 oracle calls from `oracle/call-sdk.lua`; unmodelled inputs (overflowing
+   `CompMatrix`, negative `SquareRoot0`) trap.
 7. **The intro movie:** MOV's streaming reads (`St*`), the MDEC calls (`DecDCT*`), XA
    skipped silently. Check: it plays to the end and skips on Start.
    **Done 2026-10-13** (`docs/phase2-movie.md`): all four movies play through `MOV_playMovie`
@@ -98,3 +100,17 @@ TMD map, the file queue, fonts, scripts, UI, clock...), `loadTIMFile` twice, the
 8. **The gate:** the landing screen at 1x against Redux's frame; the `new-game` replay from
    boot to the main menu with no trap and the S0.8 checkpoints on the way equal. Re-entry: back
    to the landing screen and through again.
+   **Status 2026-10-13:**
+   - The replay boots through the movie, landing screen, main menu and the memory-card slot
+     screens with no trap; it stops after New Game (`GsSetFlatLight` in `loadNewGameScene`,
+     Phase 3).
+   - Checkpoints (canonical state v2, `crates/dw1/src/canon.rs`, `tools/oracle/compare_canon.py`):
+     all four reachable (polls 0 and 600) are byte-identical to the emulator's.
+   - Re-entry: with no input the game loops movie, landing screen, movie, landing screen with no
+     trap (16,000 VBlanks).
+   - Frames, compared by replay poll (native loading takes no time, so VBlank numbers differ;
+     the per-poll offset is exact): equal except where `backend::gpu` truncates interpolated
+     texture coordinates and Gouraud colours and Redux rounds them (landing screen ~10,700 px,
+     menu ~12,800 px). A slice fitting the GPU's polygon interpolation to Redux is in progress.
+   - Movie pictures: the same frames at the same cadence; MDEC rounding within 4/255
+     (`docs/phase2-movie.md`), not chased.
