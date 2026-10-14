@@ -68,6 +68,12 @@ local EXTRA = {
     ['training-fixture'] = { base = 'continue-save2', file = '/route-training-schedule.lua' },
     ['training-bonus'] = { base = 'continue-save2',
                            file = { '/route-training-schedule.lua', '/route-training-bonus-schedule.lua' } },
+    ['training-all'] = { base = 'continue-save2',
+                         file = { '/route-training-schedule.lua', '/route-training-bonus-schedule.lua',
+                                  '/route-training-all-schedule.lua' } },
+    ['training-six'] = { base = 'continue-save2',
+                         file = { '/route-training-schedule.lua', '/route-training-bonus-schedule.lua',
+                                  '/route-training-all-schedule.lua', '/route-training-six-schedule.lua' } },
     ['battle-twice'] = { base = 'continue-save2',
                          file = { '/route-battle-schedule.lua', '/route-battle-twice-schedule.lua' } },
 }

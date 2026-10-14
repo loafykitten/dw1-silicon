@@ -53,8 +53,22 @@ session uses all the partner's energy (a second session still runs).
 12100): the speed session, then the HP sign ("Training: Boulder Moving", trigger 81, reached
 around the heart sign), Begin, Bonus Try: the slot game (`trn_slots.c`), the session, HP +176 and
 Offense +4. Certified (`p5-bonus-replay1`); natively 13 of 13, and 89 of 89 at every 50 polls.
-Still to record: the other four kinds (MP, Offense, Defense, Brains) and TRN2's gyms (elsewhere
-on the map).
+`oracle/replays/training-six.txt` (`DW1ROUTE_PROFILE=training-six`, 11,030 polls, 41 CD reads, to
+VBlank 25600): training-bonus, then Bonus Tries at "Punching Glove" (Defense), "Tree Striking"
+(Offense), "Save2's Classroom" (Brains, named after the tamer) and "Waterfall" (MP), with Gabumon
+getting hungry and relieving itself on the ground in between: all six of TRN's kinds. The final
+stats equal the exploration's (Brains 76, MP 746, Defense 85). TRN2's gyms are elsewhere on the
+map (still to do).
+
+**Caveat found deriving it:** inputs found with `oracle/explore.lua` don't always reproduce in a
+recording. Here the explorer's run diverged from the recording after the Tree Striking session
+(the walk to the next sign slid elsewhere), although recordings are deterministic among
+themselves and the explorer matches a recording exactly while the route drives it. The likely
+cause is that the explorer pauses the emulator between commands for seconds, and something in
+Redux's CD emulation runs on wall-clock time (that stretch has two more CD reads than the
+recording up to it). So: check a new recording's milestone screenshots or final state against the
+exploration, and if they differ, explore again from the recording's own end (route-driven up to
+there), as `training-six` does after `training-all`.
 
 ## What it took
 

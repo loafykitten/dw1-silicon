@@ -1,0 +1,75 @@
+-- Extra schedule for DW1ROUTE_PROFILE=training-all: training-bonus (speed, then HP with the slot
+-- bonus; control back at ~12000), then Bonus Tries at "Punching Glove" (trigger 84; Defense +4,
+-- Brains +1) and "Tree Striking" (83; Offense +3). The inputs after that were explored to reach
+-- "Save2's Classroom" and "Waterfall", but in the recording the walk after Tree Striking slides
+-- elsewhere (the explorer's run had diverged: pausing the emulator between commands seems to move
+-- some CD timing; docs/phase5-plan.md), so the rest of this schedule only walks the tamer around
+-- the gym while Gabumon gets hungry and relieves itself on the ground; the recording ends at
+-- (-274, -1150), control back. DW1ROUTE_PROFILE=training-six continues from there to the last
+-- two signs.
+local PRESSES = {
+    { 12101, 12101, 1, 104, 'LEFT' },
+    { 12225, 12225, 1, 4, 'CROSS' },
+    { 12345, 12345, 1, 4, 'CROSS' },
+    { 12405, 12405, 1, 4, 'CROSS' },
+    { 12735, 12735, 1, 4, 'DOWN' },
+    { 12775, 12775, 1, 4, 'CROSS' },
+    { 13205, 13205, 1, 4, 'CROSS' },
+    { 13295, 13295, 1, 4, 'CROSS' },
+    { 13365, 13365, 1, 4, 'CROSS' },
+    { 13435, 13435, 1, 4, 'CROSS' },
+    { 13725, 13725, 1, 4, 'CROSS' },
+    { 14055, 14055, 1, 61, 'DOWN' },
+    { 14121, 14121, 1, 20, 'RIGHT' },
+    { 14161, 14161, 1, 22, 'RIGHT' },
+    { 14203, 14203, 1, 10, 'DOWN' },
+    { 14218, 14218, 1, 20, 'RIGHT' },
+    { 14258, 14258, 1, 4, 'CROSS' },
+    { 14378, 14378, 1, 4, 'CROSS' },
+    { 14438, 14438, 1, 4, 'CROSS' },
+    { 14768, 14768, 1, 4, 'DOWN' },
+    { 14808, 14808, 1, 4, 'CROSS' },
+    { 15238, 15238, 1, 4, 'CROSS' },
+    { 15328, 15328, 1, 4, 'CROSS' },
+    { 15398, 15398, 1, 4, 'CROSS' },
+    { 15468, 15468, 1, 4, 'CROSS' },
+    { 15758, 15758, 1, 4, 'CROSS' },
+    { 16088, 16088, 1, 220, 'UP' },
+    { 16328, 16328, 1, 119, 'UP' },
+    { 16457, 16457, 1, 77, 'LEFT' },
+    { 16554, 16554, 1, 60, 'UP' },
+    { 16634, 16634, 1, 4, 'CROSS' },
+    { 16754, 16754, 1, 4, 'CROSS' },
+    { 16814, 16814, 1, 4, 'CROSS' },
+    { 17144, 17144, 1, 4, 'DOWN' },
+    { 17184, 17184, 1, 4, 'CROSS' },
+    { 17614, 17614, 1, 4, 'CROSS' },
+    { 17704, 17704, 1, 4, 'CROSS' },
+    { 17774, 17774, 1, 4, 'CROSS' },
+    { 17844, 17844, 1, 4, 'CROSS' },
+    { 18134, 18134, 1, 4, 'CROSS' },
+    { 18564, 18564, 1, 43, 'DOWN' },
+    { 18612, 18612, 1, 178, 'RIGHT' },
+    { 18810, 18810, 1, 89, 'UP' },
+    { 18904, 18904, 1, 82, 'RIGHT' },
+    { 19006, 19006, 1, 50, 'UP' },
+    { 19076, 19076, 1, 4, 'CROSS' },
+    { 19196, 19196, 1, 4, 'CROSS' },
+    { 19256, 19256, 1, 4, 'CROSS' },
+    { 19586, 19586, 1, 4, 'DOWN' },
+    { 19626, 19626, 1, 4, 'CROSS' },
+    { 20056, 20056, 1, 4, 'CROSS' },
+    { 20146, 20146, 1, 4, 'CROSS' },
+    { 20216, 20216, 1, 4, 'CROSS' },
+    { 20286, 20286, 1, 4, 'CROSS' },
+    { 20576, 20576, 1, 4, 'CROSS' },
+}
+local MILESTONES = {
+    { 12345, 'all_glove' },
+    { 14378, 'all_tree' },
+    { 16754, 'all_walk1' },
+    { 18564, 'all_walk2' },
+    { 19196, 'all_walk3' },
+    { 21100, 'all_done' },             -- target: control back
+}
+return PRESSES, MILESTONES

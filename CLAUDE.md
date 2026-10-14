@@ -10,8 +10,9 @@ and open questions.
   (`docs/phase5-plan.md`): the field battle (BTL) matches the emulator at every checkpoint in two
   certified replays (`battle-fixture`, `battle-twice`: one win; then a reload of BTL, a loss and
   the MURD overlay), with CD timing in the replays (format 2) and canonical state v3 (battle and
-  animation). `tools/replay-check.sh` runs every certified replay. Next: the missing-return audit's
-  16 sites, then TRN/TRN2. Public repo `loafykitten/dw1-silicon` (branch `phase0`); decomp fork
+  animation); training (TRN) too, all six kinds (`training-fixture`, `training-bonus`,
+  `training-six`). `tools/replay-check.sh` runs every certified replay. Next: the other overlays
+  need fixture saves from Ember (PLAN.md's Open questions). Public repo `loafykitten/dw1-silicon` (branch `phase0`); decomp fork
   branch `dw1-native` pushed. Direction: hybrid (decomp C game + Rust for everything new), full
   Rust as the endgame. Sony's SDK is reimplemented clean (never translated from disassembly).
   PLAN.md's "Where things stand" is the handoff, including how to work with the oracle; keep it

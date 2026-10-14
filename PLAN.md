@@ -33,9 +33,15 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     wraparound (`DW1_WRAP_INDEX`), addresses passed as `u_long`/`int32_t` parameters, writes and
     reads through NULL (the PS1 hit low RAM), and non-void functions without a return (the PS1
     caller got v0: `docs/phase5-returns-audit.md`, 16 sites still to act on).
-- **Next:** the 16 missing-return sites; more battle coverage if cheap (another enemy, the
-  command menu); then TRN/TRN2 (training) with a route to a gym. Booklab still unreachable
-  (2026-10-14); one emulator at a time on this Mac.
+- **Training (TRN) matches too:** `training-fixture` (a Normal session), `training-bonus` (the
+  slot-game bonus) and `training-six` (all six kinds), each certified and identical natively,
+  with no native change needed. The missing-return audit's sites are fixed or trap
+  (`docs/phase5-returns-audit.md`).
+- **Next:** the overlays need fixture saves from Ember (Open questions); meanwhile anything
+  reachable from the current saves (more battles, shops, other File City exits, TRN2's gyms if
+  reachable). Booklab still unreachable (2026-10-14); one emulator at a time on this Mac. **Explorer
+  caveat:** routes found with `oracle/explore.lua` can diverge in the recording (docs/phase5-plan.md).
+  The six certified replays: `tools/replay-check.sh`.
 
 - **Phase 4's gate is met (2026-10-14):** `oracle/replays/file-city-walk.txt` (27 checkpoints,
   five map changes) and `care-fixture.txt` (Ember's save, 37 checkpoints, 07:00 to 14:16 game
@@ -701,7 +707,19 @@ is what the Rust is checked against.
 
 ## Open questions for Ember
 
-None right now. Add them here as they come up.
+- **(2026-10-14) Fixture saves for the rest of Phase 5.** Battles (BTL) and the Green Gym's
+  training (TRN) match the emulator using your Save2. The other overlays need game progress only
+  playing gets, so a save in front of each would let me record them (put them on the DuckStation
+  card as more saves; tell me which slot is which):
+  1. **Battle Mode (VS):** a save whose Digimon is registered for Battle Mode (the title menu's
+     BATTLE MODE says "Digimon Not Registered" for Save1 and Save2).
+  2. **A tournament (STD):** a save just before entering one at the arena.
+  3. **Fishing (FISH):** a save at a fishing spot with a rod (and bait if it needs some).
+  4. **Digivolution (EVL):** a save shortly before Gabumon digivolves (any digivolution).
+  5. **Death and rebirth (DOO2/DOOA):** a save shortly before a partner dies of old age or on its
+     last life.
+  6. Any of curling (KAR), recruiting (DGET), the other gyms' training (TRN2) if you pass them.
+  Whatever is convenient; the more the better, but none of it blocks the work.
 
 ## Answered by Ember
 
