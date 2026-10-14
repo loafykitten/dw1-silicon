@@ -146,6 +146,88 @@ pub unsafe extern "C" fn StoreImage(r: *const Rect, p: *mut u32) -> i32 {
     0
 }
 
+/// libgpu `TIM_IMAGE`, native pointers [hdr].
+#[repr(C)]
+pub struct TimImage {
+    pub mode: u32,
+    pub crect: *mut Rect,
+    pub caddr: *mut u32,
+    pub prect: *mut Rect,
+    pub paddr: *mut u32,
+}
+
+/// The TIM `OpenTIM` was last given (the SDK keeps it in a global) [doc].
+static TIM: Mutex<usize> = Mutex::new(0);
+
+/// `OpenTIM(addr)`: remembers a TIM file in memory for `ReadTIM`. Returns 0, or 1 if it
+/// doesn't start with the TIM id (0x10) [doc: library reference; format: psx-spx "TIM"].
+///
+/// # Safety
+/// `addr` must point to a TIM file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn OpenTIM(addr: *const u32) -> i32 {
+    if unsafe { addr.read_unaligned() } != 0x10 {
+        return 1;
+    }
+    *TIM.lock().unwrap() = addr as usize;
+    0
+}
+
+/// `ReadTIM(img)`: describes the TIM `OpenTIM` was given: pixel mode (the header's flag word),
+/// the CLUT block's rectangle and data (null if the file has no CLUT) and the pixel block's
+/// rectangle and data, all pointing into the file [doc: psx-spx "TIM": flag bit 3 = has CLUT;
+/// each block is a size word, a RECT and halfwords]. Returns `img`; null if no TIM is open.
+///
+/// # Safety
+/// `img` must be valid and the opened TIM still in memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ReadTIM(img: *mut TimImage) -> *mut TimImage {
+    let base = *TIM.lock().unwrap() as *const u32;
+    if base.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        let flag = base.add(1).read_unaligned();
+        let mut block = base.add(2);
+        let (crect, caddr) = if flag & 8 != 0 {
+            let words = block.read_unaligned() as usize;
+            let c = (
+                block.add(1).cast_mut().cast::<Rect>(),
+                block.add(3).cast_mut(),
+            );
+            block = block.byte_add(words);
+            c
+        } else {
+            (std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        img.write(TimImage {
+            mode: flag,
+            crect,
+            caddr,
+            prect: block.add(1).cast_mut().cast::<Rect>(),
+            paddr: block.add(3).cast_mut(),
+        });
+    }
+    img
+}
+
+/// `LoadClut(clut, x, y)`: uploads 256 colours to row `y` at `x`; returns the CLUT id
+/// (`GetClut(x, y)`) [doc].
+///
+/// # Safety
+/// `clut` must hold 256 halfwords.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn LoadClut(clut: *const u32, x: i32, y: i32) -> i32 {
+    let r = Rect {
+        x: x as i16,
+        y: y as i16,
+        w: 256,
+        h: 1,
+    };
+    unsafe { LoadImage(&r, clut) };
+    i32::from(GetClut(x, y))
+}
+
 /// `MoveImage(rect, x, y)`: copies a VRAM rectangle to `(x, y)` [doc; GP0(80h)]. Returns 0.
 ///
 /// # Safety

@@ -11,7 +11,7 @@ use crate::trap::stubs;
 stubs! { dw1_exit }
 
 // libgpu
-stubs! { LoadClut OpenTIM ReadTIM SetDrawLoad }
+stubs! { SetDrawLoad }
 
 // libgs (its data globals are in `globals`).
 stubs! {

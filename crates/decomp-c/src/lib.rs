@@ -59,6 +59,13 @@ const _: () = {
     assert!(offset_of!(DirEntry, system) == offset_of!(bindings::DIRENTRY, system));
 };
 
+/// psyq's `TimImage` has the layout of `TIM_IMAGE`.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    assert!(size_of::<psyq::libgpu::TimImage>() == size_of::<bindings::TIM_IMAGE>());
+    assert!(offset_of!(psyq::libgpu::TimImage, paddr) == offset_of!(bindings::TIM_IMAGE, paddr));
+};
+
 /// The SDK globals psyq defines in Rust have the layout the C headers declare.
 const _: () = {
     // libgpu/libgs structs psyq reads and writes.
