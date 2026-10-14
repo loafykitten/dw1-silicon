@@ -102,6 +102,21 @@ TMD map, the file queue, fonts, scripts, UI, clock...), `loadTIMFile` twice, the
    `super` of SCREEN (the real code faults), a coordinate chain deeper than 32, a light vector
    whose sum of squares wraps negative, and `GsSetRefView2` with a parent. `GsCOORDINATE2.flg`
    is a stamp against libgs's swap counter `PSDCNT` (see `coord.rs`).
+6e. **`GsSortObject4J` and the TMD handlers (done 2026-10-14):** `libgs/sort4j.rs`, native: the
+   entry walks the object's runs and calls the function in `GsFCALL4` for each kind (slot layout
+   from `_GsFCALL`), so a handler the game never installs is never called. Implemented:
+   `GsTMDfastTG3L` and `GsTMDfastTG4L` (lit Gouraud textured, modes 0x34 and 0x3C, flag 0). These
+   are the only kinds in 9,000 calls recorded from Redux VBlank 3440 to 5238 (new-game scene,
+   Jijimon's house, name entry): all with attribute 0 and shift 2 (`kinds.txt` from
+   `DW1_CAPTURE_KINDS=1`). Anything else (attributes, other kinds, flag bits, OTZ past the table)
+   stops the program. `tests/libgs_capture.rs` replays 228 captured calls (S0.7's 48 and
+   four `s4j-*` runs, 180; 39,420 packet words) on native memory: packets, OT links, work base, scratchpad, GTE
+   control registers and "nothing else written", all exact. The GTE data registers and FLAG
+   after a call are not compared (the real handlers leave pipeline-dependent values there).
+   The native replay now draws the new-game scene: frames equal the emulator's except for the
+   rasteriser's rounding (about 1,300 pixels, mostly 1-3 levels). It stops at `GsSortBoxFill`
+   (`renderUIBoxStatic`, poll 1088, recorded VBlank 3570) after a decomp fix:
+   `setupNewGameDialogueBox` read the type of a null `ENTITY_TABLE` entry, harmless on the PS1.
 7. **The intro movie:** MOV's streaming reads (`St*`), the MDEC calls (`DecDCT*`), XA
    skipped silently. Check: it plays to the end and skips on Start.
    **Done 2026-10-13** (`docs/phase2-movie.md`): all four movies play through `MOV_playMovie`

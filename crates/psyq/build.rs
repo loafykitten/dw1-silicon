@@ -1,8 +1,5 @@
-//! Sets `cfg(have_libgs_capture)` when the S0.7 libgs captures (gitignored, local only) exist:
-//! `DW1_LIBGS_CAPTURE`, default `<workspace>/captures/oracle-runs/libgs-pin`. Without them
-//! `tests/libgs_capture.rs` shows as an ignored placeholder.
-//!
-//! Also sets `cfg(have_disc)` (with `DW1_TEST_DISC` and `DW1_TEST_FILES`) when Ember's disc and
+//! Sets `cfg(have_libgs_capture)` when the `GsSortObject4J` captures (gitignored, local only)
+//! exist (see `sort_capture`), and `cfg(have_disc)` (with `DW1_TEST_DISC` and `DW1_TEST_FILES`) when Ember's disc and
 //! the files dumpsxiso extracted from it exist, for `tests/libcd_disc.rs`; see
 //! `crates/pack/build.rs`.
 
@@ -12,25 +9,43 @@ fn main() {
     disc();
     gte_capture();
     libgs_light_capture();
-    println!("cargo::rustc-check-cfg=cfg(have_libgs_capture)");
+    sort_capture();
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo::rerun-if-env-changed=DW1_LIBGS_CAPTURE");
-    let dir = match std::env::var_os("DW1_LIBGS_CAPTURE") {
+}
+
+/// The capture runs of `GsSortObject4J` under `DW1_SORT_CAPTURES` (default
+/// `<workspace>/captures/oracle-runs`): `libgs-pin` (S0.7, `oracle/capture-libgs.lua`) and every
+/// `s4j-*` (`oracle/capture-calls.lua` with `DW1_CAPTURE_STATES=1`). Sets
+/// `cfg(have_libgs_capture)` when at least one has its `calls.txt`; without any,
+/// `tests/libgs_capture.rs` shows as an ignored placeholder.
+fn sort_capture() {
+    println!("cargo::rustc-check-cfg=cfg(have_libgs_capture)");
+    println!("cargo::rerun-if-env-changed=DW1_SORT_CAPTURES");
+    let root = match std::env::var_os("DW1_SORT_CAPTURES") {
         Some(d) => PathBuf::from(d),
-        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs/libgs-pin"),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs"),
     };
     // Watched even when missing (Cargo then reruns this script on every build), so captures
     // added later are picked up.
-    println!(
-        "cargo::rerun-if-changed={}",
-        dir.join("calls.txt").display()
-    );
-    if dir.join("calls.txt").exists() {
+    println!("cargo::rerun-if-changed={}", root.display());
+    let mut found = 0;
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if (name == "libgs-pin" || name.starts_with("s4j-"))
+                && e.path().join("calls.txt").exists()
+            {
+                found += 1;
+            }
+        }
+    }
+    if found > 0 {
         println!("cargo::rustc-cfg=have_libgs_capture");
     } else {
         println!(
-            "cargo::warning=libgs captures not found ({}): tests/libgs_capture.rs will be ignored",
-            dir.display()
+            "cargo::warning=GsSortObject4J captures not found under {}: tests/libgs_capture.rs will be ignored",
+            root.display()
         );
     }
 }

@@ -24,6 +24,12 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
     `ckpt_NNNN_<why>.{bin,txt}` at `oracle/replay.lua`'s triggers (`DW1_CHECKPOINTS=0` turns it
     off). Compare with `tools/oracle/compare_canon.py NATIVE_DIR ORACLE_DIR --allow-unpaired`.
     Checkpoints 0-3 (poll 0, poll 600) match the emulator's exactly, bytes included.
+  - **3D models draw natively (2026-10-14):** `GsSortObject4J` and `GsTMDfastTG3L`/`TG4L` are
+    native (`libgs/sort4j.rs`, bit-exact on 228 captured calls; only those two kinds occur up
+    to Redux VBlank 5238). The new-game scene's frames equal Redux's up to rasteriser rounding.
+    The replay stops at `GsSortBoxFill` (2D sorts next). `DW1_CRASH_TRACE=1` prints a call
+    stack on SIGSEGV (lldb can't attach in the agent sandbox). `oracle/capture-calls.lua` has
+    `DW1_CAPTURE_KINDS=1` (per-call attribute and primitive kinds of `GsSortObject4J`).
   - **Emulator tools added:** `oracle/capture-calls.lua` (record chosen SDK calls with full
     machine state; `tools/oracle/calldiff.py` shows what each changed) and
     `oracle/call-sdk.lua` (run SDK functions on chosen inputs). Timeline of the route at boot:

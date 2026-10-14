@@ -15,7 +15,7 @@ stubs! { LoadClut OpenTIM ReadTIM SetDrawLoad }
 
 // libgs (its data globals are in `globals`).
 stubs! {
-    GsSortBoxFill GsSortFastSprite GsSortObject4J GsSortOt
+    GsSortBoxFill GsSortFastSprite GsSortOt
     GsSortPoly GsSortSprite
 }
 
@@ -24,6 +24,6 @@ stubs! {
     GsTMDdivTF3NL GsTMDdivTF4L GsTMDdivTF4NL GsTMDdivTG3NL GsTMDdivTG4NL GsTMDdivTNF3
     GsTMDdivTNF4 GsTMDdivTNG3 GsTMDdivTNG4 GsTMDfastF3L GsTMDfastF4L GsTMDfastF4NL
     GsTMDfastG3L GsTMDfastG4L GsTMDfastNF4 GsTMDfastTF3L GsTMDfastTF3NL GsTMDfastTF4L
-    GsTMDfastTF4NL GsTMDfastTG3L GsTMDfastTG3NL GsTMDfastTG4L GsTMDfastTG4NL GsTMDfastTNF3
+    GsTMDfastTF4NL GsTMDfastTG3NL GsTMDfastTG4NL GsTMDfastTNF3
     GsTMDfastTNF4 GsTMDfastTNG3 GsTMDfastTNG4
 }

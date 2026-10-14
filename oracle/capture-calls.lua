@@ -17,6 +17,8 @@
 --   DW1_CAPTURE_MAX=<n>         most calls recorded (default 400)
 --   DW1_CAPTURE_STATES=1        also write callNNNN_in.bin / callNNNN_out.bin (DW1STATE format,
 --                               see capture-libgs.lua; 2 MiB each)
+--   DW1_CAPTURE_KINDS=1         also write kinds.txt: per recorded GsSortObject4J call, the object's
+--                               attribute and the (mode/flag) histogram of its TMD primitives
 --   DW1_CAPTURE_VRAM=0          skip the per-VBlank VRAM dumps (long windows)
 --   DW1_CAPTURE_DEREF=1         append the words at a1 and a2 after each call (MemCardSync's cmd/result)
 --   DW1_CAPTURE_STOP=<vblank>   end the run here (default: after the window and the last shot),
@@ -58,6 +60,39 @@ local WINDOW = num('DW1_CAPTURE_VBLANKS', 2)
 local MAX_CALLS = num('DW1_CAPTURE_MAX', 400)
 local STATES = os.getenv('DW1_CAPTURE_STATES') == '1'
 local DEREF = os.getenv('DW1_CAPTURE_DEREF') == '1'
+local KINDS = os.getenv('DW1_CAPTURE_KINDS') == '1'
+local kindLines = {}
+
+-- A GsDOBJ2's attribute and the histogram of its TMD object's primitive modes (TMD layout from
+-- psx-spx; primitives are stored in runs after GsLinkObject4, a run header has ilen 0).
+local function describeObject(objp)
+    local mem = ffi.cast('uint8_t*', PCSX.getMemPtr())
+    local function r32(a) return ffi.cast('uint32_t*', mem + (a % 0x200000))[0] end
+    local attr, tmd = r32(objp), r32(objp + 8)
+    local npm, a = r32(tmd + 20), r32(tmd + 16)
+    local left, hist = npm, {}
+    while left > 0 do
+        local h = r32(a)
+        local ilen, flag, mode = bit.band(bit.rshift(h, 8), 255), bit.band(bit.rshift(h, 16), 255), bit.rshift(h, 24)
+        local cnt = ilen == 0 and bit.band(h, 0xffff) or 1
+        local quad, tex, gour = bit.band(mode, 8) ~= 0, bit.band(mode, 4) ~= 0, bit.band(mode, 16) ~= 0
+        local lit, grad = bit.band(flag, 1) == 0, bit.band(flag, 4) ~= 0
+        local n = quad and 4 or 3
+        local w = ((lit and tex) and 0 or 1) + (tex and n or 0) + (grad and n - 1 or 0)
+        local hv = n
+        if lit then hv = hv + (gour and n or 1) elseif gour and not grad then w = w + n - 1 end
+        w = w + math.floor((hv + 1) / 2)
+        local key = string.format('%02x/%d', mode, flag)
+        hist[key] = (hist[key] or 0) + cnt
+        a = a + cnt * (4 + 4 * w)
+        left = left - cnt
+        if cnt == 0 then break end
+    end
+    local parts = {}
+    for k, v in pairs(hist) do parts[#parts + 1] = k .. '=' .. v end
+    table.sort(parts)
+    return string.format('attr=%x prims=%d %s', attr, npm, table.concat(parts, ' '))
+end
 
 -- Function addresses from the decomp's symbol list.
 local funcs = {}
@@ -114,6 +149,7 @@ local function finish()
     local lines = { '# n vblank name a0 a1 a2 a3 sp ra v0\n' }
     for i = 1, #index do lines[#lines + 1] = index[i].line .. ' ' .. (index[i].v0 or '-') .. '\n' end
     DW1ROUTE_WRITE('calls.txt', table.concat(lines))
+    if KINDS then DW1ROUTE_WRITE('kinds.txt', table.concat(kindLines)) end
     print(string.format('DW1CAPTURE done calls=%d vblank=%d', calls, vblank))
     DW1ROUTE_SUCCEED()
 end
@@ -127,6 +163,10 @@ local function onEntry(fn)
         local rec = { line = string.format('%04d %d %s %08x %08x %08x %08x %08x %08x',
             n, vblank, fn.name, r.a0, r.a1, r.a2, r.a3, r.sp, r.ra) }
         index[#index + 1] = rec
+        if KINDS and fn.name == 'GsSortObject4J' then
+            kindLines[#kindLines + 1] = string.format('%04d %d shift=%d %s\n', n, vblank, r.a2,
+                describeObject(r.a0))
+        end
         if STATES then writeState(string.format('call%04d_in.bin', n)) end
         -- A persistent breakpoint per return address (LuaJIT allows about 2,000 ffi callbacks,
         -- so one per call would run out); it retires the newest pending call from that address.
