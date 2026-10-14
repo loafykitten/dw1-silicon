@@ -7,26 +7,21 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-14, session 3): start here
 
-- **Phase 4 gate replays done (2026-10-14):** `oracle/replays/file-city-walk.txt` and
-  `care-fixture.txt`, native checkpoints all identical; `GsSortOt` implemented (DIGIMON status
-  screen); decomp fork branch `dw1-native-phase4` (local, to push) fixes the digivice's ordering
-  tables. `oracle/explore.lua` finds routes turn-based. Keep Redux routes under VBlank ~32700
-  (Lua hooks fail near 32768). See `docs/phase4-plan.md`.
-- **Phases 2 and 3 are done; Phase 4 is under way** (`docs/phase2-report.md`,
-  `docs/phase3-plan.md`, `docs/phase2-plan.md` for the slices). The `new-game` replay
-  (`oracle/replays/new-game.txt`, 7,131 polls) runs natively from boot to its last poll, first
-  gameplay with the tamer and Agumon, with all 19 canonical checkpoints byte-identical to the
-  emulator's, in about 18 s. Frames from the landing screen to the main menu are
-  pixel-identical; new-game and File City frames differ only on 3D models (8-211 px a frame,
-  rasteriser rounding on Gouraud/semi-transparent polygons). Phase 3: Ember's save loads
-  through CONTINUE GAME (`oracle/replays/continue-fixture.txt` with `DW1_CARD1=` the fixture):
-  checkpoints 0-5, including the load and File City, are identical; the replay then stops at
-  TMD mode 0x3E (a semi-transparent quad) in `GsTMDfastTG4L`, which an agent was implementing at
-  the end of the session along with a survey of every TMD kind the routes use. **Next (Phase
-  4):** the rest of the TMD kinds, frames of the models exact, then the Phase 4 gate (a replay to
-  the first walk around File City with state equal at each map change, and a fixture-started
-  hour of care). Reviews open at the session's end: gpt-6.1-sol on the 2D sorts (80a8e2d,
-  0ffa5c6) and on Phase 3; GPT 6 Astra's second pass on the rasteriser (952738e, 925c0c0).
+- **Phase 4's gate is met (2026-10-14):** `oracle/replays/file-city-walk.txt` (27 checkpoints,
+  five map changes) and `care-fixture.txt` (Ember's save, 37 checkpoints, 07:00 to 14:16 game
+  time) run natively with every checkpoint identical; `new-game` still 19 of 19. `GsSortOt`
+  measured (bucket-0 chains; traps outside the table). Decomp fork `dw1-native` is at d29807d
+  (pushed). `oracle/explore.lua` finds routes turn-based; keep Redux routes under VBlank
+  ~32700 (Lua hooks fail near 32768). See `docs/phase4-plan.md`.
+- **Phases 1-3 are done** (`docs/phase2-report.md`, `docs/phase3-plan.md`, `docs/phase2-plan.md`
+  for the slices). Frames from the landing screen to the main menu are pixel-identical (298
+  frames). 3D model frames are close but not exact: File City 129 px over 9 frames (was 904),
+  new-game 3603-5199 8-20 px a frame. All of what is left is texture coordinates exactly on .5
+  in lit Gouraud textured polygons (an Opus agent was on it at the end of the session; frame
+  redraws in `captures/oracle-runs/gpu-frames`, `crates/backend/tests/gpu_frames.rs`).
+  **Next:** the model frames exact, then a care replay that reaches a need (needs a fixture with
+  food, or Redux hooks past VBlank 32768), the shops, then Phase 5 (overlays, battles first).
+  No reviews open.
   - **Rasteriser:** `backend::gpu` now follows Redux's softgpu, fitted by black-box draws
     (`crates/backend/tests/gpu_oracle.rs`, `tools/oracle/gpu_requests.py`; local results in
     `captures/oracle-runs/gpu-prims`, `gpu-snap`): round-to-nearest interpolation from the left
