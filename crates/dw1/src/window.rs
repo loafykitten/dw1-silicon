@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use sdl3::EventPump;
+use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
 use sdl3::keyboard::Scancode;
@@ -30,6 +31,16 @@ mod splash;
 /// oracle, counts at 60.009 Hz, which is a quirk of its counter and not what to match.
 /// In thousandths of a hertz, so the arithmetic stays integer.
 pub const FIELD_MILLIHZ: u64 = 59_817;
+
+/// The rate the SPU's samples are played at: what libspu renders in a VBlank (the emulator's
+/// 564,398 CPU cycles at 768 a sample, 734.89 samples) times the field rate, so the sound keeps
+/// pace with the picture. That's 0.3% under the SPU's 44.1 kHz (the oracle's VBlank is a little
+/// shorter than the PS1's); SDL resamples to the device, 5 cents flat.
+pub const AUDIO_HZ: i32 = ((psyq::libspu::CYCLES_PER_VBLANK * FIELD_MILLIHZ)
+    / (psyq::libspu::CYCLES_PER_SAMPLE * 1000)) as i32;
+/// Most audio queued before new samples are dropped (a quarter second): after a stall the
+/// sound catches up instead of lagging behind the picture for good.
+const AUDIO_MAX_QUEUED_BYTES: i32 = AUDIO_HZ * 4 / 4;
 
 /// How many fields behind the clock may fall before it resyncs instead of racing to catch up.
 pub const MAX_LAG_FIELDS: u64 = 4;
@@ -194,6 +205,57 @@ pub struct Window {
     /// Pad bits still held from before the game took over (the splash's skip press): not
     /// reported until released.
     held_over: u32,
+    /// The sound output (kept open; libspu pushes into it). None if there's no audio device.
+    _audio: Option<AudioStreamOwner>,
+}
+
+/// The audio stream as libspu's sink holds it. SDL's stream calls are thread-safe [doc: SDL3
+/// SDL_PutAudioStreamData], and the sink only runs on the game's (main) thread anyway.
+struct SinkStream(*mut sdl3::sys::audio::SDL_AudioStream);
+// SAFETY: see above.
+unsafe impl Send for SinkStream {}
+
+/// Opens the default playback device and points libspu's samples at it. DW1_MUTE=1 skips it.
+fn open_audio(sdl: &sdl3::Sdl) -> Option<AudioStreamOwner> {
+    if std::env::var("DW1_MUTE").is_ok_and(|v| !v.is_empty() && v != "0") {
+        return None;
+    }
+    let spec = AudioSpec {
+        freq: Some(AUDIO_HZ),
+        channels: Some(2),
+        format: Some(AudioFormat::s16_sys()),
+    };
+    let stream = match sdl
+        .audio()
+        .and_then(|a| a.default_playback_device().open_device_stream(Some(&spec)))
+    {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("dw1: no sound: {e}");
+            return None;
+        }
+    };
+    if let Err(e) = stream.resume() {
+        eprintln!("dw1: no sound: {e}");
+        return None;
+    }
+    let sink = SinkStream(stream.raw());
+    psyq::libspu::set_audio_sink(Box::new(move |samples: &[i16]| {
+        let sink = &sink;
+        // SAFETY: the stream stays open as long as the window (which owns it) lives, and the
+        // window lives until the program exits.
+        unsafe {
+            if sdl3::sys::audio::SDL_GetAudioStreamQueued(sink.0) > AUDIO_MAX_QUEUED_BYTES {
+                return;
+            }
+            sdl3::sys::audio::SDL_PutAudioStreamData(
+                sink.0,
+                samples.as_ptr().cast(),
+                (samples.len() * 2) as i32,
+            );
+        }
+    }));
+    Some(stream)
 }
 
 // SAFETY: SDL objects must stay on the main thread, and the host is only ever called from the
@@ -215,6 +277,7 @@ impl Window {
         let creator = canvas.texture_creator();
         let gamepad_sys = sdl.gamepad().map_err(|e| e.to_string())?;
         let pump = sdl.event_pump().map_err(|e| e.to_string())?;
+        let audio = open_audio(&sdl);
         let mut w = Window {
             canvas,
             creator,
@@ -231,6 +294,7 @@ impl Window {
             last_size: None,
             log: std::env::var_os("DW1_WINDOW_LOG").is_some(),
             held_over: 0,
+            _audio: audio,
         };
         for id in w.gamepad_sys.gamepads().unwrap_or_default() {
             w.open_gamepad(id);

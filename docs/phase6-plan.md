@@ -158,3 +158,16 @@ so poll-relative times only work for sound effects. Battle replay, whole run: so
 at the same VBlank, 57 a VBlank off, 5 in the same loading gap, 36 fade steps with other values;
 music 1,965 the same, 19 a VBlank off, 0 different (78 events past the earlier side's song end);
 globals 3,956 polls the same. All nine replays still match their checkpoints.
+
+## Slice 4: sound out (2026-10-14)
+
+The window build opens the default audio device (SDL3 audio stream, 16-bit stereo) and libspu
+pushes each VBlank's samples into it. They're declared at 43,959 Hz: what libspu renders per
+VBlank (734.89 samples, from the emulator's VBlank length) times the window's 59.817 Hz field
+pace, so sound and picture keep pace; SDL resamples to the device (pitch 0.3%, 5 cents, flat).
+More than a quarter second queued and new samples are dropped, so a stall doesn't leave the
+sound lagging. `DW1_MUTE=1` opens no device. Headless runs can write the audio with
+`DW1_WAV=<file>` (the battle replay's: `captures/native-runs/p6-listen-battle/`, local only).
+
+Not yet: XA audio (the intro movie's sound; the game's `SsInit` turns CD audio off afterwards
+and nothing in the replays turns it back on), and Ember's listen ("sounds right").
