@@ -6,7 +6,7 @@ written in Rust (DW2-PC is the reference). **Read `PLAN.md` before doing anythin
 it's the handoff, with the goal, ground rules, sources, architecture, oracle, phases
 and open questions.
 
-- **Current status (2026-10-13, session 3):** Phase 1 done (`docs/phase1-report.md`); Phase 2
+- **Current status (2026-10-14, session 3):** Phase 1 done (`docs/phase1-report.md`); Phase 2
   (boot to the main menu) in progress, see `docs/phase2-plan.md` and PLAN.md's "Where things
   stand". `cargo run -p dw1` runs the game's `main()` until the first SDK call not yet written,
   which stops with its name and callers. Public repo `loafykitten/dw1-silicon` (branch
