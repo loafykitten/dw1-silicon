@@ -141,6 +141,10 @@ DW1ROUTE_TARGET = DW1ROUTE_TARGET or os.getenv('DW1EXPLORE_TARGET')
 DW1ROUTE_ON_TARGET = function(v)
     vblank = v
     print('EXPLORE start vblank=' .. v)
+    -- Detach the route: its listener must not fire its remaining scheduled presses (they would
+    -- be missing from inputs.log), and any button it holds is released.
+    DW1ROUTE_DETACHED = true
+    for _, b in pairs(B) do pad.clearOverride(b) end
     KEEP_EXPLORE_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', tick)
     -- the route's own listener already ran for this VBlank; take over from the next one, but
     -- show the state now

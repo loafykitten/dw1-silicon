@@ -72,7 +72,9 @@ poop to come sooner (the fixture has no food, so the partner can't be fed).
 - `oracle/explore.lua` (dev tool): runs a profile to a milestone, then stops emulation at each
   command boundary and reads commands from `./cmd.txt` (`hold BTN[+BTN] N`, `tap BTN`, `wait N`,
   `shot NAME`, `state`, `quit`). The pad states are keyed to VBlanks exactly like a route, and
-  every press is written to `./inputs.log` as a ready-to-paste schedule line. It prints the
+  every press is written to `./inputs.log` as a ready-to-paste schedule line. At the handoff it
+  detaches the route's own listener (`DW1ROUTE_DETACHED`) and releases the buttons the route
+  holds, so no scheduled press fires after it. It prints the
   screen, positions, clock and care fields after each batch and takes a screenshot `s_<vblank>`.
   How the two routes were found: send a command, read the state line and the screenshot, repeat.
 - `oracle/route-new-game.lua`: profiles `file-city-walk` (new-game + the walk schedule) and
@@ -88,17 +90,26 @@ poop to come sooner (the fixture has no food, so the partner can't be fed).
 
 - **`GsSortOt`** (libgs, `crates/psyq/src/libgs/mod.rs`), reached by the DIGIMON status screen
   (the partner model is drawn into its own table, then sorted into the frame's). Sony's
-  function, observed: `dst`'s entry `src->point - dst->offset` is set to link to `src->tag`, the
-  source's entry 0 takes that entry's old word, nothing else changes, the return value is
-  `dst`. Verified two ways (`crates/psyq/tests/libgs_sortot.rs`, local captures): 13 calls
-  captured in the care route (`captures/oracle-runs/g2d-sortot`, `oracle/capture-calls.lua`
-  with `DW1ROUTE_PROFILE=care-fixture`), every table word of both tables equal; and 262
-  `call-sdk.lua` requests (`tools/oracle/sortot_requests.py`, `libgs-sortot`) with tables of
-  2 to 32 entries, sources of 1 to 16, entries through packets, 152 of them with an in-range
-  index, all equal. The index rule was not guessable from the capture alone (the game always
-  has offset 0); an out-of-range index writes outside the table in both. A first request set
-  with random link words crashed the emulated game (the SDK walks the chain), so the entries are
-  chained like the game's.
+  function, observed: `dst`'s entry `src->point - dst->offset` is set to link to `src->tag`; the
+  end of `src`'s chain takes that entry's old link; nothing else changes; the return value is
+  `dst`. The end of the chain is the last element of the chain that starts at `src`'s entry 0:
+  entry 0 itself when it is empty, else the last packet hanging off bucket 0 (its length byte
+  stays). Measured after review (gpt-6.1-sol found that the first version overwrote entry 0
+  even with packets behind it): 352 `call-sdk.lua` requests
+  (`tools/oracle/sortot_requests.py`, `libgs-sortot`: sources of 1 to 16 entries, destinations
+  of 2 to 32, entries going through packets, bucket 0 empty, with one packet or with two), 141
+  compared with every table and packet word of both tables checked, 40 or more with packets in
+  bucket 0. On the PS1 an emptied table's entry 0 links to the SDK's own empty packets
+  (`0x116bf8`) and the chain ends there; natively it ends at `LINK_END`, and the test maps one to
+  the other. Fed a chain ending in the `0xFFFFFF` marker instead, the SDK overwrote entry 0
+  whatever hung off it (97 requests); the game never has that state and it isn't copied.
+  Also 13 captured calls from the care route (`captures/oracle-runs/g2d-sortot`,
+  `oracle/capture-calls.lua` with `DW1ROUTE_PROFILE=care-fixture`), all words equal
+  (`crates/psyq/tests/libgs_sortot.rs`). **An index outside the destination** (`point - offset`
+  below 0 or past the table; the SDK writes outside it) **stops the program** like an
+  unimplemented call (`crates/psyq/tests/sortot_traps.rs`, subprocess cases). A first request
+  set with random link words crashed the emulated game (the SDK walks the chain), so the
+  entries are chained like the game's.
 - **decomp fork, local branch `dw1-native-phase4`** (one commit on `1f6a0d1`, `d29807d`, **not
   pushed**): the digivice's two framebuffer ordering tables (`FRAMEBUFFER_OT`, in `main.c`) sat
   at `TEXTURE_BUFFER` and `+0x14` (the PS1 `sizeof(GsOT)`); natively the struct is 32 bytes, so

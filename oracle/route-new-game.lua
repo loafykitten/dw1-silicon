@@ -137,6 +137,9 @@ end
 
 local vblank = 0
 KEEP_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
+    -- oracle/explore.lua takes over the pad at the target and sets this: no scheduled press or
+    -- milestone may fire after it.
+    if DW1ROUTE_DETACHED then return end
     vblank = vblank + 1
     if releaseAt[vblank] then for _, b in ipairs(releaseAt[vblank]) do pad.clearOverride(b) end end
     if pressAt[vblank] then for _, b in ipairs(pressAt[vblank]) do pad.setOverride(b) end end

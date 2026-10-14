@@ -26,8 +26,19 @@ static RAM: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(have_libgs_sortot_capture)]
 mod capture {
-    use super::common::{State, native, ram, ram_word, root, set_ram_word, translate_link};
+    use super::common::{State, native, ram, ram_word, root, set_ram_word};
     use psyq::libgs::{GsOt, GsSortOt};
+    use psyq::memory::LINK_END;
+
+    /// A captured link in the native encoding; the SDK's own empty packets, where an emptied
+    /// table's entry 0 points on the PS1, are the end of the list natively.
+    fn translate_link(w: u32) -> u32 {
+        if w & LINK_END == 0x116BF8 {
+            (w & 0xFF00_0000) | LINK_END
+        } else {
+            super::common::translate_link(w)
+        }
+    }
 
     fn ot_at(s: &State, a: u32) -> GsOt {
         GsOt {
@@ -97,6 +108,8 @@ mod oracle {
     use std::path::PathBuf;
 
     const BUF: u32 = 0x801E_0000;
+    /// Where an emptied table's chain ends on the PS1 (the SDK's own empty packets).
+    const SENTINEL: u32 = 0x116BF8;
 
     fn dir() -> PathBuf {
         match std::env::var_os("DW1_SORT_CAPTURES") {
@@ -123,19 +136,28 @@ mod oracle {
         u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap())
     }
 
+    /// A link word in the native encoding; the sentinel and the end marker both end the list.
     fn translate(w: u32) -> u32 {
-        if w & LINK_END == LINK_END {
-            w
+        let link = w & LINK_END;
+        if link == LINK_END || link == SENTINEL {
+            (w & 0xFF00_0000) | LINK_END
         } else {
-            (w & 0xFF00_0000) | link_of(ps1_ram_ptr(0x8000_0000 | (w & LINK_END)))
+            (w & 0xFF00_0000) | link_of(ps1_ram_ptr(0x8000_0000 | link))
         }
     }
 
-    fn write_words(ram: &mut [u8], at: u32, words: impl Iterator<Item = u32>) {
-        for (i, w) in words.enumerate() {
-            let o = (at as usize & 0x1F_FFFF) + 4 * i;
-            ram[o..o + 4].copy_from_slice(&w.to_le_bytes());
-        }
+    fn ram() -> &'static mut [u8; 2 << 20] {
+        unsafe { &mut *(&raw mut dw1_ps1_ram).cast::<[u8; 2 << 20]>() }
+    }
+
+    fn word_at(ram: &[u8; 2 << 20], a: u32) -> u32 {
+        le32(&ram[(a as usize & 0x1F_FFFF)..], 0)
+    }
+
+    /// In a region a request reads back, every word of a table is a link; a packet region is
+    /// four-word packets whose first word is the link.
+    fn is_link_word(at: u32, i: usize) -> bool {
+        at < BUF + 0x2000 || i.is_multiple_of(4)
     }
 
     #[test]
@@ -146,24 +168,25 @@ mod oracle {
         let reqs: Vec<&str> = req.lines().filter(|l| !l.trim().is_empty()).collect();
         let ress: Vec<&str> = res.lines().filter(|l| !l.trim().is_empty()).collect();
         assert_eq!(reqs.len(), ress.len(), "requests vs results");
-        assert!(reqs.len() >= 200);
-        let (mut compared, mut skipped) = (0, 0);
+        assert!(reqs.len() >= 300);
+        let (mut compared, mut skipped, mut end_marked, mut with_packets) = (0, 0, 0, 0);
         for (n, (q, r)) in reqs.iter().zip(&ress).enumerate() {
             let mut words = q.split_whitespace();
             assert_eq!(words.next(), Some("GsSortOt"));
             let args: Vec<u32> = (0..4).map(|_| addr(words.next().unwrap())).collect();
-            let ram = unsafe { &mut *(&raw mut dw1_ps1_ram).cast::<[u8; 2 << 20]>() };
-            let mut inputs = Vec::new();
+            let ram = ram();
+            // The inputs from the tables on: (address, number of words).
+            let mut regions = Vec::new();
             for w in words {
                 if let Some(v) = w.strip_prefix("in=") {
                     let (a, hex) = v.split_once(':').unwrap();
-                    inputs.push((addr(a), unhex(hex)));
+                    let (a, bytes) = (addr(a), unhex(hex));
+                    let o = a as usize & 0x1F_FFFF;
+                    ram[o..o + bytes.len()].copy_from_slice(&bytes);
+                    if a >= BUF + 0x200 && a != BUF + 0x1000 {
+                        regions.push((a, bytes.len() / 4));
+                    }
                 }
-            }
-            // The tables first (struct and entries as the request made them).
-            for (a, bytes) in &inputs {
-                let o = *a as usize & 0x1F_FFFF;
-                ram[o..o + bytes.len()].copy_from_slice(bytes);
             }
             let struct_of = |at: u32| {
                 let b = &ram[(at as usize & 0x1F_FFFF)..];
@@ -172,16 +195,38 @@ mod oracle {
             let (src_s, dst_s) = (struct_of(args[0]), struct_of(args[1]));
             let index = i64::from(src_s.3) - i64::from(dst_s.2);
             if !(0..1 << dst_s.0).contains(&index) {
-                skipped += 1;
+                skipped += 1; // out of range: the native function stops instead
                 continue;
             }
-            // Entries of both tables go native (links translated; chained packets stay as the
-            // request left them, in native memory they are only ever linked to).
-            for &(len, org) in &[(src_s.0, src_s.1), (dst_s.0, dst_s.1)] {
-                let words: Vec<u32> = (0..1usize << len)
-                    .map(|i| translate(le32(&ram[(org as usize & 0x1F_FFFF)..], i)))
-                    .collect();
-                write_words(ram, org, words.into_iter());
+            // Follow the source's chain from entry 0 as the request left it.
+            let (mut at, mut steps) = (src_s.1, 0);
+            let end = loop {
+                let link = word_at(ram, at) & LINK_END;
+                if link == LINK_END || link == SENTINEL {
+                    break link;
+                }
+                at = 0x8000_0000 | link;
+                steps += 1;
+                assert!(steps < 64, "request {n}: the chain doesn't end");
+            };
+            if end == LINK_END {
+                // The SDK overwrites entry 0 itself when the chain ends in the 0xFFFFFF marker,
+                // whatever hangs off it; the game never has that, and natively it isn't copied.
+                end_marked += 1;
+                continue;
+            }
+            if steps > 0 {
+                with_packets += 1;
+            }
+            // Everything the request wrote goes native: link words translated.
+            for &(a, count) in &regions {
+                for i in 0..count {
+                    if is_link_word(a, i) {
+                        let o = (a as usize & 0x1F_FFFF) + 4 * i;
+                        let w = translate(le32(&ram[o..], 0));
+                        ram[o..o + 4].copy_from_slice(&w.to_le_bytes());
+                    }
+                }
             }
             let mut src = GsOt {
                 length: src_s.0,
@@ -199,31 +244,33 @@ mod oracle {
             };
             let ret = unsafe { GsSortOt(&mut src, &mut dst) };
             assert!(std::ptr::eq(ret, &dst), "request {n}: return value");
-            let mut got_tables = 0;
+            let mut got_regions = 0;
             for w in r.split_whitespace().skip(1) {
                 if w.starts_with("v0=") {
                     continue;
                 }
                 let (a, hex) = w.split_once('=').unwrap();
                 let (a, want) = (addr(a), unhex(hex));
-                if a == BUF + 0x200 || a == BUF + 0x1100 {
-                    for i in 0..want.len() / 4 {
-                        let got = le32(&ram[(a as usize & 0x1F_FFFF)..], i);
-                        assert_eq!(
-                            got,
-                            translate(le32(&want, i)),
-                            "request {n}: entry {i} of {a:#x}"
-                        );
-                    }
-                    got_tables += 1;
+                if a < BUF + 0x200 || a == BUF + 0x1000 {
+                    continue; // the two structs are unchanged
                 }
+                for i in 0..want.len() / 4 {
+                    let got = word_at(ram, a + 4 * i as u32);
+                    let expect = if is_link_word(a, i) {
+                        translate(le32(&want, i))
+                    } else {
+                        le32(&want, i)
+                    };
+                    assert_eq!(got, expect, "request {n}: word {i} of {a:#x}");
+                }
+                got_regions += 1;
             }
-            assert_eq!(got_tables, 2, "request {n}: both tables read back");
+            assert!(got_regions >= 2, "request {n}: tables read back");
             compared += 1;
         }
         assert!(
-            compared >= 140,
-            "only {compared} compared ({skipped} skipped)"
+            compared >= 140 && with_packets >= 40,
+            "{compared} compared, {with_packets} with packets in bucket 0 ({skipped} out of range, {end_marked} end-marked)"
         );
     }
 }
