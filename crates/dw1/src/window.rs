@@ -207,6 +207,8 @@ pub struct Window {
     held_over: u32,
     /// The sound output (kept open; libspu pushes into it). None if there's no audio device.
     _audio: Option<AudioStreamOwner>,
+    /// The title says a save failed.
+    save_failed_shown: bool,
 }
 
 /// The audio stream as libspu's sink holds it. SDL's stream calls are thread-safe [doc: SDL3
@@ -305,6 +307,7 @@ impl Window {
             log: std::env::var_os("DW1_WINDOW_LOG").is_some(),
             held_over: 0,
             _audio: audio,
+            save_failed_shown: false,
         };
         for id in w.gamepad_sys.gamepads().unwrap_or_default() {
             w.open_gamepad(id);
@@ -412,6 +415,21 @@ impl Window {
         self.last_size = shown;
     }
 
+    /// A save the game thinks it made but that didn't reach the disk shows in the window's
+    /// title until a later save succeeds.
+    fn show_save_state(&mut self) {
+        let failed = psyq::libmcrd::save_failed();
+        if failed != self.save_failed_shown {
+            self.save_failed_shown = failed;
+            let title = if failed {
+                "Digimon World (dw1-silicon) - SAVE NOT WRITTEN TO DISK (see the terminal)"
+            } else {
+                "Digimon World (dw1-silicon)"
+            };
+            let _ = self.canvas.window_mut().set_title(title);
+        }
+    }
+
     fn wait_for_field(&mut self) {
         let now = self.t0.elapsed().as_nanos() as u64;
         let pacer = self.pacer.get_or_insert_with(|| Pacer::new(now));
@@ -439,6 +457,7 @@ impl psyq::libetc::Host for Window {
         self.events();
         self.wait_for_field();
         self.present();
+        self.show_save_state();
     }
 
     fn pad(&mut self, _caller: usize) -> u32 {

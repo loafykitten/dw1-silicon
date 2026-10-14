@@ -176,13 +176,20 @@ fn dump_cards(out: &std::path::Path) {
     if !std::env::var("DW1_CARD_DUMP").is_ok_and(|v| !v.is_empty() && v != "0") {
         return;
     }
-    // Never over the kept cards themselves.
-    let canon = |p: &std::path::Path| std::fs::canonicalize(p).ok();
-    if let Some(dir) = std::env::var_os("DW1_SAVE_DIR").filter(|d| !d.is_empty())
-        && canon(std::path::Path::new(&dir)).is_some()
-        && canon(std::path::Path::new(&dir)) == canon(out)
-    {
-        eprintln!("dw1: DW1_CARD_DUMP: DW1_OUT is the save directory; not dumping");
+    // Never over kept cards: the save directory in use or the window build's default one.
+    let canon = |p: &std::path::Path| {
+        let p = if p.as_os_str().is_empty() { std::path::Path::new(".") } else { p };
+        std::fs::canonicalize(p).ok()
+    };
+    let target = canon(out);
+    let save_dirs = [
+        std::env::var_os("DW1_SAVE_DIR")
+            .filter(|d| !d.is_empty())
+            .map(std::path::PathBuf::from),
+        crate::default_save_dir(),
+    ];
+    if save_dirs.iter().flatten().any(|d| target.is_some() && canon(d) == target) {
+        eprintln!("dw1: DW1_CARD_DUMP: DW1_OUT is a save directory; not dumping");
         std::process::exit(2);
     }
     for slot in 0..2 {

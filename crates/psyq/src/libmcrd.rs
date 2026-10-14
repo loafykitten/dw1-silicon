@@ -885,15 +885,30 @@ fn persist() {
             continue;
         }
         match write_card_file(file, card.as_bytes()) {
-            Ok(()) => file.saved = Some(card.as_bytes().to_vec()),
-            Err(e) => eprintln!(
+            Ok(()) => {
+                file.saved = Some(card.as_bytes().to_vec());
+                SAVE_FAILED.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+            Err(e) => {
+                SAVE_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+                eprintln!(
                 "psyq: MEMORY CARD {} WAS NOT SAVED to {}: {e} (trying again at the next save \
                  and at exit)",
-                slot + 1,
-                file.path.display()
-            ),
+                    slot + 1,
+                    file.path.display()
+                )
+            }
         }
     }
+}
+
+/// Set while the last attempt to write a kept card failed: the app shows it, since the game
+/// believes it saved.
+static SAVE_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the latest attempt to write a kept card failed (see [`persist`]).
+pub fn save_failed() -> bool {
+    SAVE_FAILED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Writes any kept card whose last write failed (at exit). Gives up rather than wait if the
@@ -938,10 +953,11 @@ pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()>
 }
 
 fn sync_dir(path: &std::path::Path) -> std::io::Result<()> {
-    match path.parent() {
-        Some(dir) if !dir.as_os_str().is_empty() => std::fs::File::open(dir)?.sync_all(),
-        _ => Ok(()),
-    }
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => std::path::Path::new("."),
+    };
+    std::fs::File::open(dir)?.sync_all()
 }
 
 fn write_card_file(file: &mut CardFile, bytes: &[u8]) -> std::io::Result<()> {

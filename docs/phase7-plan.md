@@ -61,9 +61,13 @@ name, no lock), a failed write was only printed, the backup was overwritten non-
 before the save, the rename's directory entry wasn't synced, unreadable saved cards silently
 turned saving off, a missing launcher fixture stopped the game before a saved card could win,
 replays could start from a kept card their check didn't see, and a card dump could overwrite
-the kept cards. All fixed as above; still not done: making a failed save visible inside the game
-(the game's own error path for a write isn't measured in the emulator), backups beyond one
-generation.
+the kept cards. All fixed as above. The re-review's remaining points, fixed too: a save that didn't reach
+the disk now shows in the window's title until a later one succeeds (and a run that ends with
+cards unsaved exits with status 3); dumps refuse the default save directory as well as
+`DW1_SAVE_DIR` (an empty `DW1_OUT` counts as "."); a saved card whose metadata can't be read
+stops the program (only "not found" seeds it); the directory sync covers bare file names. Not
+done: the game's own save-error screen for a failed write (its timing isn't measured in the
+emulator), backups beyond one generation.
 
 ## Open: where to save in the game
 

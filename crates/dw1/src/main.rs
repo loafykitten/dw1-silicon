@@ -131,14 +131,19 @@ fn install_crash_trace() {
 }
 
 /// Where the window build keeps the memory cards: `DW1_SAVE_DIR`, else
-/// `~/Library/Application Support/dw1-silicon`; an empty `DW1_SAVE_DIR` keeps nothing.
+/// [`default_save_dir`]; an empty `DW1_SAVE_DIR` keeps nothing.
 fn save_dir() -> Option<std::path::PathBuf> {
     match std::env::var_os("DW1_SAVE_DIR") {
         Some(d) if d.is_empty() => None,
         Some(d) => Some(d.into()),
-        None => std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/dw1-silicon")),
+        None => default_save_dir(),
     }
+}
+
+/// `~/Library/Application Support/dw1-silicon`.
+pub fn default_save_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/dw1-silicon"))
 }
 
 /// The cards (Phase 7). Slot n's card is, in order: `card<n>.mcd` in the save directory when
@@ -166,8 +171,18 @@ fn insert_cards(keep: bool) {
     };
     for (slot, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
         let kept = dir.as_ref().map(|d| d.join(format!("card{}.mcd", slot + 1)));
-        let card = match &kept {
-            Some(path) if path.exists() => {
+        // A kept card that isn't there yet (only that: any other error stops) starts as the
+        // seed.
+        let saved = kept.as_ref().and_then(|path| match std::fs::metadata(path) {
+            Ok(_) => Some(path),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                eprintln!("dw1: saved card {}: {e}", path.display());
+                std::process::exit(1);
+            }
+        });
+        let card = match saved {
+            Some(path) => {
                 if std::env::var_os("DW1_REPLAY").is_some() {
                     eprintln!(
                         "dw1: a replay starts from its recorded cards, but {} exists",
@@ -177,7 +192,7 @@ fn insert_cards(keep: bool) {
                 }
                 Some(read_card("saved card", path))
             }
-            _ => std::env::var_os(var).map(|p| read_card(var, std::path::Path::new(&p))),
+            None => std::env::var_os(var).map(|p| read_card(var, std::path::Path::new(&p))),
         };
         if let Some(card) = card {
             psyq::libmcrd::insert_card(slot, Some(card));
@@ -197,11 +212,17 @@ unsafe extern "C" {
     fn atexit(f: extern "C" fn()) -> i32;
 }
 
-/// A card write that failed during the run gets one more try as the program exits.
+/// A card write that failed during the run gets one more try as the program exits; if the
+/// cards still aren't on disk, the program says so and exits with status 3.
 extern "C" fn flush_cards_at_exit() {
+    unsafe extern "C" {
+        fn _exit(status: i32) -> !;
+    }
     psyq::libmcrd::flush_cards();
     if !psyq::libmcrd::cards_saved() {
         eprintln!("dw1: WARNING: the last save could not be written to disk");
+        // SAFETY: ends the process at once (calling exit from an exit handler isn't allowed).
+        unsafe { _exit(3) };
     }
 }
 
@@ -252,10 +273,11 @@ fn main() {
         "DW1_SHOTS",
         "DW1_STOP_AT",
         "DW1_START_AT",
-        "DW1_MOVIE",
     ]
     .iter()
-    .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"));
+    .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"))
+        // A movie number, where 0 (the intro) is a value, not "off".
+        || std::env::var_os("DW1_MOVIE").is_some_and(|x| !x.is_empty());
     // Headless runs keep cards only when asked to (`DW1_SAVE_DIR` set): the replays write nothing.
     insert_cards(!headless || std::env::var_os("DW1_SAVE_DIR").is_some_and(|d| !d.is_empty()));
     if headless {
