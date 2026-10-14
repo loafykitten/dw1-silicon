@@ -52,6 +52,10 @@ mod capture {
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
             .map(|l| {
                 let f: Vec<&str> = l.split_whitespace().collect();
+                assert!(
+                    f.len() >= 10 && f[9] != "-",
+                    "calls.txt: call without a return: {l}"
+                );
                 Call {
                     index: f[0].parse().unwrap(),
                     vblank: f[1].parse().unwrap(),

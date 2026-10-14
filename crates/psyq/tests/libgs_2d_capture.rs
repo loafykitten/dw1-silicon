@@ -63,6 +63,10 @@ mod capture {
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
             .map(|l| {
                 let f: Vec<&str> = l.split_whitespace().collect();
+                assert!(
+                    f.len() == 10 && f[9] != "-",
+                    "calls.txt: call without a return: {l}"
+                );
                 Call {
                     index: f[0].parse().unwrap(),
                     name: f[2].to_string(),
@@ -150,7 +154,15 @@ mod capture {
                 } else {
                     output.r32(a + 4 * k)
                 };
-                let got = ram_word(&after, a + 4 * k);
+                let mut got = ram_word(&after, a + 4 * k);
+                let mut want = want;
+                // The POLY_FT4 a game builds with `SetPolyFT4` leaves its two pad halfwords (the
+                // high halves of words 7 and 9) unset; the GPU ignores them and `GsSortPoly`
+                // zeroes them, so they are masked out of the comparison for that call only.
+                if c.name == "GsSortPoly" && len == 9 && (k == 7 || k == 9) {
+                    got &= 0xFFFF;
+                    want &= 0xFFFF;
+                }
                 packet_words += 1;
                 if got != want {
                     bad.push(format!(
