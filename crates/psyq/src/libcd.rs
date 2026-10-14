@@ -346,10 +346,12 @@ fn with_drive<T>(call: &str, f: impl FnOnce(&mut Drive) -> Result<T, DriveError>
 /// `CdInit()`: resets the drive; returns 1 for success. [doc: API reference]
 #[unsafe(no_mangle)]
 pub extern "C" fn CdInit() -> i32 {
-    with_drive("CdInit", |d| {
+    let result = with_drive("CdInit", |d| {
         d.reset();
         Ok(1)
-    })
+    });
+    crate::libspu::with_state(|spu| spu.cd_init_volume());
+    result
 }
 
 /// `CdIntToPos(i, p)`: fills `*p` with the position of sector `i` and returns `p`.

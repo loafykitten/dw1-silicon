@@ -68,11 +68,17 @@ pub extern "C" fn ResetCallback() -> i32 {
 fn run_until(target: u32) -> u32 {
     let mut elapsed = 0;
     loop {
-        let (vblank, host) = {
-            let mut c = CLOCK.lock().unwrap();
+        let ending = {
+            let c = CLOCK.lock().unwrap();
             if c.vblank >= target {
                 return elapsed;
             }
+            c.vblank
+        };
+        // The sound of the VBlank that's ending: libsnd's ticks, the SPU's samples.
+        crate::libsnd::frame(ending);
+        let (vblank, host) = {
+            let mut c = CLOCK.lock().unwrap();
             c.vblank += 1;
             elapsed += 1;
             (c.vblank, c.host.take())
@@ -126,6 +132,14 @@ pub extern "C" fn PadInit(_mode: i32) {}
 /// one has returned).
 static POLLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// The VBlank of the latest `PadRead` call.
+static LAST_POLL_VBLANK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The VBlank (as in [`vblank_count`]) of the latest `PadRead` call.
+pub fn last_poll_vblank() -> u32 {
+    LAST_POLL_VBLANK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// How many times the game has called `PadRead`, counting the one in progress.
 pub fn polls() -> u32 {
     POLLS.load(std::sync::atomic::Ordering::Relaxed)
@@ -138,6 +152,7 @@ pub extern "C" fn PadRead(_id: i32) -> u32 {
     let caller = caller_address();
     let host = CLOCK.lock().unwrap().host.take();
     POLLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    LAST_POLL_VBLANK.store(vblank_count(), std::sync::atomic::Ordering::Relaxed);
     match host {
         Some(mut host) => {
             let pad = host.pad(caller);

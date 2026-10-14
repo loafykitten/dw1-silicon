@@ -22,6 +22,8 @@
 --                               attribute and the (mode/flag) histogram of its TMD primitives
 --   DW1_CAPTURE_VRAM=0          skip the per-VBlank VRAM dumps (long windows)
 --   DW1_CAPTURE_DEREF=1         append the words at a1 and a2 after each call (MemCardSync's cmd/result)
+--   DW1_CAPTURE_STACK_WORDS=<n> append the first n stack arguments (the words at sp+16, sp+20, ...,
+--                               the o32 ABI's fifth argument on) at entry, after v0
 --   DW1_CAPTURE_ARG0_BYTES=<n>  append the n bytes at a0 at entry (RAM or scratchpad), in hex, after v0
 --                               (a GsSPRITE is 36)
 --   DW1_CAPTURE_STOP=<vblank>   end the run here (default: after the window and the last shot),
@@ -65,6 +67,7 @@ local STATES = os.getenv('DW1_CAPTURE_STATES') == '1'
 local DEREF = os.getenv('DW1_CAPTURE_DEREF') == '1'
 local KINDS = os.getenv('DW1_CAPTURE_KINDS') == '1'
 local ARG0_BYTES = num('DW1_CAPTURE_ARG0_BYTES', 0)
+local STACK_WORDS = num('DW1_CAPTURE_STACK_WORDS', 0)
 local kindLines = {}
 
 -- The n bytes at a PS1 address in main RAM or the scratchpad, as a 0-based Lua table, or nil.
@@ -178,7 +181,7 @@ local function finish()
     done = true
     for _, bp in ipairs(entryBps) do bp:remove() end
     local lines = { '# n vblank name a0 a1 a2 a3 sp ra v0\n' }
-    for i = 1, #index do lines[#lines + 1] = index[i].line .. ' ' .. (index[i].v0 or '-') .. (index[i].a0hex or '') .. '\n' end
+    for i = 1, #index do lines[#lines + 1] = index[i].line .. ' ' .. (index[i].v0 or '-') .. (index[i].stackhex or '') .. (index[i].a0hex or '') .. '\n' end
     DW1ROUTE_WRITE('calls.txt', table.concat(lines))
     if KINDS then DW1ROUTE_WRITE('kinds.txt', table.concat(kindLines)) end
     print(string.format('DW1CAPTURE done calls=%d vblank=%d', calls, vblank))
@@ -193,6 +196,17 @@ local function onEntry(fn)
         local r = PCSX.getRegisters().GPR.n
         local rec = { line = string.format('%04d %d %s %08x %08x %08x %08x %08x %08x',
             n, vblank, fn.name, r.a0, r.a1, r.a2, r.a3, r.sp, r.ra) }
+        if STACK_WORDS > 0 then
+            local b = argBytes(r.sp + 16, 4 * STACK_WORDS)
+            if b then
+                local words = {}
+                for i = 0, STACK_WORDS - 1 do
+                    words[#words + 1] = string.format('%08x', b[4 * i] + b[4 * i + 1] * 256
+                        + b[4 * i + 2] * 65536 + b[4 * i + 3] * 16777216)
+                end
+                rec.stackhex = ' stack=' .. table.concat(words, ',')
+            end
+        end
         if ARG0_BYTES > 0 then
             local b = argBytes(r.a0, ARG0_BYTES)
             if b then

@@ -19,13 +19,30 @@ GLOBAL = {0x180: 'mvoll', 0x182: 'mvolr', 0x184: 'rvoll', 0x186: 'rvolr', 0x190:
           0x1A2: 'rev_base', 0x1AA: 'spucnt', 0x1B0: 'cdvoll', 0x1B2: 'cdvolr'}
 
 
-def events(path, lo=0, hi=1 << 31):
+def vblank_stamp(f):
+    return int(f[0])
+
+
+def events(path, lo=0, hi=1 << 31, stamp=vblank_stamp):
+    """The log's events in order, each a tuple starting (stamp, kind, ...); `stamp(fields)` gives
+    a line's time (default its VBlank). Voices past 23 (the key registers' spare bits) are
+    dropped."""
     voice = defaultdict(dict)
     glob = {}
     out = []
     for line in open(path):
-        vb, addr, width, val = line.split()
+        f = line.split()
+        if f[1] == 'vh':
+            continue
+        if f[1] == 'call':
+            # capture-spu.lua's DW1_SPU_CALLS: an SDK entry, kept in order with the stores
+            if lo <= int(f[0]) < hi:
+                out.append((stamp(f), 'call', f[2], [int(x, 16) for x in f[3:6]]))
+            continue
+        vb, addr, width, val = f[:4]
         vb, addr, width, val = int(vb), int(addr, 16), int(width), int(val, 16)
+        t = stamp(f)
+        keep = lo <= vb < hi
         off = addr - 0x1F801C00
         regs = [(off, val & 0xFFFF)] if width <= 2 else [(off, val & 0xFFFF), (off + 2, val >> 16)]
         for off, v in regs:
@@ -35,22 +52,22 @@ def events(path, lo=0, hi=1 << 31):
                     name = VOICE_FIELDS[f]
                     old = voice[n].get(name)
                     voice[n][name] = v
-                    if name in ('pitch', 'voll', 'volr') and old is not None and old != v and lo <= vb < hi:
-                        out.append((vb, 'set', n, name, v))
+                    if name in ('pitch', 'voll', 'volr') and old is not None and old != v and keep:
+                        out.append((t, 'set', n, name, v))
             elif off in (0x188, 0x18A, 0x18C, 0x18E):
                 base = 0 if off in (0x188, 0x18C) else 16
                 kind = 'keyon' if off in (0x188, 0x18A) else 'keyoff'
                 for b in range(16):
-                    if v & (1 << b) and lo <= vb < hi:
-                        n = base + b
+                    n = base + b
+                    if v & (1 << b) and n < 24 and keep:
                         p = voice[n]
-                        out.append((vb, kind, n, p.get('start', 0) * 8, p.get('pitch', 0),
+                        out.append((t, kind, n, p.get('start', 0) * 8, p.get('pitch', 0),
                                     p.get('voll', 0), p.get('volr', 0), p.get('adsr1', 0), p.get('adsr2', 0))
-                                   if kind == 'keyon' else (vb, kind, n))
+                                   if kind == 'keyon' else (t, kind, n))
             elif off in GLOBAL:
                 name = GLOBAL[off]
-                if glob.get(name) != v and lo <= vb < hi:
-                    out.append((vb, 'global', name, v))
+                if glob.get(name) != v and keep:
+                    out.append((t, 'global', name, v))
                 glob[name] = v
     return out
 
@@ -78,6 +95,8 @@ def main():
                   f'adsr {a1:#06x}/{a2:#06x}')
         elif e[1] == 'keyoff':
             print(f'{e[0]} keyoff v{e[2]:02}')
+        elif e[1] == 'call':
+            print(f'{e[0]} call {e[2]} ' + ' '.join(f'{x:x}' for x in e[3]))
         elif e[1] == 'set':
             print(f'{e[0]} set v{e[2]:02} {e[3]} {e[4]:#06x}')
         else:
