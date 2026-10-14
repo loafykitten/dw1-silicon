@@ -64,6 +64,8 @@ pub const CDL_SETMODE: u8 = 0x0e;
 pub const CDL_MODE_SIZE1: u8 = 0x20;
 /// Mode bit 7: double speed (150 sectors a second). [doc: psx-spx Setmode]
 pub const CDL_MODE_SPEED: u8 = 0x80;
+/// Mode bit 6: XA-ADPCM sectors play through the SPU's CD input. [doc: psx-spx Setmode]
+pub const CDL_MODE_RT: u8 = 0x40;
 const WHOLE_SECTOR: usize = 2340;
 /// Where the user data starts in a raw sector, and where the post-sync part does.
 const DATA_OFFSET: usize = 24;
@@ -134,6 +136,21 @@ pub struct Drive {
     stream: Option<Stream>,
 }
 
+/// The XA audio sectors a stream call took in, decoded into the SPU's CD input. (Sectors are
+/// taken in lazily, up to a frame ahead of their arrival; the decoder's FIFO holds the slack.)
+/// Lock order: the drive, then libspu.
+fn play_xa(s: &mut Stream) {
+    let audio = s.take_audio();
+    if audio.is_empty() {
+        return;
+    }
+    crate::libspu::with_state(|spu| {
+        for body in &audio {
+            spu.xa.decode_sector(body);
+        }
+    });
+}
+
 impl Drive {
     pub fn new(disc: Disc) -> Drive {
         Drive {
@@ -172,6 +189,7 @@ impl Drive {
         let freed = s.free_at(base, now, &mut |lba, out| {
             u32::try_from(lba).is_ok_and(|lba| disc.read_raw(lba, out).is_ok())
         });
+        play_xa(s);
         if let Some(lba) = s.next_lba() {
             self.pos = lba;
         }
@@ -185,6 +203,7 @@ impl Drive {
         let (lba, double) = (self.pos, mode & CDL_MODE_SPEED != 0);
         let s = self.stream_mut("CdRead2")?;
         s.clear_loss();
+        s.set_audio(mode & CDL_MODE_RT != 0);
         s.start(lba, now, double);
         Ok(())
     }
@@ -201,6 +220,7 @@ impl Drive {
         let delivered = s.poll(now, &mut |lba, out| {
             u32::try_from(lba).is_ok_and(|lba| disc.read_raw(lba, out).is_ok())
         });
+        play_xa(s);
         if let Some(lba) = s.next_lba() {
             self.pos = lba;
         }

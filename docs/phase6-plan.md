@@ -169,8 +169,7 @@ More than a quarter second queued and new samples are dropped, so a stall doesn'
 sound lagging. `DW1_MUTE=1` opens no device. Headless runs can write the audio with
 `DW1_WAV=<file>` (the battle replay's: `captures/native-runs/p6-listen-battle/`, local only).
 
-Not yet: XA audio (the intro movie's sound; the game's `SsInit` turns CD audio off afterwards
-and nothing in the replays turns it back on), and Ember's listen ("sounds right").
+Not yet: Ember's listen ("sounds right").
 
 ### More replays, and the review of slice 3 (2026-10-14)
 
@@ -207,3 +206,15 @@ The new-game differences are voice choices at the start of songs after a long re
 emulator still sees the old note's envelope (its release takes about 1.5 s, and the song starts
 1.45 s after the stop), the port's has just finished. Release timing that close to a tick
 boundary isn't reproducible from VBlank-level timing.
+
+## Slice 5 (part): XA audio for the movies (2026-10-14)
+
+The movie player reads with Setmode's XA bit (`CdRead2(Stream|Speed|RT|Size1)`): the drive sends
+every XA audio sector it reads to the SPU's CD input (no Setfilter: DW1 sets none). The stream
+now keeps those sectors (`Stream::take_audio`), libcd hands them to `libspu`'s `XaDecoder`
+after each stream call, and the SPU mixes the decoder's 44.1 kHz frames at the CD volume when
+SPUCNT's CD bit is on (`CdInit` sets both). Sectors are taken in lazily, up to a frame ahead; on
+the intro movie the decoder's FIFO stays between about 750 and 2,700 frames (17-60 ms) and never
+runs dry after the first sector (`captures/native-runs/p6-movie-audio/intro-movie.wav`, local
+only: 121 s, sound throughout but for a second of silence in the movie itself). Not compared
+with the emulator yet: the SPU capture logs registers, and the CD input isn't register traffic.

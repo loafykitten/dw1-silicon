@@ -23,6 +23,7 @@ use std::io::{BufWriter, Write};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use backend::spu::{RAM_SIZE, Spu};
+use backend::xa::XaDecoder;
 
 /// Voices on the SPU.
 pub const VOICES: usize = 24;
@@ -164,6 +165,9 @@ pub type AudioSink = Box<dyn FnMut(&[i16]) + Send>;
 
 pub struct SpuState {
     pub hw: Spu,
+    /// The CD input: XA audio sectors the drive plays (movies), decoded and resampled to
+    /// 44.1 kHz; the SPU takes a frame per sample.
+    pub xa: XaDecoder,
     /// Keyed voices as libspu counts them: set by a key on, cleared by a key off.
     keyed: u32,
     pub reverb: Reverb,
@@ -183,6 +187,7 @@ impl SpuState {
     pub fn new() -> Self {
         Self {
             hw: Spu::new(),
+            xa: XaDecoder::new(),
             keyed: 0,
             reverb: Reverb::default(),
             log: None,
@@ -559,8 +564,8 @@ impl SpuState {
             return;
         }
         self.buf.resize(samples * 2, 0);
-        // No CD audio input yet (XA is Phase 6's slice 5).
-        self.hw.render(&mut self.buf, &mut || (0, 0));
+        let xa = &mut self.xa;
+        self.hw.render(&mut self.buf, &mut || xa.pop());
         if let Some(sink) = &mut self.sink {
             sink(&self.buf);
         }

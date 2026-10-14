@@ -7,8 +7,9 @@
 //! frame, the sector count, the frame number, the demuxed size in bytes, width, height, the
 //! first words of the bitstream header and a `CdlLOC` slot) followed by 2016 bytes of the
 //! frame's bitstream. A frame's sectors come in order and the bitstream is the concatenation of
-//! their payloads, cut to the demuxed size. XA audio sectors (submode bit 2) and anything else
-//! without the video header sit between them and are skipped for now (sound is Phase 6).
+//! their payloads, cut to the demuxed size. XA audio sectors (submode bit 2) sit between them;
+//! when the read asked for XA playback they're handed on for the SPU's CD input
+//! ([`Stream::take_audio`]); anything else without the video header is skipped.
 //!
 //! **Ring [doc: libcd `StSetRing`: a ring buffer of 2048-byte sectors the library receives into].**
 //! The game hands the SDK `ring_sectors` sectors of memory. Natively a frame is assembled into
@@ -56,6 +57,10 @@ const SUBMODE_OFFSET: usize = 18;
 const DATA_OFFSET: usize = 24;
 const RAW_BYTES: usize = 2352;
 const SUBMODE_AUDIO: u8 = 0x04;
+/// An XA audio sector from its subheader: 8 subheader bytes and 2,328 of data [doc: psx-spx
+/// "CDROM Sector Encoding", Mode 2 Form 2].
+const XA_BODY_OFFSET: usize = 16;
+const XA_BODY_BYTES: usize = 2336;
 const SUBMODE_FORM2: u8 = 0x20;
 
 /// A frame's StHEADER, as the game reads it [doc: libcd.h `StHEADER`].
@@ -205,6 +210,10 @@ pub struct Stream {
     /// Sectors skipped because they weren't video, and frames lost to a full ring.
     pub skipped: u64,
     pub lost_frames: u64,
+    /// Whether XA audio sectors go to the SPU (Setmode bit 6), and those taken in since the
+    /// caller last asked ([`Stream::take_audio`]).
+    audio_enabled: bool,
+    audio: Vec<Vec<u8>>,
 }
 
 impl Stream {
@@ -224,7 +233,22 @@ impl Stream {
             raw: Box::new([0; RAW_BYTES]),
             skipped: 0,
             lost_frames: 0,
+            audio_enabled: false,
+            audio: Vec::new(),
         }
+    }
+
+    /// XA audio sectors read from now on are kept for the SPU's CD input (the drive's
+    /// "XA-ADPCM to SPU" mode bit; no file/channel filter, as DW1 sets none) [doc: psx-spx,
+    /// "CDROM Control Commands", Setmode bit 6].
+    pub fn set_audio(&mut self, on: bool) {
+        self.audio_enabled = on;
+    }
+
+    /// The XA audio sectors taken in since the last call, each from its subheader (the 2,336
+    /// bytes `backend::xa::XaDecoder::decode_sector` takes), in order.
+    pub fn take_audio(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.audio)
     }
 
     /// `StSetStream`: frames before `start` are dropped; `end` (`None` for the SDK's -1) ends it.
@@ -297,6 +321,10 @@ impl Stream {
             .then(|| StHeader::parse(data))
             .flatten();
         let Some(h) = header else {
+            if self.audio_enabled && submode & SUBMODE_AUDIO != 0 {
+                self.audio
+                    .push(self.raw[XA_BODY_OFFSET..XA_BODY_OFFSET + XA_BODY_BYTES].to_vec());
+            }
             self.skipped += 1;
             return Some((when, false));
         };
