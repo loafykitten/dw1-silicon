@@ -9,7 +9,9 @@
 //!
 //! Sources: Psy-Q's `libmcrd.h` and `kernel.h` (McFunc*/McErr* constants, `struct DIRENTRY`),
 //! psx-spx "Memory Card Data Format" (the 128 KB layout), and how `main_menu.c` drives it.
-//! Card writes stay in memory; Phase 7 adds persistence.
+//! Card writes stay in memory unless the app gives a slot a file ([`set_card_file`]): then
+//! every change the game makes is written there at once, atomically (a temporary file renamed
+//! over the old one), the old file first copied to `<file>.bak` once per run (Phase 7).
 //!
 //! # How the game drives it
 //!
@@ -836,6 +838,69 @@ fn with<T>(f: impl FnOnce(&mut Controller) -> T) -> T {
         .get_or_insert_with(Controller::strict))
 }
 
+/// Where a slot's card is kept, and what was last written there.
+struct CardFile {
+    path: std::path::PathBuf,
+    saved: Option<Vec<u8>>,
+    backed_up: bool,
+}
+
+static FILES: Mutex<[Option<CardFile>; 2]> = Mutex::new([None, None]);
+
+/// Keeps slot `slot`'s card in `path` from now on: each change is written there (see the
+/// module docs). The card in the slot should be the file's contents (or what the file is to
+/// start as); nothing is written until the game changes it. `None` stops keeping it.
+pub fn set_card_file(slot: usize, path: Option<std::path::PathBuf>) {
+    assert!(slot < 2, "memory card slot {slot}");
+    let saved = card(slot).map(|c| c.as_bytes().to_vec());
+    FILES.lock().unwrap()[slot] = path.map(|path| CardFile {
+        path,
+        saved,
+        backed_up: false,
+    });
+}
+
+/// Writes every kept card that changed since it was last written. A write that fails is
+/// reported and retried at the next change.
+fn persist() {
+    let mut files = FILES.lock().unwrap();
+    for (slot, file) in files.iter_mut().enumerate() {
+        let Some(file) = file else { continue };
+        let Some(card) = card(slot) else { continue };
+        if file.saved.as_deref() == Some(card.as_bytes()) {
+            continue;
+        }
+        match write_card_file(file, card.as_bytes()) {
+            Ok(()) => file.saved = Some(card.as_bytes().to_vec()),
+            Err(e) => eprintln!(
+                "psyq: memory card {}: {}: {e}",
+                slot + 1,
+                file.path.display()
+            ),
+        }
+    }
+}
+
+fn write_card_file(file: &mut CardFile, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = file.path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if !file.backed_up {
+        if file.path.exists() {
+            std::fs::copy(&file.path, file.path.with_extension("mcd.bak"))?;
+        }
+        file.backed_up = true;
+    }
+    let tmp = file.path.with_extension("mcd.tmp");
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, &file.path)
+}
+
 /// Puts a card (or none) in slot 1 or 2 (`slot` 0 or 1). The default is a fresh formatted
 /// card in each. An inserted card reads as new until `MemCardAccept` sees it.
 pub fn insert_card(slot: usize, card: Option<Card>) {
@@ -921,7 +986,9 @@ pub unsafe extern "C" fn MemCardWriteFile(
     }
     let data = unsafe { std::slice::from_raw_parts(adrs, bytes as usize) };
     let name = name_bytes(fnam);
-    with(|c| c.write_file(libetc::vblank_count(), chan, name, ofs as usize, data)) as i32
+    let started = with(|c| c.write_file(libetc::vblank_count(), chan, name, ofs as usize, data));
+    persist();
+    started as i32
 }
 
 /// # Safety
@@ -930,6 +997,7 @@ pub unsafe extern "C" fn MemCardWriteFile(
 pub unsafe extern "C" fn MemCardCreateFile(chan: i32, fnam: *const c_char, blocks: i32) -> i32 {
     let name = name_bytes(fnam);
     let r = with(|c| c.create_file(libetc::vblank_count(), chan, name, blocks.max(0) as usize));
+    persist();
     block();
     r
 }
@@ -940,6 +1008,7 @@ pub unsafe extern "C" fn MemCardCreateFile(chan: i32, fnam: *const c_char, block
 pub unsafe extern "C" fn MemCardDeleteFile(chan: i32, fnam: *const c_char) -> i32 {
     let name = name_bytes(fnam);
     let r = with(|c| c.delete_file(libetc::vblank_count(), chan, name));
+    persist();
     block();
     r
 }
@@ -947,6 +1016,7 @@ pub unsafe extern "C" fn MemCardDeleteFile(chan: i32, fnam: *const c_char) -> i3
 #[unsafe(no_mangle)]
 pub extern "C" fn MemCardFormat(chan: i32) -> i32 {
     let r = with(|c| c.format(libetc::vblank_count(), chan));
+    persist();
     block();
     r
 }
@@ -1037,6 +1107,39 @@ pub unsafe extern "C" fn MemCardGetDirentry(
         unsafe { *files = list.len() as i32 };
     }
     0
+}
+
+#[cfg(test)]
+mod persist_tests {
+    use super::*;
+
+    #[test]
+    fn changes_are_kept_atomically_with_a_backup() {
+        let dir = std::env::temp_dir().join(format!("dw1-mcrd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("card2.mcd");
+        std::fs::write(&path, Card::formatted().as_bytes()).unwrap();
+        insert_card(1, Some(Card::formatted()));
+        set_card_file(1, Some(path.clone()));
+        persist();
+        assert!(
+            !dir.join("card2.mcd.bak").exists(),
+            "nothing changed, nothing written"
+        );
+        with(|c| {
+            if let Some(card) = c.slots[1].card.as_mut() {
+                card.create(b"BASLUS-01032DMW", 1).unwrap();
+            }
+        });
+        persist();
+        let kept = Card::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(kept.files().len(), 1);
+        assert!(dir.join("card2.mcd.bak").exists());
+        assert!(!dir.join("card2.mcd.tmp").exists());
+        set_card_file(1, None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[cfg(test)]

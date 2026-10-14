@@ -23,6 +23,7 @@
 //! been consumed (also at `DW1_STOP_AT`, whatever the poll count). The run exits 0 there.
 //! Without a replay, the triggers run at every pad poll too. Stale `ckpt_NNNN_*` files in
 //! `DW1_OUT` are deleted when the run starts (only those). `tools/oracle/compare_canon.py` compares them with the emulator's.
+//! `DW1_CARD_DUMP=1` also writes the card images then (`card1.mcd`, `card2.mcd`).
 
 use std::path::PathBuf;
 
@@ -64,6 +65,9 @@ fn checkpoint_every() -> usize {
 
 impl Checkpoints {
     fn write(&mut self, out: &std::path::Path, why: &str, poll: usize, vblank: u32) {
+        if why == "final" {
+            dump_cards(out);
+        }
         let name = format!("ckpt_{:04}_{why}", self.next);
         self.next += 1;
         let rec = canon::collect();
@@ -161,6 +165,26 @@ fn env_num(name: &str) -> Option<u32> {
         Err(_) => {
             eprintln!("dw1: {name} is not a number: {v}");
             std::process::exit(2);
+        }
+    }
+}
+
+/// `DW1_CARD_DUMP=1`: the two card images as they stand, written to `card1.mcd` and
+/// `card2.mcd` in `out` (with the `final` checkpoint, or at `DW1_STOP_AT`), to set beside the
+/// emulator's after the same replay.
+fn dump_cards(out: &std::path::Path) {
+    if !std::env::var("DW1_CARD_DUMP").is_ok_and(|v| !v.is_empty() && v != "0") {
+        return;
+    }
+    for slot in 0..2 {
+        let Some(card) = psyq::libmcrd::card(slot) else {
+            continue;
+        };
+        let path = out.join(format!("card{}.mcd", slot + 1));
+        if let Err(e) =
+            std::fs::create_dir_all(out).and_then(|()| std::fs::write(&path, card.as_bytes()))
+        {
+            eprintln!("dw1: {}: {e}", path.display());
         }
     }
 }
@@ -290,6 +314,9 @@ impl psyq::libetc::Host for Headless {
         }
         if self.stop_at == Some(vblank) {
             eprintln!("dw1: stopped at vblank {vblank}");
+            if self.checkpoints.as_ref().is_none_or(|c| c.final_done) {
+                dump_cards(&self.out);
+            }
             let polls = self.replay.as_ref().map_or(0, Replay::polls_done);
             if let Some(c) = self.checkpoints.as_mut()
                 && !c.final_done

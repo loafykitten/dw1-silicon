@@ -7,6 +7,12 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-14, session 4): start here
 
+- **Phase 7 (saving) has started** (`docs/phase7-plan.md`): after all nine replays the port's
+  memory cards are byte-identical to the emulator's (`DW1_CARD_DUMP=1`), and the window build
+  now keeps its cards in `~/Library/Application Support/dw1-silicon` (atomic writes, a `.bak` of
+  the old file; `dw1-mac` seeds card 1 from Ember's save the first time, `--fresh` keeps
+  nothing). Left: a recorded in-game save (the save machine) and Ember's one-save-slot design
+  (Open questions).
 - **Phase 6 (sound) is mostly done, waiting for Ember's ears** (`docs/phase6-plan.md`). The
   PS1 sound libraries now drive the SPU model with register writes on the virtual clock:
   sound effects, the music sequencer (new: `crates/psyq/src/sequencer.rs`), reverb, and the
@@ -71,7 +77,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 - **Playable in a window (2026-10-14):** `dw1-mac` (`~/.local/bin`, Ember's launcher) builds the
   release `dw1` and opens it with Ember's save in slot 1 (`--fresh` for blank cards). A
   start-up splash (`crates/dw1/src/window/splash.rs`, window mode only, `DW1_NO_SPLASH=1`)
-  marks it as the native Rust build. Card writes stay in memory (Phase 7); sound since Phase 6
+  marks it as the native Rust build. Saves are kept (Phase 7, session 4); sound since Phase 6
   (session 4); overlays without a certified replay may still trap (Phase 5). Ember asked for **one save slot
   instead of memory cards** for Phase 7 (noted there).
 - **Release builds replay too:** the game C is built with `-fno-inline
@@ -742,6 +748,15 @@ is what the Rust is checked against.
   music, crackles, the battle getting harsh when a lot plays at once (the port clips at full
   scale like the PS1 should), latency between a button and its sound. If anything's off, a
   timestamp and what you were doing is plenty.
+
+- **(2026-10-14) One save slot: which way?** Phase 7's addition (your idea) needs a design call.
+  Saves are now kept on the two cards in Application Support. For "one save, no cards", the
+  choices I see: (a) the game's own save and load screens stay, but the card library always
+  shows one present, formatted card holding just the one save, so the card prompts never come
+  up (least change to the game, the screens still say "memory card"); or (b) a native-only
+  save/load path that skips those screens (cleaner for a Mac app, more of the game rewritten).
+  Either way, saves import from and export to `.mcd` for the emulator. I'd lean to (a) first.
+  Which do you want?
 
 ## Answered by Ember
 

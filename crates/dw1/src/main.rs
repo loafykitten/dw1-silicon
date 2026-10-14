@@ -130,6 +130,47 @@ fn install_crash_trace() {
     }
 }
 
+/// Where the window build keeps the memory cards: `DW1_SAVE_DIR`, else
+/// `~/Library/Application Support/dw1-silicon`; an empty `DW1_SAVE_DIR` keeps nothing.
+fn save_dir() -> Option<std::path::PathBuf> {
+    match std::env::var_os("DW1_SAVE_DIR") {
+        Some(d) if d.is_empty() => None,
+        Some(d) => Some(d.into()),
+        None => std::env::var_os("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Library/Application Support/dw1-silicon")),
+    }
+}
+
+/// The window build's cards persist (Phase 7): slot n is `card<n>.mcd` in the save directory.
+/// A card file that exists is the card (whatever `DW1_CARD<n>` says: that only seeds a card
+/// that isn't there yet, so the launcher's fixture doesn't undo the player's saves); the game's
+/// changes are written back as they happen (libmcrd: atomic, with a `.bak` of the old file).
+fn keep_cards() {
+    let Some(dir) = save_dir() else { return };
+    for slot in 0..2 {
+        let path = dir.join(format!("card{}.mcd", slot + 1));
+        match std::fs::read(&path) {
+            Ok(bytes) => match psyq::libmcrd::Card::from_bytes(&bytes) {
+                Some(card) => psyq::libmcrd::insert_card(slot, Some(card)),
+                None => {
+                    eprintln!(
+                        "dw1: {} is not a 128 KB card image; not using it",
+                        path.display()
+                    );
+                    continue;
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                eprintln!("dw1: {}: {e}; not using it", path.display());
+                continue;
+            }
+        }
+        eprintln!("dw1: memory card {} kept in {}", slot + 1, path.display());
+        psyq::libmcrd::set_card_file(slot, Some(path));
+    }
+}
+
 fn main() {
     if std::env::var_os("DW1_CRASH_TRACE").is_some() {
         install_crash_trace();
@@ -171,8 +212,14 @@ fn main() {
     .iter()
     .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"));
     if headless {
+        // Headless runs keep cards only when asked to (`DW1_SAVE_DIR` set), so replays
+        // don't write anything by default.
+        if std::env::var_os("DW1_SAVE_DIR").is_some_and(|d| !d.is_empty()) {
+            keep_cards();
+        }
         psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
     } else {
+        keep_cards();
         match window::Window::new() {
             Ok(mut w) => {
                 if !std::env::var_os("DW1_NO_SPLASH").is_some_and(|x| !x.is_empty() && x != "0") {
@@ -236,7 +283,10 @@ mod overlay_tests {
         // Every overlay unit but SHOP (resident) has initialised data.
         let ids: Vec<u32> = found.iter().map(|s| s.0).collect();
         for id in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16] {
-            assert!(ids.contains(&id), "overlay {id} has no data section: {found:?}");
+            assert!(
+                ids.contains(&id),
+                "overlay {id} has no data section: {found:?}"
+            );
         }
         // BTL's resident initialised variables (its section's size depends on what the linker
         // keeps: the test binary dead-strips the game code that uses most of the data).
@@ -244,7 +294,11 @@ mod overlay_tests {
         assert!(btl.1 > 0 && btl.2 >= 20, "BTL section {btl:?}");
         // A reset puts the linked bytes back but keeps the resident variables' values.
         let (start, len, keeps) = section_info(1).unwrap();
-        let kept_byte = |p: *mut u8| keeps.iter().any(|&(a, n)| p >= a && (p as usize) < a as usize + n);
+        let kept_byte = |p: *mut u8| {
+            keeps
+                .iter()
+                .any(|&(a, n)| p >= a && (p as usize) < a as usize + n)
+        };
         unsafe {
             let (kept, _) = keeps[0];
             let old_kept = kept.read();
@@ -256,9 +310,17 @@ mod overlay_tests {
             }
             dw1_overlay_reset(1);
             if let Some(p) = probe {
-                assert_eq!(p.read(), old_probe.unwrap(), "reset didn't restore the section");
+                assert_eq!(
+                    p.read(),
+                    old_probe.unwrap(),
+                    "reset didn't restore the section"
+                );
             }
-            assert_eq!(kept.read(), old_kept ^ 0xA5, "reset didn't keep the resident variable");
+            assert_eq!(
+                kept.read(),
+                old_kept ^ 0xA5,
+                "reset didn't keep the resident variable"
+            );
             kept.write(old_kept);
         }
     }
