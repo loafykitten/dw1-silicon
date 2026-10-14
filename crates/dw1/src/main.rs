@@ -38,16 +38,17 @@ fn open_disc() -> Result<pack::Disc, String> {
 /// `DW1_CRASH_TRACE=1`: on SIGSEGV/SIGBUS print the call stack (symbols) to stderr. lldb can't
 /// attach in the agent sandbox, and the game's crashes are otherwise silent (exit 139).
 ///
-/// The handler only uses calls that are safe in a signal handler on macOS: `write`,
-/// `backtrace` (primed here, so it doesn't load anything when it runs) and
-/// `backtrace_symbols_fd` (writes to the descriptor without allocating), then `_exit`. It runs
-/// on its own stack, so a stack overflow is reported too, and resets to the default action on
-/// entry, so a fault inside it ends the process instead of looping.
+/// The handler runs on its own stack (so a stack overflow is reported too) and resets to the
+/// default action on entry (so a fault inside it ends the process). It walks the frame-pointer
+/// chain of the interrupted code from the registers the kernel saved (arm64 macOS keeps frame
+/// pointers), so it doesn't depend on the system's stack walker, which finds nothing from an
+/// alternate stack on older macOS. Output uses only `write`, `backtrace_symbols_fd` (writes to
+/// the descriptor without allocating) and `_exit`.
 fn install_crash_trace() {
     use std::ffi::c_void;
     #[repr(C)]
     struct SigAction {
-        handler: extern "C" fn(i32),
+        handler: extern "C" fn(i32, *mut c_void, *mut c_void),
         mask: u32,
         flags: i32,
     }
@@ -60,29 +61,54 @@ fn install_crash_trace() {
     // <sys/signal.h>
     const SA_ONSTACK: i32 = 0x0001;
     const SA_RESETHAND: i32 = 0x0004;
+    const SA_SIGINFO: i32 = 0x0040;
     const SIGBUS: i32 = 10;
     const SIGSEGV: i32 = 11;
+    // <sys/_types/_ucontext.h>, <mach/arm/_structs.h> (arm64): `uc_mcontext` is the pointer at
+    // byte 48 of the ucontext; in the mcontext, the 16-byte exception state is followed by the
+    // thread state x0-x28, then fp, lr, sp, pc.
+    const UC_MCONTEXT: usize = 48;
+    const MC_FP: usize = 16 + 29 * 8;
+    const MC_LR: usize = MC_FP + 8;
+    const MC_PC: usize = MC_FP + 24;
     unsafe extern "C" {
         fn sigaction(sig: i32, act: *const SigAction, old: *mut SigAction) -> i32;
         fn sigaltstack(ss: *const StackT, old: *mut StackT) -> i32;
-        fn backtrace(buffer: *mut *mut c_void, size: i32) -> i32;
         fn backtrace_symbols_fd(buffer: *const *mut c_void, size: i32, fd: i32);
         fn write(fd: i32, buf: *const c_void, n: usize) -> isize;
         fn _exit(code: i32) -> !;
     }
-    extern "C" fn on_crash(_sig: i32) {
+    extern "C" fn on_crash(_sig: i32, _info: *mut c_void, uc: *mut c_void) {
         const MSG: &[u8] = b"dw1: fatal signal (SIGSEGV or SIGBUS); call stack:\n";
-        let mut frames = [std::ptr::null_mut(); 32];
+        let mut frames = [std::ptr::null_mut::<c_void>(); 32];
         unsafe {
             write(2, MSG.as_ptr().cast(), MSG.len());
-            let n = backtrace(frames.as_mut_ptr(), frames.len() as i32);
-            backtrace_symbols_fd(frames.as_ptr(), n, 2);
+            let mc = uc.cast::<u8>().add(UC_MCONTEXT).cast::<*const u8>().read();
+            let reg = |off: usize| mc.add(off).cast::<usize>().read();
+            frames[0] = reg(MC_PC) as *mut c_void;
+            frames[1] = reg(MC_LR) as *mut c_void;
+            let mut n = 2;
+            // Each frame record is (caller's fp, return address). Stop at anything that doesn't
+            // look like a record further up the same stack.
+            let mut fp = reg(MC_FP);
+            while n < frames.len() && fp != 0 && fp.is_multiple_of(16) {
+                let next = (fp as *const usize).read();
+                let ret = (fp as *const usize).add(1).read();
+                if ret == 0 {
+                    break;
+                }
+                frames[n] = ret as *mut c_void;
+                n += 1;
+                if next <= fp || next - fp > 8 << 20 {
+                    break;
+                }
+                fp = next;
+            }
+            backtrace_symbols_fd(frames.as_ptr(), n as i32, 2);
             _exit(139);
         }
     }
     unsafe {
-        let mut prime = [std::ptr::null_mut(); 1];
-        backtrace(prime.as_mut_ptr(), 1);
         // 256 KB for the handler, kept for the life of the process.
         let stack = Box::leak(vec![0u8; 256 * 1024].into_boxed_slice());
         let ss = StackT {
@@ -93,7 +119,7 @@ fn install_crash_trace() {
         let act = SigAction {
             handler: on_crash,
             mask: 0,
-            flags: SA_ONSTACK | SA_RESETHAND,
+            flags: SA_ONSTACK | SA_RESETHAND | SA_SIGINFO,
         };
         if sigaltstack(&ss, std::ptr::null_mut()) != 0
             || sigaction(SIGSEGV, &act, std::ptr::null_mut()) != 0
