@@ -196,15 +196,14 @@ pub fn tim_cursor() -> usize {
 }
 
 /// `OpenTIM(addr)`: starts reading the TIM file at `addr` (its ID word) and returns 0 [doc;
-/// obs]. A word other than the TIM ID 0x10 is unobserved and stops the program.
+/// obs]. It replaces the cursor unconditionally and checks nothing: on a word that isn't the
+/// TIM ID it still returns 0, and `ReadTIM` is what refuses [obs: oracle/call-sdk.lua, a 0x11
+/// and a 0 word].
 ///
 /// # Safety
-/// `addr` must point to a TIM.
+/// `addr` must be readable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn OpenTIM(addr: *const u32) -> i32 {
-    if unsafe { addr.read() } != 0x10 {
-        crate::trap::unimplemented("OpenTIM on something that is not a TIM (unobserved)");
-    }
     *TIM_CURSOR.lock().unwrap() = addr as usize;
     0
 }
@@ -212,26 +211,38 @@ pub unsafe extern "C" fn OpenTIM(addr: *const u32) -> i32 {
 /// `ReadTIM(img)`: describes the TIM opened by `OpenTIM` in `img` and moves on to the next one;
 /// returns `img` [doc: psx-spx TIM; obs]. `mode` is the TIM's flags word, `crect` and `caddr`
 /// point at the CLUT block's rectangle and data, `prect` and `paddr` at the pixel block's, all
-/// inside the TIM. A TIM without a CLUT is unobserved and stops the program.
+/// inside the TIM. A TIM without a CLUT (flag bit 3 clear) gets null `crect` and `caddr`
+/// [obs]. If the word at the cursor isn't the TIM ID 0x10 (a bad `OpenTIM` address, or the
+/// end of a run of TIMs) it returns null and leaves `img` and the cursor alone [obs].
 ///
 /// # Safety
-/// `img` must be valid and `OpenTIM` must have been called on a complete TIM.
+/// `img` must be valid and the cursor must point at readable memory (a TIM, or a word that
+/// is not 0x10).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ReadTIM(img: *mut TimImage) -> *mut TimImage {
     let mut cursor = TIM_CURSOR.lock().unwrap();
     unsafe {
         let tim = *cursor as *const u32;
-        let flags = tim.add(1).read();
-        if flags & 8 == 0 {
-            crate::trap::unimplemented("ReadTIM on a TIM without a CLUT (unobserved)");
+        if tim.read() != 0x10 {
+            return std::ptr::null_mut();
         }
+        let flags = tim.add(1).read();
         // Each block is [length in bytes incl. this word][rect (x, y, w, h)][data].
-        let clut = tim.add(2);
-        let pixels = clut.cast::<u8>().add(clut.read() as usize).cast::<u32>();
+        let (crect, caddr, pixels) = if flags & 8 != 0 {
+            let clut = tim.add(2);
+            let pixels = clut.cast::<u8>().add(clut.read() as usize).cast::<u32>();
+            (
+                clut.add(1).cast_mut().cast(),
+                clut.add(3).cast_mut(),
+                pixels,
+            )
+        } else {
+            (std::ptr::null_mut(), std::ptr::null_mut(), tim.add(2))
+        };
         *img = TimImage {
             mode: flags,
-            crect: clut.add(1).cast_mut().cast(),
-            caddr: clut.add(3).cast_mut(),
+            crect,
+            caddr,
             prect: pixels.add(1).cast_mut().cast(),
             paddr: pixels.add(3).cast_mut(),
         };
@@ -460,6 +471,70 @@ pub unsafe extern "C" fn AddPrim(ot: *mut u32, p: *mut u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A TIM word stream: [id, flags, (clut block)?, pixel block]; a block is
+    /// [bytes incl. this word, x|y<<16, w|h<<16, data...] with one data word.
+    fn tim(flags: u32, clut: bool, tag: u32) -> Vec<u32> {
+        let mut v = vec![0x10, flags];
+        if clut {
+            v.extend([16, 0, 0x0001_0002, tag | 0xC]);
+        }
+        v.extend([16, 0, 0x0001_0002, tag | 0xD]);
+        v
+    }
+
+    /// `OpenTIM`/`ReadTIM` as measured in Redux (oracle/call-sdk.lua, captures/oracle-runs/
+    /// p3-tim): OpenTIM always returns 0; ReadTIM walks concatenated TIMs, returns null without
+    /// writing at a word that isn't 0x10, and gives a CLUT-less TIM null `crect`/`caddr`.
+    #[test]
+    fn tim_reading_matches_the_sdk() {
+        let mut words = tim(0xA, true, 0x100);
+        words.extend(tim(0xB, true, 0x200));
+        words.extend([0, 0, 0, 0]); // terminator
+        let base = words.as_ptr();
+        let mut img = TimImage {
+            mode: 0xDEAD,
+            crect: std::ptr::dangling_mut::<Rect>(),
+            caddr: std::ptr::dangling_mut::<u32>(),
+            prect: std::ptr::dangling_mut::<Rect>(),
+            paddr: std::ptr::dangling_mut::<u32>(),
+        };
+        unsafe {
+            assert_eq!(OpenTIM(base), 0);
+            assert_eq!(ReadTIM(&mut img), &raw mut img);
+            assert_eq!(img.mode, 0xA);
+            assert_eq!(img.crect.cast::<u32>(), base.add(3).cast_mut());
+            assert_eq!(img.caddr, base.add(5).cast_mut());
+            assert_eq!(img.prect.cast::<u32>(), base.add(7).cast_mut());
+            assert_eq!(img.paddr, base.add(9).cast_mut());
+            assert_eq!(tim_cursor(), base.add(10) as usize);
+            assert_eq!(ReadTIM(&mut img), &raw mut img);
+            assert_eq!(img.mode, 0xB);
+            assert_eq!(img.paddr, base.add(19).cast_mut());
+            // The terminator: null, `img` and the cursor untouched.
+            let (mode, cursor) = (img.mode, tim_cursor());
+            assert!(ReadTIM(&mut img).is_null());
+            assert_eq!((img.mode, tim_cursor()), (mode, cursor));
+
+            // A bad ID: OpenTIM still returns 0 and moves the cursor; ReadTIM refuses.
+            let bad = [0x11u32, 0xA, 0, 0, 0, 0];
+            assert_eq!(OpenTIM(bad.as_ptr()), 0);
+            assert_eq!(tim_cursor(), bad.as_ptr() as usize);
+            assert!(ReadTIM(&mut img).is_null());
+            assert_eq!(img.mode, 0xB);
+
+            // Without a CLUT (flag bit 3 clear): null crect and caddr, pixels at word 2+.
+            let mut nc = tim(0x2, false, 0x300);
+            nc.extend([0, 0]);
+            assert_eq!(OpenTIM(nc.as_ptr()), 0);
+            assert!(!ReadTIM(&mut img).is_null());
+            assert_eq!(img.mode, 2);
+            assert!(img.crect.is_null() && img.caddr.is_null());
+            assert_eq!(img.prect.cast::<u32>(), nc.as_ptr().add(3).cast_mut());
+            assert_eq!(img.paddr, nc.as_ptr().add(5).cast_mut());
+            assert!(ReadTIM(&mut img).is_null());
+        }
+    }
 
     #[test]
     fn values_match_the_captures() {

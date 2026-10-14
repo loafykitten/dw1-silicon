@@ -178,7 +178,11 @@ impl Headless {
         }
         let replay = std::env::var_os("DW1_REPLAY").map(|path| {
             let symbols = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../decomp/config/us");
-            Replay::load(path.as_ref(), &symbols).unwrap_or_else(|e| {
+            let replay = Replay::load(path.as_ref(), &symbols).and_then(|r| {
+                r.check_cards()?;
+                Ok(r)
+            });
+            replay.unwrap_or_else(|e| {
                 eprintln!("dw1: {e}");
                 std::process::exit(2);
             })

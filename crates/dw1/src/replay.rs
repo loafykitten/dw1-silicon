@@ -28,6 +28,18 @@ pub struct Replay {
     final_vblank: Option<u32>,
     /// Native VBlank of the most recent poll.
     last_native: u32,
+    /// The recording's initial cards: `card1_sha1` / `card2_sha1` headers (`fresh` = no card file given, the new card Redux makes,
+    /// a fresh formatted card) and the `card1_fixture` name.
+    cards: [Option<String>; 2],
+    fixture: Option<String>,
+}
+
+/// SHA-1 of a file, hex.
+fn file_sha1(path: &std::path::Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut hash = sha1_smol::Sha1::new();
+    hash.update(&bytes);
+    Ok(hash.digest().to_string())
 }
 
 /// Symbol lists: address -> name, for main and every overlay.
@@ -83,6 +95,8 @@ impl Replay {
         let mut format_ok = false;
         let mut declared = None;
         let mut final_vblank = None;
+        let mut cards = [None, None];
+        let mut fixture = None;
         for line in text.lines() {
             if line.starts_with('#') || line.trim().is_empty() {
                 continue;
@@ -101,6 +115,9 @@ impl Replay {
                     ["final_vblank", n] => {
                         final_vblank = Some(n.parse::<u32>().map_err(|e| format!("{line}: {e}"))?)
                     }
+                    ["card1_sha1", h] => cards[0] = Some(h.to_string()),
+                    ["card2_sha1", h] => cards[1] = Some(h.to_string()),
+                    ["card1_fixture", name] => fixture = Some(name.to_string()),
                     ["polls", n] => {
                         declared = Some(n.parse::<usize>().map_err(|e| format!("{line}: {e}"))?)
                     }
@@ -140,7 +157,46 @@ impl Replay {
             first_vblank_mismatch: None,
             final_vblank,
             last_native: 0,
+            cards,
+            fixture,
         })
+    }
+
+    /// Checks the cards the run starts with (`DW1_CARD1`/`DW1_CARD2` files, or none = fresh
+    /// formatted cards) against the recording's `card1_sha1`/`card2_sha1` headers. A recording
+    /// without them is rejected: it doesn't say what card it was made on.
+    pub fn check_cards(&self) -> Result<(), String> {
+        let mut have = [String::new(), String::new()];
+        for (i, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
+            have[i] = match std::env::var_os(var) {
+                Some(path) => file_sha1(path.as_ref())?,
+                None => "fresh".to_string(),
+            };
+        }
+        self.check_card_hashes(&have)
+    }
+
+    /// [`check_cards`](Self::check_cards) on already-computed hashes (`fresh` = no card file).
+    fn check_card_hashes(&self, have: &[String; 2]) -> Result<(), String> {
+        for (i, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
+            let want = self.cards[i].as_deref().ok_or_else(|| {
+                format!(
+                    "the replay has no card{}_sha1 header (it doesn't name its initial card)",
+                    i + 1
+                )
+            })?;
+            let have = &have[i];
+            if have != want {
+                let name = match (&self.fixture, i) {
+                    (Some(f), 0) => format!(" (fixture {f})"),
+                    _ => String::new(),
+                };
+                return Err(format!(
+                    "{var}: the recording started with card {want}{name} but this run has {have}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The recorded state for the next poll, from native caller `caller` at native VBlank
@@ -268,7 +324,30 @@ mod tests {
             first_vblank_mismatch: None,
             final_vblank: Some(1654),
             last_native: 0,
+            cards: [Some("fresh".into()), Some("fresh".into())],
+            fixture: None,
         };
+        let none = ["fresh".to_string(), "fresh".to_string()];
+        assert_eq!(replay.check_card_hashes(&none), Ok(()));
+        let err = replay
+            .check_card_hashes(&["fresh".into(), "abc".into()])
+            .unwrap_err();
+        assert!(err.contains("DW1_CARD2") && err.contains("abc"), "{err}");
+        replay.cards[0] = Some("a414".into());
+        replay.fixture = Some("ember-day2-gabumon".into());
+        let err = replay.check_card_hashes(&none).unwrap_err();
+        assert!(
+            err.contains("a414") && err.contains("ember-day2-gabumon"),
+            "{err}"
+        );
+        replay.cards[0] = None;
+        assert!(
+            replay
+                .check_card_hashes(&none)
+                .unwrap_err()
+                .contains("no card1_sha1")
+        );
+        replay.cards[0] = Some("fresh".into());
         assert_eq!(replay.poll("MOV_playMovie", 507), Ok(0));
         assert!(replay.timing_note().is_none());
         assert!(
