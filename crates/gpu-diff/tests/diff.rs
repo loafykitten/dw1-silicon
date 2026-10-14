@@ -9,10 +9,12 @@
 //! draws a quad's second triangle first, and dithers only Gouraud polygons (and, when it is
 //! on, ignores the raw flag of a textured one). So the polygons generated here give every
 //! vertex the same colour and the same texture coordinate (nothing to interpolate, the two
-//! agree), a quad is sent as its two triangles in the model's order (they can read each other's
-//! pixels as texture), and the dither bit of E1 stays off. A modulated textured polygon is never semi-transparent (Redux blends
+//! agree), and with dither on in E1 only untextured, opaque polygons are drawn with it (the others have it switched off around them). A quad goes to the
+//! model as is and to the C as its two triangles in the model's order (they can read each
+//! other's pixels as texture). A modulated textured polygon is never semi-transparent (Redux blends
 //! its pixels on 8 bits at the end of an odd row, and quarters the texel in mode B + F/4). Coverage, blending, masking, texture lookup,
-//! rectangles, lines and transfers are still compared bit for bit.
+//! rectangles, lines (horizontal, vertical, diagonal, one colour) and transfers are still compared
+//! bit for bit.
 //!
 //! Case count per test: env `GPU_DIFF_CASES` (default 2500).
 
@@ -124,6 +126,10 @@ mod diff {
         r: Rng,
         mix: Mix,
         /// Current draw area and offset as emitted (for placing vertices).
+        /// E1 bit 9 as last emitted.
+        dither: bool,
+        /// The last E1 value emitted.
+        e1: u32,
         area: (i32, i32, i32, i32),
         ofs: (i32, i32),
         counts: BTreeMap<String, usize>,
@@ -247,34 +253,28 @@ mod diff {
                 vwords[k] = self.vword(pts[k].0, pts[k].1);
                 spare[k] = self.r.u32() & 0xFFFF;
             }
-            // A triangle from vertices `ix`; the first carries the CLUT, the second the page.
-            let emit = |op: u32, ix: [usize; 3]| {
-                let mut w = Vec::new();
-                for (j, &k) in ix.iter().enumerate() {
-                    if j == 0 {
-                        w.push((op << 24) | col);
-                    } else if gouraud {
-                        w.push(col);
-                    }
-                    w.push(vwords[k]);
-                    if tex {
-                        let hi = [clut, tpage, spare[k]][j];
-                        w.push((hi << 16) | ((uvs[k].1 as u32) << 8) | uvs[k].0 as u32);
-                    }
+            // The first vertex carries the CLUT, the second the page.
+            let mut w = Vec::new();
+            for k in 0..nv {
+                if k == 0 {
+                    w.push((op << 24) | col);
+                } else if gouraud {
+                    w.push(col);
                 }
-                w
-            };
-            // A quad goes to both sides as the two triangles the model draws, in its order
-            // (the second one first): where they overlap, a pixel can be read as texture by the
-            // other, so the order shows. (A quad of the C is the other order; the oracle test
-            // covers quads.)
-            let w = if quad {
-                let mut w = emit(op & !8, [1, 2, 3]);
-                w.extend(emit(op & !8, [0, 1, 2]));
-                w
-            } else {
-                emit(op, [0, 1, 2])
-            };
+                w.push(vwords[k]);
+                if tex {
+                    let hi = [clut, tpage, spare[k], spare[k]][k];
+                    w.push((hi << 16) | ((uvs[k].1 as u32) << 8) | uvs[k].0 as u32);
+                }
+            }
+            // With dither on in E1, a textured or semi-transparent polygon is drawn with it off
+            // (the model dithers those differently, see the header), then E1 is put back.
+            if self.dither && (tex || op & 2 != 0) {
+                let mut v = vec![0xE100_0000 | (self.e1 & 0x3DFF)];
+                v.extend(w);
+                v.push(0xE100_0000 | self.e1);
+                w = v;
+            }
             self.count(&format!(
                 "poly {} {} {}",
                 if quad { "quad" } else { "tri" },
@@ -333,20 +333,43 @@ mod diff {
             let poly = op & 8 != 0;
             let nv = if poly { self.r.range(2, 6) } else { 2 };
             let mut c = self.point();
+            c = (
+                c.0.clamp(self.ofs.0 - 900, self.ofs.0 + 900),
+                c.1.clamp(self.ofs.1 - 900, self.ofs.1 + 900),
+            );
             let s = if self.r.pct(90) {
                 self.r.range(1, 150)
             } else {
                 self.r.range(150, 1300)
             };
+            // Every segment is horizontal, vertical or at 45 degrees, and every vertex has the
+            // same colour: the model draws other lines (and colour gradients along them) as Redux
+            // does, which the C doesn't (see the header).
+            let col = self.colour();
+            let s = s.min(900);
             let mut w = Vec::new();
             for k in 0..nv {
-                let col = self.colour();
                 if k == 0 {
                     w.push((op << 24) | col);
                 } else if gouraud {
                     w.push(col);
                 }
-                c = self.near(c, s);
+                // (keep the vertex inside what a vertex word can hold, or it would be clamped)
+                let dir = |g: &mut Gen, v: i32, o: i32| -> i32 {
+                    let d = if g.r.pct(50) { s } else { -s };
+                    if (v + d - o).abs() > 1000 { -d } else { d }
+                };
+                let ofs = self.ofs;
+                let (kind, dx, dy) = (
+                    self.r.below(3),
+                    dir(self, c.0, ofs.0),
+                    dir(self, c.1, ofs.1),
+                );
+                c = match kind {
+                    0 => (c.0 + dx, c.1),
+                    1 => (c.0, c.1 + dy),
+                    _ => (c.0 + dx, c.1 + dy),
+                };
                 let vw = self.vword(c.0, c.1);
                 w.push(vw);
             }
@@ -376,9 +399,13 @@ mod diff {
         fn state_of(&mut self, which: u32) -> Vec<u32> {
             let w = match which {
                 1 => {
-                    // Bit 9 (dither) stays off: the model dithers differently from the C (see
-                    // the header).
-                    self.r.u32() & 0x3DFF
+                    let mut v = self.r.u32() & 0x3FFF;
+                    if self.mix == Mix::Blend && self.r.pct(50) {
+                        v |= 0x200;
+                    }
+                    self.dither = v & 0x200 != 0;
+                    self.e1 = v;
+                    v
                 }
                 2 => {
                     if self.r.pct(25) {
@@ -607,6 +634,8 @@ mod diff {
 
         fn case(&mut self, init_seed: u64) -> Case {
             self.area = (0, 0, 1023, 511);
+            self.dither = false;
+            self.e1 = 0;
             self.ofs = (0, 0);
             let mut ops = Vec::new();
             // Draw area and offset first, so most primitives land inside it.
@@ -662,6 +691,105 @@ mod diff {
         ))
     }
 
+    /// Number of words of the command at the start of `w` (0 when cut off), as the model counts them.
+    fn cmd_len(w: &[u32]) -> usize {
+        let op = w[0] >> 24;
+        let n = w.len();
+        let len = match op {
+            0x02 => 3,
+            0x20..=0x3F => {
+                let nv = if op & 8 != 0 { 4 } else { 3 };
+                1 + nv * if op & 4 != 0 { 2 } else { 1 } + if op & 0x10 != 0 { nv - 1 } else { 0 }
+            }
+            0x40..=0x5F => {
+                if op & 8 == 0 {
+                    if op & 0x10 != 0 { 4 } else { 3 }
+                } else {
+                    match (3..n).find(|&i| w[i] & 0xF000_F000 == 0x5000_5000) {
+                        Some(i) => i + 1,
+                        None => return 0,
+                    }
+                }
+            }
+            0x60..=0x7F => 2 + (op & 4 != 0) as usize + ((op >> 3) & 3 == 0) as usize,
+            0x80..=0x9F => 4,
+            0xA0..=0xBF => {
+                if n < 3 {
+                    return 0;
+                }
+                let cw = ((((w[2] & 0xFFFF) as i32) - 1) & 0x3FF) + 1;
+                let ch = ((((w[2] >> 16) as i32) - 1) & 0x1FF) + 1;
+                3 + ((cw * ch + 1) / 2) as usize
+            }
+            0xC0..=0xDF => 3,
+            _ => 1,
+        };
+        if len > n { 0 } else { len }
+    }
+
+    /// What the C is sent for a packet: the C draws a quad as (v0 v1 v2) then (v1 v2 v3), the
+    /// model the other way round (where they overlap one can read the other as texture), so
+    /// each quad goes to the C as the two triangles in the model's order. The quad itself goes to
+    /// the model, so its decoding and split are what is tested.
+    fn c_view(w: &[u32]) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < w.len() {
+            let len = cmd_len(&w[i..]);
+            if len == 0 {
+                out.extend_from_slice(&w[i..]);
+                break;
+            }
+            let cmd = &w[i..i + len];
+            let op = cmd[0] >> 24;
+            if (0x28..=0x3F).contains(&op) && op & 8 != 0 {
+                let tex = op & 4 != 0;
+                let gour = op & 0x10 != 0;
+                // per vertex: (colour word, xy, uv)
+                let mut vs = Vec::new();
+                let mut j = 1;
+                let mut col = cmd[0] & 0xFF_FFFF;
+                for k in 0..4 {
+                    if gour && k > 0 {
+                        col = cmd[j];
+                        j += 1;
+                    }
+                    let xy = cmd[j];
+                    j += 1;
+                    let uv = if tex {
+                        j += 1;
+                        cmd[j - 1]
+                    } else {
+                        0
+                    };
+                    vs.push((col, xy, uv));
+                }
+                let (clut, tpage) = (vs[0].2 >> 16, vs[1].2 >> 16);
+                let mut tri = |ix: [usize; 3]| {
+                    for (n, &k) in ix.iter().enumerate() {
+                        let (col, xy, uv) = vs[k];
+                        if n == 0 {
+                            out.push(((op & !8) << 24) | col);
+                        } else if gour {
+                            out.push(col);
+                        }
+                        out.push(xy);
+                        if tex {
+                            let hi = [clut, tpage, uv >> 16][n];
+                            out.push((hi << 16) | (uv & 0xFFFF));
+                        }
+                    }
+                };
+                tri([1, 2, 3]);
+                tri([0, 1, 2]);
+            } else {
+                out.extend_from_slice(cmd);
+            }
+            i += len;
+        }
+        out
+    }
+
     /// Runs the case on both; `Err` describes the first difference.
     fn run(case: &Case, c: &mut CGpu, scratch: &mut Scratch) -> Result<(), String> {
         let mut g = Gpu::new();
@@ -672,7 +800,7 @@ mod diff {
             match op {
                 Op::Gp0(w) => {
                     g.gp0(w);
-                    c.gp0(w);
+                    c.gp0(&c_view(w));
                 }
                 Op::Fill(x, y, w, h, col) => {
                     g.fill(*x, *y, *w, *h, *col);
@@ -773,6 +901,8 @@ mod diff {
         let mut g = Gen {
             r: Rng(seed),
             mix,
+            dither: false,
+            e1: 0,
             area: (0, 0, 1023, 511),
             ofs: (0, 0),
             counts: BTreeMap::new(),

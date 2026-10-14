@@ -6,8 +6,8 @@ Rust GPU model against. Black-box: only the results of what the emulator draws a
 Usage: gpu_requests.py OUT_DIR [--seed N] [--scale K] [--only semi|fade]
 
 --only semi writes just the semi-transparent cases, --only fade just the game's fade quad (both
-after the same setup); cases.txt of several runs can be concatenated, renumbering the ids, with
-their results.txt appended in the same order. The cases of a plain run end with the semi ones.
+after the same setup). The test's known-residue list is keyed by case ids, so use a plain run
+(everything, one emulator session) for it.
 `gpu_snap_requests.py` redraws the game's fade on the game's own picture.
 
 Writes OUT_DIR/req.txt (the requests) and OUT_DIR/cases.txt (what each case drew). Run req.txt
@@ -288,18 +288,18 @@ class Gen:
         r = self.r
         ax, ay, aw, ah = AREA
         for _ in range(60):
-            clip = self.rand_clip()
-            ofs = (r.randint(-50, 200), r.randint(-50, 200))
+            clip = self.rand_clip(full=r.random() < 0.8)
+            ofs = (r.randint(0, 100), ay + r.randint(0, 8))  # inside the test area
             pts = [(r.randint(-20, 130), r.randint(-20, 50)) for _ in range(2)]
             gour = r.random() < 0.6
             cols = [r.randint(0, 0xFFFFFF) for _ in range(2)]
             op = 0x40 | (0x10 if gour else 0)
             prim = [(op << 24) | cols[0], w_xy(*pts[0])] + ([cols[1]] if gour else []) + [w_xy(*pts[1])]
-            rect = (ax, ay, 128, ah)
+            rect = (ax, ay, 256, ah)
             self.case(rect, self.prelude(0, r.randint(0, 1), clip, ofs) + [prim])
         for _ in range(40):
-            clip = self.rand_clip()
-            ofs = (r.randint(-50, 200), r.randint(-50, 200))
+            clip = self.rand_clip(full=r.random() < 0.8)
+            ofs = (r.randint(0, 100), ay + r.randint(0, 8))
             tex = r.random() < 0.6
             size = r.choice([0, 1, 2, 3])
             x, y = r.randint(-10, 120), r.randint(-10, 40)
@@ -310,7 +310,7 @@ class Gen:
             if size == 0:
                 words.append(w_xy(r.randint(1, 80), r.randint(1, 30)))
             page = r.choice([TPAGE_A, TPAGE_B])
-            self.case((ax, ay, 128, ah), self.prelude(page, 0, clip, ofs) + [words])
+            self.case((ax, ay, 256, ah), self.prelude(page, 0, clip, ofs) + [words])
 
 
     def perms(self, count):
@@ -472,10 +472,10 @@ def main():
         g.sprites(500 * a.scale)
         for _ in range(3000 * a.scale):
             g.rand_case()
-    if a.only == "fade":
-        g.fades()
-    else:
+    if a.only in ("", "semi"):
         g.semis(288 * a.scale)
+    if a.only in ("", "fade"):
+        g.fades()
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "req.txt"), "w") as f:
         f.write("\n".join(g.req) + "\n")
