@@ -82,13 +82,14 @@ def voice_streams(evs, voices):
             elif e[2] == 'SsSeqPlay':
                 song, song_start = song + 1, t[1]
                 starts[song] = song_start
-            elif e[2] in ('SsSeqStop', 'SsUtAllKeyOff') and song >= 0:
+            elif e[2] == 'SsSeqStop' and song >= 0:
                 stops.setdefault(song, t[1] - song_start)
             continue
         if kind == 'keyon':
             n = e[2]
-            # The SDK's SsInit keys every voice on at volume 0 and off again: silent, skipped.
-            if n not in voices or (e[5] == 0 and e[6] == 0):
+            # The SDK's SsInit keys every voice on at volume 0 with a zero ADSR and off again:
+            # silent, skipped.
+            if n not in voices or (e[5] == 0 and e[6] == 0 and e[7] == 0 and e[8] == 0):
                 continue
             if n in sfx_next:
                 sfx_next.discard(n)
@@ -176,35 +177,55 @@ def close(a, b):
 POLLS = []
 
 
+def gaps(t):
+    """The loading gaps (polls more than 2 VBlanks apart) that VBlank t lies in, its ends
+    included: the port stamps a VBlank's writes after its polls, and loads in no time, so an
+    event of a gap can land on either of its polls."""
+    i = bisect.bisect_left(POLLS, t)
+    out = set()
+    for g in (i, i + 1):
+        if 0 < g < len(POLLS) and POLLS[g - 1] <= t <= POLLS[g] and POLLS[g] - POLLS[g - 1] > 2:
+            out.add(g)
+    return out
+
+
 def same_gap(a, b):
-    """Both between the same two polls that are more than 2 VBlanks apart: while the game loads
-    (or plays a movie) the port's VBlanks between polls aren't the emulator's."""
-    # The port stamps a VBlank's writes after its polls, so an event on the VBlank that ends a
-    # gap still belongs to the gap.
-    i, j = bisect.bisect_left(POLLS, a), bisect.bisect_left(POLLS, b)
-    return i == j and 0 < i < len(POLLS) and POLLS[i] - POLLS[i - 1] > 2
+    """Both in the same loading gap: while the game loads (or plays a movie) the port's VBlanks
+    between polls aren't the emulator's."""
+    return bool(gaps(a) & gaps(b))
 
 
 def compare_lists(name, ora, nat, report, show, song=False):
     stats = defaultdict(int)
     i = j = 0
+    # A song's events may drift slowly against the port's: the emulator misses a 240 Hz tick
+    # now and then while the game is busy (23 instead of 11 over 19,000 VBlanks of the training
+    # replay), so the offset is followed, a VBlank at a time (more after a long silence).
+    offset = last = 0
     while i < len(ora) or j < len(nat):
         o = ora[i] if i < len(ora) else None
         n = nat[j] if j < len(nat) else None
         if o and n and o[1] == n[1]:
-            if o[0] == n[0]:
+            drift = n[0] - o[0]
+            # The emulator's lost ticks add up to about a VBlank in 1,000 at worst.
+            allowed = 1 + (o[0] - last) // 1000
+            if drift == 0:
                 stats['same'] += 1
             elif close(o[0], n[0]):
                 stats['off by one'] += 1
+            elif song and abs(drift - offset) <= allowed:
+                stats['drifted'] += 1
             elif not song and same_gap(o[0], n[0]):
                 stats['same loading gap'] += 1
             else:
                 stats['late/early'] += 1
                 if len(report) < show:
                     report.append(f'{name}: {o[1]} at oracle {o[0]}, port {n[0]}')
+            if song and abs(drift - offset) <= allowed:
+                offset, last = drift, o[0]
             i, j = i + 1, j + 1
             continue
-        if (o and n and o[1][0] == n[1][0] == 'set' and o[1][1] in ('voll', 'volr')
+        if (not song and o and n and o[1][0] == n[1][0] == 'set' and o[1][1] in ('voll', 'volr')
                 and o[1][1] == n[1][1] and close(o[0], n[0])):
             # A fade's step (SsUtAutoVol): its values aren't modelled exactly (libsnd.rs).
             stats['set value differs'] += 1
@@ -283,7 +304,9 @@ def main():
         ora_l, nat_l = ora_v.get(key, []), nat_v.get(key, [])
         if is_song:
             # The game stops a song by its own clock, and the emulator's songs run on through
-            # its loading screens: from the earlier side's stop on, the song's tail.
+            # its loading screens: from the earlier side's stop on (a VBlank's margin: the stop's
+            # own key-offs land on either side of it), the song's tail. The stop's clean-up is
+            # checked by the probes (docs/phase6-plan.md), not here.
             stop = min(ora_stops.get(st[1], 1 << 30), nat_stops.get(st[1], 1 << 30)) - 1
             tail = sum(1 for x in ora_l if x[0] >= stop) + sum(1 for x in nat_l if x[0] >= stop)
             ora_l = [x for x in ora_l if x[0] < stop]
@@ -305,7 +328,13 @@ def main():
     print('globals:', dict(gst))
     bad = sum(t['differ'] + t['only oracle'] + t['only port'] + t['late/early']
               for t in (total, music)) + gst['differ']
-    # An empty or truncated capture must not pass.
+    # An empty or truncated capture must not pass: the logs must reach the same point of the
+    # replay (the song tails above take a song still playing at a log's end as stopped there).
+    ora_last = max(e[0][0] for e in ora_ev)
+    nat_last = max(e[0][0] for e in nat_ev)
+    if abs(ora_last - nat_last) > 600:
+        print(f'the logs end apart: oracle at VBlank {ora_last}, port at {nat_last} (estimated)')
+        bad += 1
     if not any(e[1] == 'keyon' for e in ora_ev) or not any(e[1] == 'keyon' for e in nat_ev):
         print('no key-ons on one side: nothing compared')
         bad += 1

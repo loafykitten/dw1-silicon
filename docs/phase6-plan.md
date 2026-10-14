@@ -171,3 +171,39 @@ sound lagging. `DW1_MUTE=1` opens no device. Headless runs can write the audio w
 
 Not yet: XA audio (the intro movie's sound; the game's `SsInit` turns CD audio off afterwards
 and nothing in the replays turns it back on), and Ember's listen ("sounds right").
+
+### More replays, and the review of slice 3 (2026-10-14)
+
+gpt-6.1-sol's review of the sequencer found real problems, fixed: a score or loop that takes no
+time now ends the SEQ instead of spinning (a tick may run at most 4,096 events), tempo math is
+64-bit, a new `SsSeqPlay` starts at the header's tempo, loop jumps restore the running status,
+the WAV cap keeps the real byte count; in the comparison, music volume differences always fail
+(only sound effect fades are excused), `SsUtAllKeyOff` no longer ends a song's window, and only
+SsInit's silent key-ons (volume and ADSR all 0) are skipped. The allocator it flagged (a voice
+keyed this tick looking free) was already fixed.
+
+Three more replays captured (`captures/oracle-runs/p6-spu-battle-twice`, `-training-six`,
+`-new-game`) taught three more rules:
+
+- A voice still holding a note isn't free even when its sample has ended; one whose note-off
+  came this tick is (both seen in battle-twice).
+- A loop jump lands on the event after NRPN 20, due at once: the delta before it counts only
+  the first time (the field music's loop was 30 MIDI ticks long otherwise).
+- `CdInit` sets SPUCNT outright to 0xC001, which turns the reverb off: on the new-game route a
+  `CdInit` after the boot leaves the reverb off for the rest of the run.
+
+And one emulator trait: Redux misses a 240 Hz tick now and then while the game is busy (23
+instead of the clock's 11 over 19,000 VBlanks of the training replay), so long songs drift a few
+VBlanks against the port; the comparison follows a song's offset as it drifts.
+
+| replay | sound effects | music | globals |
+|---|---|---|---|
+| battle-fixture | 371 same, 57 off by one, 5 loading gap, 36 fade steps | 1,965 same, 19 off by one | 3,956 same |
+| battle-twice | 524 same, 59 off by one, 6 loading gap, 36 fade steps | 2,764 same, 269 off by one | 5,599 same |
+| training-six | 611 same, 12 off by one, 5 loading gap, 24 fade steps | 130 same, 118 off by one, 290 drifted | 11,025 same |
+| new-game | 226 same, 75 loading gap | 991 same, 1,226 off by one, 167 drifted; 44 differ | 7,126 same |
+
+The new-game differences are voice choices at the start of songs after a long release: the
+emulator still sees the old note's envelope (its release takes about 1.5 s, and the song starts
+1.45 s after the stop), the port's has just finished. Release timing that close to a tick
+boundary isn't reproducible from VBlank-level timing.

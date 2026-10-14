@@ -701,12 +701,17 @@ impl SndState {
         }
     }
 
-    /// The voice for a SEQ key-on: the lowest-numbered free one (envelope finished, nothing
-    /// keyed for the next tick), else the one keyed longest ago [obs: -seqC, chords of up to
-    /// 30 notes].
+    /// The voice for a SEQ key-on: the lowest-numbered free one, else the one keyed longest
+    /// ago [obs: -seqC, chords of up to 30 notes]. Free is its envelope finished and its note
+    /// off (keyed off, or a key-off due at the next tick), with no key-on due: a voice still
+    /// holding a note whose sample has ended isn't free, one whose note-off came this tick is
+    /// [obs: battle-twice replay, both cases].
     fn allocate(&self, spu: &SpuState) -> usize {
         (0..VOICES)
-            .find(|&n| !self.voices[n].key_on && spu.envelope(n) == 0)
+            .find(|&n| {
+                let v = &self.voices[n];
+                !v.key_on && (v.key_off || !spu.is_keyed(n)) && spu.envelope(n) == 0
+            })
             .unwrap_or_else(|| {
                 (0..VOICES)
                     .min_by_key(|&n| {

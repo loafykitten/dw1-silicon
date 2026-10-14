@@ -14,9 +14,11 @@
 //! carry over. A tempo change applies to the tick it comes in: what that tick overshot is
 //! rescaled to the new tempo.
 //!
-//! Loops [obs: -seqC, and the battle music, which jumps back to the notes right after its
-//! NRPN 20]: NRPN 20 (controller 99) marks the loop start, just after itself; a data entry
-//! (controller 6), before or after it, gives the loop count; NRPN 30 marks the loop end. A count of 127 loops forever and jumps back as soon as the loop end is read
+//! Loops [obs: -seqC, the battle music, which jumps back to the notes right after its NRPN 20,
+//! and the field music, whose loop takes the delta after its NRPN 20 only the first time]: NRPN
+//! 20 (controller 99) marks the loop start at the event after it, a jump back landing on that
+//! event due at once; a data entry (controller 6), before or after it, gives the loop count;
+//! NRPN 30 marks the loop end. A count of 127 loops forever and jumps back as soon as the loop end is read
 //! (the only count DW1's music uses). A finite count plays the loop that many times, and each
 //! jump back comes after the delta of the event that follows the loop end, which is skipped. At
 //! the end of the score the SEQ starts again from the top as long as `SsSeqPlay`'s play count
@@ -61,31 +63,41 @@ const FOREVER: u8 = 127;
 pub struct Player {
     data: Vec<u8>,
     resolution: u32,
-    /// Tenths of a MIDI tick per 240 Hz tick.
-    step: i32,
+    /// Tenths of a MIDI tick per 240 Hz tick: now, and as the header sets it.
+    step: i64,
+    header_step: i64,
     pos: usize,
     status: u8,
     /// Tenths of a MIDI tick until the next event is due (<= 0: due).
-    wait: i32,
+    wait: i64,
     /// `SsSeqPlay`'s play count left (0 = forever).
     plays_left: i32,
     /// NRPN number (controller 99) and the last data entry (controller 6) seen, for loops.
     nrpn: Option<u8>,
     data_entry: Option<u8>,
-    loop_start: Option<usize>,
+    /// The loop start: position and the running status there.
+    loop_start: Option<(usize, u8)>,
     loop_count: u8,
     loops_done: u8,
     /// A finite loop's jump back, waiting for the next event's delta.
     jump_pending: bool,
+    /// NRPN 20 was just read: the loop start is set once the next delta is.
+    mark_pending: bool,
+    /// A jump just landed: the event there is due at once.
+    jumped: bool,
     ended: bool,
 }
 
 /// Tenths of a MIDI tick per 240 Hz tick: resolution x 1,000,000 / tempo / 240 x 10, rounded.
-pub fn step(resolution: u32, tempo: u32) -> i32 {
+pub fn step(resolution: u32, tempo: u32) -> i64 {
     let num = u64::from(resolution) * 1_000_000 * 10;
     let den = u64::from(tempo.max(1)) * 240;
-    ((num + den / 2) / den) as i32
+    ((num + den / 2) / den) as i64
 }
+
+/// Events one tick may run before the score counts as broken: a loop or replay that takes no
+/// time would otherwise spin forever.
+const MAX_EVENTS_PER_TICK: usize = 4096;
 
 /// Copies the SEQ at `addr` (up to its end marker, at most [`MAX_SEQ_BYTES`]).
 ///
@@ -212,6 +224,7 @@ impl Player {
             data: data[..len].to_vec(),
             resolution,
             step: step(resolution, tempo),
+            header_step: step(resolution, tempo),
             pos: SCORE,
             status: 0,
             wait: 0,
@@ -222,6 +235,8 @@ impl Player {
             loop_count: 0,
             loops_done: 0,
             jump_pending: false,
+            mark_pending: false,
+            jumped: false,
             ended: false,
         })
     }
@@ -230,21 +245,24 @@ impl Player {
     pub fn play(&mut self, plays: i32) {
         self.pos = SCORE;
         self.status = 0;
+        self.step = self.header_step;
         self.plays_left = plays;
         self.nrpn = None;
         self.data_entry = None;
         self.loop_start = None;
         self.loops_done = 0;
         self.jump_pending = false;
+        self.mark_pending = false;
+        self.jumped = false;
         self.ended = false;
         self.wait = self.next_delta();
     }
 
-    fn next_delta(&mut self) -> i32 {
+    fn next_delta(&mut self) -> i64 {
         let mut pos = self.pos;
         let d = read_vlq(&self.data, &mut pos).unwrap_or(0);
         self.pos = pos;
-        (d as i32).saturating_mul(10)
+        i64::from(d) * 10
     }
 
     /// One 240 Hz tick: the events that fall due, in order.
@@ -253,16 +271,31 @@ impl Player {
             return;
         }
         self.wait -= self.step;
+        let mut budget = MAX_EVENTS_PER_TICK;
         while self.wait <= 0 && !self.ended {
+            budget -= 1;
+            if budget == 0 {
+                eprintln!("psyq: a SEQ loops without taking time; stopped");
+                self.ended = true;
+                out.push(Event::End);
+                return;
+            }
             if self.jump_pending {
                 self.jump_pending = false;
-                self.pos = self.loop_start.unwrap_or(SCORE);
-                self.wait += self.next_delta();
+                let (pos, status) = self.loop_start.unwrap_or((SCORE, 0));
+                (self.pos, self.status) = (pos, status);
                 continue;
             }
             self.event(out);
-            if !self.ended {
-                self.wait += self.next_delta();
+            if self.ended {
+                break;
+            }
+            if std::mem::take(&mut self.jumped) {
+                continue;
+            }
+            self.wait += self.next_delta();
+            if std::mem::take(&mut self.mark_pending) {
+                self.loop_start = Some((self.pos, self.status));
             }
         }
     }
@@ -332,7 +365,7 @@ impl Player {
                 self.nrpn = Some(value);
                 match value {
                     20 => {
-                        self.loop_start = Some(self.pos);
+                        self.mark_pending = true;
                         self.loops_done = 0;
                         if let Some(count) = self.data_entry {
                             self.loop_count = count;
@@ -357,9 +390,12 @@ impl Player {
     }
 
     fn loop_end(&mut self) {
-        let Some(start) = self.loop_start else { return };
+        let Some((pos, status)) = self.loop_start else {
+            return;
+        };
         if self.loop_count == FOREVER {
-            self.pos = start;
+            (self.pos, self.status) = (pos, status);
+            self.jumped = true;
             return;
         }
         self.loops_done += 1;
@@ -502,6 +538,45 @@ mod tests {
         );
         assert_eq!(out.last(), Some(&Event::End));
         assert!(p.ended);
+    }
+
+    #[test]
+    fn a_score_that_takes_no_time_ends() {
+        // An empty score replayed forever, and a loop of nothing.
+        for data in [
+            seq(&[], 480, 500_000),
+            seq(
+                &[
+                    (0, &[0xb0, 6, 127]),
+                    (0, &[0xb0, 99, 20]),
+                    (0, &[0xb0, 99, 30]),
+                ],
+                480,
+                500_000,
+            ),
+        ] {
+            let mut p = Player::new(&data).unwrap();
+            p.play(0);
+            let mut out = Vec::new();
+            p.tick(&mut out);
+            assert_eq!(out.last(), Some(&Event::End));
+        }
+    }
+
+    #[test]
+    fn a_new_play_starts_at_the_header_tempo() {
+        let data = seq(
+            &[(0, &[0xff, 0x51, 0x03, 0xd0, 0x90]), (40, &[0x90, 60, 127])],
+            480,
+            500_000,
+        );
+        let mut p = Player::new(&data).unwrap();
+        p.play(1);
+        let mut out = Vec::new();
+        p.tick(&mut out);
+        assert_eq!(p.step, 80);
+        p.play(1);
+        assert_eq!(p.step, 40);
     }
 
     #[test]

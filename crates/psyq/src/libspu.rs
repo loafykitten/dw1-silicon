@@ -324,6 +324,11 @@ impl SpuState {
         self.write_mask(reg::NON, mask & ALL_VOICES, false);
     }
 
+    /// Whether voice `n` is keyed on, by libspu's count (keyed on and not keyed off since).
+    pub fn is_keyed(&self, n: usize) -> bool {
+        self.keyed & (1 << n) != 0
+    }
+
     /// Voice `n`'s envelope level (ENVX).
     pub fn envelope(&self, n: usize) -> u16 {
         self.read(reg::voice(n, reg::ENVX))
@@ -528,15 +533,17 @@ impl SpuState {
     }
 
     /// What libcd's `CdInit` writes to the SPU once the drive has reset [obs: the emulator, 7
-    /// VBlanks after each of the game's two `CdInit` calls]: main and CD audio volume full, CD
-    /// audio on. (The game's `SsInit` later turns CD audio off again.)
+    /// VBlanks after each of the game's `CdInit` calls]: main and CD audio volume full, and the
+    /// control register set outright to on, unmuted, CD audio on, which turns the reverb off.
+    /// (The game's boot `SsInit` turns CD audio off again; on the new-game route a later
+    /// `CdInit` leaves the reverb off for the rest of the run.)
     pub fn cd_init_volume(&mut self) {
         self.write(reg::MAIN_VOL_L, 0x3fff);
         self.write(reg::MAIN_VOL_R, 0x3fff);
         self.write(reg::CD_VOL_L, 0x3fff);
         self.write(reg::CD_VOL_R, 0x3fff);
-        let cnt = self.spucnt();
-        self.write(reg::SPUCNT, cnt | SPUCNT_CD_AUDIO);
+        self.write(reg::SPUCNT, SPUCNT_ENABLE | SPUCNT_UNMUTE | SPUCNT_CD_AUDIO);
+        self.reverb.enabled = false;
     }
 
     /// Renders the samples up to `cycle` cycles into the current VBlank.
@@ -624,6 +631,8 @@ static WAV: Mutex<Option<std::sync::Arc<Mutex<Wav>>>> = Mutex::new(None);
 struct Wav {
     file: BufWriter<File>,
     bytes: u32,
+    /// The 4 GiB RIFF limit was reached.
+    full: bool,
 }
 
 impl Wav {
@@ -631,6 +640,7 @@ impl Wav {
         let mut wav = Wav {
             file: BufWriter::new(File::create(path)?),
             bytes: 0,
+            full: false,
         };
         wav.header()?;
         Ok(wav)
@@ -639,7 +649,7 @@ impl Wav {
     fn header(&mut self) -> std::io::Result<()> {
         let f = &mut self.file;
         f.write_all(b"RIFF")?;
-        f.write_all(&36u32.saturating_add(self.bytes).to_le_bytes())?;
+        f.write_all(&(36 + self.bytes).to_le_bytes())?;
         f.write_all(b"WAVEfmt ")?;
         // PCM, 2 channels, 44100 Hz, 4 bytes a frame, 16 bits.
         f.write_all(&16u32.to_le_bytes())?;
@@ -656,11 +666,10 @@ impl Wav {
     fn push(&mut self, samples: &[i16]) {
         // A RIFF file can't describe more than 4 GiB (6 h 45 min of audio): stop there.
         let add = 2 * samples.len() as u32;
-        if self.bytes.checked_add(add + 36).is_none() {
-            if self.bytes != u32::MAX {
+        if self.full || self.bytes.checked_add(add + 36).is_none() {
+            if !self.full {
                 eprintln!("psyq: DW1_WAV: 4 GiB reached, the rest isn't written");
-                self.finish();
-                self.bytes = u32::MAX;
+                self.full = true;
             }
             return;
         }
