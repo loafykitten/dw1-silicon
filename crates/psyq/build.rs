@@ -16,7 +16,7 @@ fn main() {
 /// The capture runs of `GsSortObject4J` under `DW1_SORT_CAPTURES` (default
 /// `<workspace>/captures/oracle-runs`): `libgs-pin` (S0.7, `oracle/capture-libgs.lua`) and every
 /// `s4j-*` (`oracle/capture-calls.lua` with `DW1_CAPTURE_STATES=1`). Sets
-/// `cfg(have_libgs_capture)` when at least one has its `calls.txt`; without any,
+/// `cfg(have_libgs_capture)` when at least one exists (finished or not); without any,
 /// `tests/libgs_capture.rs` shows as an ignored placeholder.
 fn sort_capture() {
     println!("cargo::rustc-check-cfg=cfg(have_libgs_capture)");
@@ -33,9 +33,9 @@ fn sort_capture() {
         for e in entries.flatten() {
             let name = e.file_name();
             let name = name.to_string_lossy();
-            if (name == "libgs-pin" || name.starts_with("s4j-"))
-                && e.path().join("calls.txt").exists()
-            {
+            // Any run counts, finished or not: the test fails on an interrupted one rather than
+            // being ignored.
+            if name == "libgs-pin" || name.starts_with("s4j-") {
                 found += 1;
             }
         }
