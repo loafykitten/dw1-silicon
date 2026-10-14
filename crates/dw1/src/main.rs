@@ -84,7 +84,20 @@ fn main() {
     }
     // DW1_MOVIE=<id> plays one movie on its own (0 = the intro) and stops: the game's movie
     // player, without the boot that precedes it in main().
-    if let Some(id) = std::env::var("DW1_MOVIE").ok().and_then(|v| v.parse().ok()) {
+    let movie = std::env::var("DW1_MOVIE")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(|v| {
+            // MOV_playMovie indexes its four-entry table without a check.
+            match v.parse::<i32>() {
+                Ok(id @ 0..=3) => id,
+                _ => {
+                    eprintln!("dw1: DW1_MOVIE must be a movie number from 0 to 3, not {v:?}");
+                    std::process::exit(2);
+                }
+            }
+        });
+    if let Some(id) = movie {
         psyq::libetc::ResetCallback();
         psyq::libgpu::ResetGraph(0);
         psyq::libcd::CdInit();

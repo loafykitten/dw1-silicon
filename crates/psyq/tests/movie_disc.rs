@@ -92,7 +92,16 @@ fn the_intro_streams_to_its_last_frame() {
                             .copy_from_slice(&row[..cols * 3]);
                     }
                 }
-                lit_frames += usize::from(rgb.iter().filter(|&&b| b > 16).count() > rgb.len() / 20);
+                // A picture, not a flat fill: lit, many colours, and varying across the frame.
+                let lit = rgb.iter().filter(|&&b| b > 16).count() > rgb.len() / 20;
+                let colours: std::collections::HashSet<&[u8]> = rgb.chunks(3).collect();
+                let left_right_differ = (0..ht).any(|y| {
+                    rgb[y * w * 3..y * w * 3 + 3] != rgb[(y * w + w - 1) * 3..(y * w + w) * 3]
+                });
+                let top_bottom_differ = rgb[..w * 3] != rgb[(ht - 1) * w * 3..ht * w * 3];
+                lit_frames += usize::from(
+                    lit && colours.len() >= 256 && (left_right_differ || top_bottom_differ),
+                );
                 std::fs::create_dir_all(&out_dir).unwrap();
                 let file =
                     std::fs::File::create(out_dir.join(format!("op1_{number:04}.png"))).unwrap();

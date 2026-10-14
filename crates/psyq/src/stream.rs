@@ -381,12 +381,19 @@ impl Stream {
     /// `StGetNext`: the next whole frame, or `None` when none is on the way. When the frame
     /// hasn't arrived by `now`, runs ahead to its last sector and says when that is in
     /// `until`; the caller advances the clock there.
+    ///
+    /// No running ahead while the game holds a frame: whether a later frame fits the ring
+    /// depends on when the game frees it, so the poll just reports nothing ready yet. (DW1's
+    /// player frees each frame before polling again.)
     pub fn poll(
         &mut self,
         now: u32,
         read: &mut dyn FnMut(i32, &mut [u8; RAW_BYTES]) -> bool,
     ) -> Option<Delivered> {
         self.sync(now, read);
+        if self.ready.is_empty() && !self.held.is_empty() {
+            return None;
+        }
         let mut until = now;
         let mut looked = 0;
         while self.ready.is_empty() {
@@ -422,8 +429,20 @@ impl Stream {
         self.held.iter().find(|f| f.off == at)
     }
 
-    /// `StFreeRing`: gives back the frame whose bitstream starts at `data`. False if it isn't
-    /// one handed out.
+    /// `StFreeRing` at VBlank `now`: takes in the sectors that arrived while the frame was
+    /// held (they found the ring as it was), then gives back the frame whose bitstream starts
+    /// at `data`. False if it isn't one handed out.
+    pub fn free_at(
+        &mut self,
+        data: *const u8,
+        now: u32,
+        read: &mut dyn FnMut(i32, &mut [u8; RAW_BYTES]) -> bool,
+    ) -> bool {
+        self.sync(now, read);
+        self.free(data)
+    }
+
+    /// Gives back the frame whose bitstream starts at `data`. False if it isn't one handed out.
     pub fn free(&mut self, data: *const u8) -> bool {
         let Some(&f) = self.held_at(data) else {
             return false;
@@ -633,6 +652,27 @@ mod tests {
         let d = s.poll(1000, &mut read).unwrap();
         assert_eq!(d.frame, 3);
         assert_eq!(s.backloc(), Some((9, 4)));
+    }
+
+    #[test]
+    fn a_held_frame_blocks_lookahead_and_arrivals_while_held_find_the_ring_full() {
+        // A 2-sector ring holds one frame. Frames arrive at VBlanks 6, 7, 8, 9, 11, 12, ...
+        let mut s = Stream::new(2);
+        let mut read = disc(movie(8));
+        s.start(0, 0, true);
+        let d = s.poll(0, &mut read).unwrap();
+        assert_eq!((d.frame, d.until), (1, 6));
+        // Polling again while frame 1 is held: nothing ready, nothing consumed ahead.
+        assert!(s.poll(6, &mut read).is_none());
+        assert_eq!(s.lost_frames, 0);
+        // Freed at VBlank 6: frame 2 (VBlank 7) still fits.
+        assert!(s.free_at(d.data, 6, &mut read));
+        let d = s.poll(6, &mut read).unwrap();
+        assert_eq!((d.frame, d.until), (2, 7));
+        // Held until VBlank 12: frames 3-6 arrived meanwhile and were lost.
+        assert!(s.free_at(d.data, 12, &mut read));
+        assert_eq!(s.lost_frames, 4);
+        assert_eq!(s.backloc(), Some((6, 3)));
     }
 
     #[test]

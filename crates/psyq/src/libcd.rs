@@ -158,6 +158,22 @@ impl Drive {
         })
     }
 
+    /// `StFreeRing` at `now`: the stream catches up with the sectors that arrived meanwhile,
+    /// then the frame is freed. False if `base` isn't a frame handed out.
+    pub fn free_stream_frame(&mut self, base: *const u8, now: u32) -> Result<bool, DriveError> {
+        let Drive { disc, stream, .. } = self;
+        let s = stream
+            .as_mut()
+            .ok_or_else(|| DriveError::Disc("StFreeRing before StSetRing".into()))?;
+        let freed = s.free_at(base, now, &mut |lba, out| {
+            u32::try_from(lba).is_ok_and(|lba| disc.read_raw(lba, out).is_ok())
+        });
+        if let Some(lba) = s.next_lba() {
+            self.pos = lba;
+        }
+        Ok(freed)
+    }
+
     /// `CdRead2(mode)`: sets the mode and starts streaming from the `Setloc` position, at `now`
     /// VBlanks. [doc: libcd; obs: MOV passes Stream|Speed|RT|Size1 after Setloc and Setmode]
     pub fn start_stream(&mut self, mode: u8, now: u32) -> Result<(), DriveError> {
@@ -543,8 +559,9 @@ pub unsafe extern "C" fn StGetNext(addr: *mut *const u8, header: *mut *const u8)
 /// `base` must be a pointer `StGetNext` returned.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn StFreeRing(base: *const u8) {
+    let now = crate::libetc::vblank_count();
     with_drive("StFreeRing", |d| {
-        if !d.stream_mut("StFreeRing")?.free(base) {
+        if !d.free_stream_frame(base, now)? {
             eprintln!("psyq: StFreeRing: {base:p} isn't a frame StGetNext handed out");
             std::process::abort();
         }
