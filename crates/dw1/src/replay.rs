@@ -28,7 +28,7 @@ pub struct Replay {
     final_vblank: Option<u32>,
     /// Native VBlank of the most recent poll.
     last_native: u32,
-    /// The recording's initial cards: `card1_sha1` / `card2_sha1` headers (`none` = no card file,
+    /// The recording's initial cards: `card1_sha1` / `card2_sha1` headers (`fresh` = no card file given, the new card Redux makes,
     /// a fresh formatted card) and the `card1_fixture` name.
     cards: [Option<String>; 2],
     fixture: Option<String>,
@@ -170,13 +170,13 @@ impl Replay {
         for (i, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
             have[i] = match std::env::var_os(var) {
                 Some(path) => file_sha1(path.as_ref())?,
-                None => "none".to_string(),
+                None => "fresh".to_string(),
             };
         }
         self.check_card_hashes(&have)
     }
 
-    /// [`check_cards`](Self::check_cards) on already-computed hashes (`none` = no card file).
+    /// [`check_cards`](Self::check_cards) on already-computed hashes (`fresh` = no card file).
     fn check_card_hashes(&self, have: &[String; 2]) -> Result<(), String> {
         for (i, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
             let want = self.cards[i].as_deref().ok_or_else(|| {
@@ -324,13 +324,13 @@ mod tests {
             first_vblank_mismatch: None,
             final_vblank: Some(1654),
             last_native: 0,
-            cards: [Some("none".into()), Some("none".into())],
+            cards: [Some("fresh".into()), Some("fresh".into())],
             fixture: None,
         };
-        let none = ["none".to_string(), "none".to_string()];
+        let none = ["fresh".to_string(), "fresh".to_string()];
         assert_eq!(replay.check_card_hashes(&none), Ok(()));
         let err = replay
-            .check_card_hashes(&["none".into(), "abc".into()])
+            .check_card_hashes(&["fresh".into(), "abc".into()])
             .unwrap_err();
         assert!(err.contains("DW1_CARD2") && err.contains("abc"), "{err}");
         replay.cards[0] = Some("a414".into());
@@ -347,7 +347,7 @@ mod tests {
                 .unwrap_err()
                 .contains("no card1_sha1")
         );
-        replay.cards[0] = Some("none".into());
+        replay.cards[0] = Some("fresh".into());
         assert_eq!(replay.poll("MOV_playMovie", 507), Ok(0));
         assert!(replay.timing_note().is_none());
         assert!(

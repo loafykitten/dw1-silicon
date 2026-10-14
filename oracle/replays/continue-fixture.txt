@@ -8,7 +8,7 @@ bios_sha1 649895efd79d14790eabb362e94eb0622093dfb9
 disc_sha1 5611645da66183e30d11fb6c11a2784ff47e1fdb
 card1_fixture ember-day2-gabumon
 card1_sha1 a414adc3e3c4f029a8f2fc0ea760184828a9e30f
-card2_sha1 none
+card2_sha1 fresh
 route oracle/route-new-game.lua profile continue
 target gameplay
 final_vblank 5000

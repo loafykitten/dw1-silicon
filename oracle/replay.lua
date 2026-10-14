@@ -94,25 +94,27 @@ if MODE == 'replay' then
 end
 
 -- The cards the run starts with: Redux reads memcard1.mcd and memcard2.mcd from its cwd, so
--- they are hashed here, before anything runs ('none' = no file, Redux makes a fresh formatted
--- card). A recording stores them (card1_sha1, card2_sha1, and the fixture's name in
+-- they are hashed here, before anything runs ('fresh' = the new card Redux makes itself when
+-- there is none, SHA-1 ec2d2493...). A recording stores them (card1_sha1, card2_sha1, and the fixture's name in
 -- DW1REPLAY_CARD1_FIXTURE for a card); a replay refuses to run on any other card.
+local REDUX_FRESH_CARD = 'ec2d2493fa3b5f0a546b7b224ddef5b143771219'
 ffi.cdef('unsigned char* CC_SHA1(const void* data, uint32_t len, unsigned char* md);')
 local function cardSha(name)
     local f = io.open(name, 'rb')
-    if not f then return 'none' end
+    if not f then return 'absent' end
     local data = f:read('*a')
     f:close()
     local md = ffi.new('unsigned char[20]')
     ffi.C.CC_SHA1(data, #data, md)
     local hex = {}
     for i = 0, 19 do hex[#hex + 1] = string.format('%02x', md[i]) end
-    return table.concat(hex)
+    local sha = table.concat(hex)
+    return sha == REDUX_FRESH_CARD and 'fresh' or sha
 end
 local CARD1_SHA, CARD2_SHA = cardSha('memcard1.mcd'), cardSha('memcard2.mcd')
 local CARD1_FIXTURE = os.getenv('DW1REPLAY_CARD1_FIXTURE')
 print('DW1REPLAY cards card1_sha1=' .. CARD1_SHA .. ' card2_sha1=' .. CARD2_SHA)
-if MODE == 'record' and CARD1_SHA ~= 'none' and not CARD1_FIXTURE then
+if MODE == 'record' and CARD1_SHA ~= 'fresh' and not CARD1_FIXTURE then
     fail('recording on a card needs DW1REPLAY_CARD1_FIXTURE=<name> (a fixture whose SHA-1 is known)')
     return
 end
@@ -256,7 +258,7 @@ local function finish(v)
             'gpu softgpu',
             'bios_sha1 ' .. BIOS_SHA1,
             'disc_sha1 ' .. DISC_SHA1,
-            CARD1_FIXTURE and ('card1_fixture ' .. CARD1_FIXTURE) or '# card1_fixture none',
+            CARD1_FIXTURE and ('card1_fixture ' .. CARD1_FIXTURE) or '# card1_fixture none (the card Redux makes)',
             'card1_sha1 ' .. CARD1_SHA,
             'card2_sha1 ' .. CARD2_SHA,
             'route oracle/route-new-game.lua profile ' .. (DW1ROUTE_PROFILE or os.getenv('DW1ROUTE_PROFILE') or 'new-game'),
