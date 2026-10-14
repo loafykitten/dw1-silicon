@@ -3,8 +3,8 @@
 software renderer) and reads VRAM back, for `crates/backend/tests/gpu_oracle.rs` to compare the
 Rust GPU model against. Black-box: only the results of what the emulator draws are used.
 
-Usage: gpu_requests.py OUT_DIR [--seed N] [--scale K] [--only semi|fade|models|tails|tiny]
-(`tiny` only runs when asked for.)
+Usage: gpu_requests.py OUT_DIR [--seed N] [--scale K] [--only semi|fade|models|tails|tiny|spans]
+(`tiny` and `spans` only run when asked for.)
 
 --only semi writes just the semi-transparent cases, --only fade just the game's fade quad (both
 after the same setup). The test's known-residue list is keyed by case ids, so use a plain run
@@ -430,6 +430,34 @@ class Gen:
             us = [(r.randint(0, 8), 0) for _ in range(3)]
             self.poly_case("FT3", v, [0] * 3, us, TPAGE_A, True, 0, clip, (ax, ay))
 
+    def spans(self, count):
+        """Long thin triangles and quads whose middle vertex sits a pixel or two off the long
+        edge, at a row that divides the height unevenly (1/3, 2/7, ...): the triangle's widest row
+        is then a fraction of a pixel, and the gradients the hardware takes from it differ from
+        the exact plane's by up to a few percent, so the texture coordinate (raw texture A or B)
+        and the colour (Gouraud without dither) show which one it uses, and how it steps from the
+        left edge (slopes of both signs)."""
+        r = random.Random(321)
+        ax, ay, aw, ah = AREA
+        full = (ax, ay, ax + aw - 1, ay + ah - 1)
+        for n in range(count):
+            W = r.randint(60, 250) * r.choice([1, -1])
+            H = r.randint(3, 44)
+            k = r.randint(1, H - 1)
+            mx = (W * k) // H + r.choice([-3, -2, -1, 1, 2, 3])
+            x0 = 2 if W > 0 else 253
+            v = [(x0, 1), (x0 + mx, 1 + k), (x0 + W, 1 + H)]
+            r.shuffle(v)
+            kind = ["FT3", "GT3", "G3", "FT4", "GT3"][n % 5]
+            if kind == "FT4":
+                # the thin triangle and its mirror image across the long edge
+                v = [(x0, 1), (x0 + mx, 1 + k), (x0 + W - mx, 1 + H - k), (x0 + W, 1 + H)]
+            m = len(v)
+            uvs = [(r.randint(0, 255), r.randint(0, 255)) for _ in range(m)]
+            cols = [r.randint(0, 255) | r.randint(0, 255) << 8 | r.randint(0, 255) << 16 for _ in range(m)]
+            page = TPAGE_A if (n // 5) % 2 else TPAGE_B
+            self.poly_case(kind, v, cols, uvs, page, True, 0, full, (ax, ay))
+
     def sprites(self, count):
         """Axis-aligned quads like the game's sprites and menu boxes, up to 320 x 240 with
         texture spans of any size, seen through a window of the test area at a random offset."""
@@ -553,6 +581,9 @@ def main():
     if a.only == "tiny":
         # only on request: their Redux results aren't part of gpu_oracle_known.txt's set
         g.tiny(2500)
+    if a.only == "spans":
+        # only on request, like tiny
+        g.spans(1500)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "req.txt"), "w") as f:
         f.write("\n".join(g.req) + "\n")
