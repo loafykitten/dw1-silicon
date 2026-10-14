@@ -109,6 +109,16 @@ const _: () = {
         core::mem::offset_of!(psyq::libgs::GsRview2, sup)
             == core::mem::offset_of!(bindings::GsRVIEW2, super_)
     );
+    assert!(size_of::<psyq::libgs::GsView2>() == size_of::<bindings::GsVIEW2>());
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsView2, sup)
+            == core::mem::offset_of!(bindings::GsVIEW2, super_)
+    );
+    assert!(size_of::<psyq::libgs::GsFLight>() == size_of::<bindings::GsF_LIGHT>());
+    assert!(
+        core::mem::offset_of!(psyq::libgs::GsFLight, r)
+            == core::mem::offset_of!(bindings::GsF_LIGHT, r)
+    );
     assert!(size_of::<psyq::globals::Matrix>() == size_of::<bindings::MATRIX>());
     assert!(
         core::mem::offset_of!(psyq::globals::Matrix, t)

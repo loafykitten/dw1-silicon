@@ -93,6 +93,15 @@ TMD map, the file queue, fonts, scripts, UI, clock...), `loadTIMFile` twice, the
 6c. **libgte (done 2026-10-13, f190f54 and f70599c):** all 29 functions and `GsSetRefView2`,
    bit-exact on 56,160 oracle calls from `oracle/call-sdk.lua`; unmodelled inputs (overflowing
    `CompMatrix`, negative `SquareRoot0`) trap.
+6d. **libgs lights, view and coordinate systems (done 2026-10-14):** `GsSetFlatLight`,
+   `GsSetAmbient`, `GsSetLightMode`, `GsSetLightMatrix`, `GsSetLsMatrix`, `GsSetView2`,
+   `GsGetLw`, `GsGetLs`, `GsGetLws`, `GsMulCoord0`, `GsMulCoord3` (`crates/psyq/src/libgs/light.rs`
+   and `coord.rs`), bit-exact on 11,026 oracle calls (return values, the structs, the libgs
+   globals, all 64 GTE registers; `tools/oracle/libgs_requests.py`, `tests/libgs_oracle.rs`,
+   run kept in `captures/oracle-runs/libgs-light`). Unmodelled, so they stop the program: a
+   `super` of SCREEN (the real code faults), a coordinate chain deeper than 32, a light vector
+   whose sum of squares wraps negative, and `GsSetRefView2` with a parent. `GsCOORDINATE2.flg`
+   is a stamp against libgs's swap counter `PSDCNT` (see `coord.rs`).
 7. **The intro movie:** MOV's streaming reads (`St*`), the MDEC calls (`DecDCT*`), XA
    skipped silently. Check: it plays to the end and skips on Start.
    **Done 2026-10-13** (`docs/phase2-movie.md`): all four movies play through `MOV_playMovie`

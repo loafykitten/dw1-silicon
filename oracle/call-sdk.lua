@@ -21,6 +21,12 @@
 -- Output (results.txt), one line per call: "<n> v0=<hex> [<addr>=<hex bytes>]... [gte=...]".
 -- A call that faults the CPU (the SDK's trapping `add`s, on an overflow) is recorded as
 -- "<n> v0=EXC<cause code>" with nothing else, and the run goes on.
+-- Env: DW1_DIFF=1 adds "diff=<addr>:<hex>,..." to each result line: the RAM ranges (merged within
+-- 16 bytes, at most 48, each at most 64 bytes shown) the call changed outside the scratch buffer
+-- and the stack, with their new bytes. For finding which globals a function touches; interrupt
+-- handlers add a little noise (compare with a call of a function that does nothing).
+-- Env: DW1_DUMP_REGS=1 prints the game's callee-saved registers at the first call (to see whether
+-- a function leaks one into its results).
 -- Env: DW1_CALL_AT (VBlank to start at, default 2300: the main menu); DW1_SYMBOLS (the symbol
 -- list, default decomp/config/us/symbols.txt next to this checkout); DW1_PROGRESS_EVERY (write
 -- results.partial.txt every N calls, default 1000: a call that never returns hangs the
@@ -120,6 +126,9 @@ local callSR = 0
 local saved, current, results, skipNext = nil, 0, {}, false
 local vblank = 0
 
+local DIFF = os.getenv('DW1_DIFF') == '1'
+local snap = DIFF and ffi.new('uint8_t[?]', 0x200000) or nil
+
 local function startCall(i)
     local c = calls[i]
     for _, w in ipairs(c.ins) do
@@ -143,6 +152,7 @@ local function startCall(i)
     r.sp = CALL_SP
     r.ra = TRIGGER
     callSR = regs.CP0.r[12]
+    if DIFF then ffi.copy(snap, mem, 0x200000) end
     regs.pc = c.fn
 end
 
@@ -169,6 +179,31 @@ local function finishCall(i, excCode)
         for n = 0, 31 do g[#g + 1] = string.format('%08x', regs.CP2C.r[n]) end
         parts[#parts + 1] = 'gte=' .. table.concat(g, ',')
     end
+    if DIFF then
+        local ranges, startR, lastR = {}, nil, nil
+        local lo, hi = phys(BUF) - 0x100, phys(CALL_SP) + 0x10
+        local k = 0
+        while k < 0x200000 do
+            if (k < lo or k >= hi) and mem[k] ~= snap[k] then
+                if startR and k - lastR <= 16 then
+                    lastR = k
+                else
+                    if startR then ranges[#ranges + 1] = { startR, lastR } end
+                    startR, lastR = k, k
+                end
+            end
+            k = k + 1
+        end
+        if startR then ranges[#ranges + 1] = { startR, lastR } end
+        local d = {}
+        for n = 1, math.min(#ranges, 48) do
+            local a, b = ranges[n][1], ranges[n][2]
+            local hex = {}
+            for q = a, math.min(b, a + 63) do hex[#hex + 1] = string.format('%02x', mem[q]) end
+            d[#d + 1] = string.format('%08x:%s', a + 0x80000000, table.concat(hex))
+        end
+        parts[#parts + 1] = 'diff=' .. table.concat(d, ',')
+    end
     results[#results + 1] = table.concat(parts, ' ')
     -- A call that never returns hangs the machine: keep what was recorded so far on disk.
     if i % tonumber(os.getenv('DW1_PROGRESS_EVERY') or '1000') == 0 then
@@ -194,6 +229,13 @@ local function onTrigger(excCode)
         saved = { pc = regs.pc, gpr = {}, cp2d = {}, cp2c = {} }
         for n = 0, 33 do saved.gpr[n] = regs.GPR.r[n] end
         for n = 0, 31 do saved.cp2d[n], saved.cp2c[n] = regs.CP2D.r[n], regs.CP2C.r[n] end
+        if os.getenv('DW1_DUMP_REGS') == '1' then
+            -- The calls start with the game's own callee-saved registers, which a function may
+            -- leak into its results (libgs stores one of them in GsCOORDINATE2.flg).
+            local r = regs.GPR.n
+            print(string.format('DW1CALL regs s0=%08x s1=%08x s2=%08x s3=%08x s4=%08x s5=%08x s6=%08x s7=%08x s8=%08x gp=%08x t0=%08x t1=%08x',
+                r.s0, r.s1, r.s2, r.s3, r.s4, r.s5, r.s6, r.s7, r.s8, r.gp, r.t0, r.t1))
+        end
     else
         finishCall(current, excCode)
     end

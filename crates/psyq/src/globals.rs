@@ -44,6 +44,22 @@ pub static mut GsLIGHTWSMATRIX: Matrix = Matrix {
     t: [0; 3],
 };
 
+/// libgs's light colour matrix `_LC`: column `i` is light `i`'s colour in 4.12 (`GsSetFlatLight`
+/// writes it, and loads it into the GTE).
+#[unsafe(no_mangle)]
+pub static mut _LC: Matrix = Matrix {
+    m: [[0; 3]; 3],
+    t: [0; 3],
+};
+/// libgs's `PSDCNT`: 0 until `GsInitGraph` (which sets it to 1), then one more for every
+/// `GsSwapDispBuff` [obs]. `GsGetLw` and friends stamp the coordinate systems they update
+/// with it.
+#[unsafe(no_mangle)]
+pub static mut PSDCNT: u32 = 0;
+/// libgs's `GsLIGHT_MODE` (`GsSetLightMode`): 0..=3, 0 at boot.
+#[unsafe(no_mangle)]
+pub static mut GsLIGHT_MODE: i32 = 0;
+
 /// Slots in libgs's `_GsFCALL` table (GsSortObject4J's handlers per primitive kind, divide
 /// mode and light mode), all function pointers.
 pub const GS_FCALL_SLOTS: usize = 76;

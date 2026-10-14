@@ -5,11 +5,15 @@
 //! reference, the details from emulator observation of DW1's own calls (captures `p2-init`,
 //! `p2-landing`, `p2-menu`, 2026-10-13). Rules are tagged `[doc]`, `[hdr]` or `[obs]`.
 
+mod coord;
+mod light;
 mod model;
 mod sort4j;
 mod tim;
 mod view;
 
+pub use coord::*;
+pub use light::*;
 pub use model::*;
 pub use sort4j::*;
 pub use tim::*;
@@ -17,7 +21,7 @@ pub use view::*;
 
 use std::sync::Mutex;
 
-use crate::globals::{GsIDMATRIX, Matrix};
+use crate::globals::{GsIDMATRIX, Matrix, PSDCNT};
 use crate::gpu;
 use crate::libgpu::{self, DispEnv, DrawEnv, Rect};
 use crate::memory::{LINK_END, link_of};
@@ -44,8 +48,6 @@ struct Display {
     buffers: [(i16, i16); 2],
     /// The buffer being drawn (`GsGetActiveBuff`); the other one is displayed.
     active: usize,
-    /// Buffer swaps so far.
-    swaps: u32,
     /// `GsSetOrign`: added to the buffer corner for the drawing offset.
     origin: (i16, i16),
     draw: DrawEnv,
@@ -60,7 +62,6 @@ static DISPLAY: Mutex<Display> = Mutex::new(Display {
     height: 0,
     buffers: [(0, 0); 2],
     active: 0,
-    swaps: 0,
     origin: (0, 0),
     draw: DrawEnv {
         clip: Rect {
@@ -143,6 +144,7 @@ pub extern "C" fn GsInitGraph(w: u16, h: u16, intmode: u16, dither: u16, _vrammo
         crate::trap::unimplemented("GsInitGraph with interlace");
     }
     libgpu::ResetGraph(0);
+    unsafe { PSDCNT = 1 };
     display(|d| {
         d.width = w as i16;
         d.height = h as i16;
@@ -211,13 +213,13 @@ pub extern "C" fn GsGetActiveBuff() -> i32 {
 }
 
 /// `GsSwapDispBuff()`: flips the buffers: the one just drawn is displayed and drawing moves to
-/// the other [obs: the active index toggles; the display shows the inactive buffer; then
+/// the other [obs: libgs's swap counter `PSDCNT` goes up by one; the active index toggles; the display shows the inactive buffer; then
 /// PutDispEnv, SetDispMask(1), and the drawing environment for the new active buffer].
 #[unsafe(no_mangle)]
 pub extern "C" fn GsSwapDispBuff() {
+    unsafe { PSDCNT = PSDCNT.wrapping_add(1) };
     display(|d| {
         d.active ^= 1;
-        d.swaps = d.swaps.wrapping_add(1);
         let (x, y) = d.buffers[d.active ^ 1];
         d.disp.disp.x = x;
         d.disp.disp.y = y;
