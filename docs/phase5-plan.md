@@ -35,6 +35,21 @@ checkpoints identical. MURD needed three native fixes: `loadTextureFile` writing
 through NULL, `MURD_storeDigimonTexture`'s buffer address passed as a 32-bit `u_long`, and empty
 entity slots read and written by `MURD_setOtherEntitiesVisible` (the PS1 hit low RAM).
 
+## Training (TRN): the first session done
+
+`oracle/replays/training-fixture.txt` (`DW1ROUTE_PROFILE=training-fixture`, 3,195 polls, 36 CD
+reads, to VBlank 9900): from Save2 up into the Green Gym (screen 112, `TRAI00`, which loads TRN as
+the map loads, `loadTrainingLibrary`), onto the "Training: Running" sign, Begin, Normal: Gabumon
+runs laps for a game hour, Speed 60 -> 67, results closed, Quit. Certified (`p5-trn-replay1`);
+natively 12 of 12 checkpoints identical, and 70 of 70 at every 50 polls, with no native change
+needed. How training starts: the gym's signs are tile triggers 81-86 (`checkMapInteraction`:
+the tamer stands on a tile with trigger 80-109 and presses Cross; the map script runs; found from
+`MAP_COLLISION_DATA` in a RAM dump of screen 112); 85 is Running, in the middle of the gym. The
+others are at x 750..1150 z -1450..-1150 (81), x 1250..1650 z 650..950 (82), x -650..-250
+z -2450..-2050 (83), x -950..-550 z -1350..-1150 (84) and x -2050..-950 z 850..1650 (86). One
+session uses all the partner's energy; "Bonus Try" (the slots, `trn_slots.c`) and the other five
+kinds are still to record (TRN2's gyms are elsewhere).
+
 ## What it took
 
 ### Oracle and tools
