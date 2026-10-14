@@ -9,7 +9,10 @@
 //! polygon packet with its draw state and a `V <n>` line per VBlank, for
 //! `tools/oracle/gpu_frame_requests.py`), `DW1_OUT=<dir>` (default `captures/native-runs/latest`), `DW1_REPLAY=<file>`
 //! (pad input from an emulator replay, `oracle/replays/`; the run stops when it diverges or the
-//! recording ends), `DW1_START_AT=<vblank>` (without a replay, pad 1 holds Start from there on).
+//! recording ends), `DW1_START_AT=<vblank>` (without a replay, pad 1 holds Start from there on),
+//! `DW1_PAD_SCRIPT=<file>` (without a replay: lines `<vblank> <mask>`, the mask in hex in the
+//! game's pad format, held from that native VBlank to the next line; `#` starts a comment; for
+//! driving screens the emulator can't, like the save slots).
 //!
 //! Checkpoints (`DW1_CHECKPOINTS`, on by default with `DW1_REPLAY`; `0` turns them off, `1`
 //! turns them on without a replay): the canonical game-state record (`canon.rs`,
@@ -34,6 +37,8 @@ pub struct Headless {
     shots: Option<(u32, u32, u32)>,
     stop_at: Option<u32>,
     start_at: Option<u32>,
+    /// DW1_PAD_SCRIPT: (from VBlank, mask), in order.
+    pad_script: Vec<(u32, u32)>,
     out: PathBuf,
     replay: Option<Replay>,
     /// DW1_REPLAY_LOG: print each poll with its recorded and native VBlank.
@@ -178,7 +183,11 @@ fn dump_cards(out: &std::path::Path) {
     }
     // Never over kept cards: the save directory in use or the window build's default one.
     let canon = |p: &std::path::Path| {
-        let p = if p.as_os_str().is_empty() { std::path::Path::new(".") } else { p };
+        let p = if p.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            p
+        };
         std::fs::canonicalize(p).ok()
     };
     let target = canon(out);
@@ -188,7 +197,11 @@ fn dump_cards(out: &std::path::Path) {
             .map(std::path::PathBuf::from),
         crate::default_save_dir(),
     ];
-    if save_dirs.iter().flatten().any(|d| target.is_some() && canon(d) == target) {
+    if save_dirs
+        .iter()
+        .flatten()
+        .any(|d| target.is_some() && canon(d) == target)
+    {
         eprintln!("dw1: DW1_CARD_DUMP: DW1_OUT is a save directory; not dumping");
         std::process::exit(2);
     }
@@ -204,6 +217,37 @@ fn dump_cards(out: &std::path::Path) {
             std::process::exit(2);
         }
     }
+}
+
+/// Reads a `DW1_PAD_SCRIPT` file (see the module docs), or stops.
+fn pad_script(path: &std::path::Path) -> Vec<(u32, u32)> {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("dw1: DW1_PAD_SCRIPT {}: {e}", path.display());
+        std::process::exit(2);
+    });
+    let mut script = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parsed = line.split_once(char::is_whitespace).and_then(|(v, m)| {
+            let m = m.trim().trim_start_matches("0x");
+            Some((v.parse().ok()?, u32::from_str_radix(m, 16).ok()?))
+        });
+        match parsed {
+            Some(entry) => script.push(entry),
+            None => {
+                eprintln!(
+                    "dw1: DW1_PAD_SCRIPT line {}: {line:?} isn't `<vblank> <hex mask>`",
+                    n + 1
+                );
+                std::process::exit(2);
+            }
+        }
+    }
+    script.sort_by_key(|&(at, _)| at);
+    script
 }
 
 impl Headless {
@@ -262,6 +306,9 @@ impl Headless {
             shots,
             stop_at: env_num("DW1_STOP_AT"),
             start_at: env_num("DW1_START_AT"),
+            pad_script: std::env::var_os("DW1_PAD_SCRIPT")
+                .map(|p| pad_script(p.as_ref()))
+                .unwrap_or_default(),
             replay_log: std::env::var("DW1_REPLAY_LOG").is_ok_and(|v| !v.is_empty() && v != "0"),
             out,
             replay,
@@ -353,6 +400,9 @@ impl psyq::libetc::Host for Headless {
             let vblank = psyq::libetc::vblank_count();
             if let Some(c) = self.checkpoints.as_mut() {
                 c.at_poll(&self.out, vblank);
+            }
+            if let Some(&(_, mask)) = self.pad_script.iter().rev().find(|(at, _)| *at <= vblank) {
+                return mask;
             }
             return match self.start_at {
                 Some(at) if vblank >= at => 0x800,

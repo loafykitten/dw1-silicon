@@ -20,6 +20,7 @@ pub mod libpress;
 pub mod libsnd;
 pub mod libspu;
 pub mod memory;
+pub mod native;
 mod sequencer;
 pub mod stream;
 mod stubs;

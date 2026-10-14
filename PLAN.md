@@ -7,17 +7,23 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-14, session 4): start here
 
-- **Phase 7 (saving) has started** (`docs/phase7-plan.md`): after all nine replays the port's
-  memory cards are byte-identical to the emulator's (`DW1_CARD_DUMP=1`), and the window build
-  now keeps its cards in `~/Library/Application Support/dw1-silicon` (atomic, durable writes, a
-  `.bak` of the old file, a lock so two copies can't share it, a failed save shown in the window
-  title; `dw1-mac` seeds card 1 from Ember's save the first time, `--fresh` keeps nothing).
-  Reviewed twice by gpt-6.1-sol. Left: a recorded in-game save (the save machine: where Ember
-  saves) and Ember's one-save-slot design (Open questions).
+- **Phase 7 (saving) is done, with save slots** (`docs/phase7-plan.md`). Ember asked for a PC
+  save system: the window build now has 15 save slots in the app's own format
+  (`~/Library/Application Support/dw1-silicon/saves/slot-NN.dw1save`: a small header and the
+  game's save once, CRC-checked, written atomically, the replaced save kept in `saves/backups/`).
+  The game's screens skip every memory card step (New Game, Continue, Delete Game and Battle Mode
+  open their slot lists directly; New Game over a used slot asks first), the in-game saves write
+  to the slot, and inside the game sees one always-present card with instant commands
+  (`crates/dw1/src/saves.rs`, the decomp's `main_menu.c` under `dw1_pc_saves`). `dw1 export-card`
+  / `import-card` convert to and from emulator memory cards; a bedtime save made in the port,
+  exported, loads on the emulator with all 9 checkpoints identical to the port's. Headless runs
+  keep the two cards (all nine replays still match); `DW1_PAD_SCRIPT` drives screens the emulator
+  can't. `dw1-mac` seeds the slots from Ember's DuckStation card the first time.
+- **Phase 6 (sound) is done:** Ember listened and says it sounds right (2026-10-14).
 - **Session 4 in short:** battles, training and the Item Keeper certified (Phase 5), then sound
-  (Phase 6) and saving (Phase 7) as below. Ember's open questions are at the end of this file:
-  fixture saves, does it sound right, one save slot, where to save in the game.
-- **Phase 6 (sound) is mostly done, waiting for Ember's ears** (`docs/phase6-plan.md`). The
+  (Phase 6) and saving with save slots (Phase 7). Ember's open questions are at the end of this
+  file (only fixture saves now).
+- **Phase 6 (sound)** (`docs/phase6-plan.md`). The
   PS1 sound libraries now drive the SPU model with register writes on the virtual clock:
   sound effects, the music sequencer (new: `crates/psyq/src/sequencer.rs`), reverb, and the
   movies' XA audio; the window build plays it (SDL3 audio, `DW1_MUTE=1` for silence) and
@@ -26,7 +32,7 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   SPU traffic (`oracle/capture-spu.lua`); `tools/sound-check.sh` compares four replays' sound
   with the emulator's (battle-fixture, battle-twice, training-six, new-game: all pass; music is
   compared in song time, since the emulator's music keeps playing through loading screens that
-  take the port none). Left: Ember listens ("sounds right"), the `SsUtAutoVol` fade's exact
+  take the port none). Optional leftovers: the `SsUtAutoVol` fade's exact
   values (approximate), comparing XA audio with the emulator, MDEC movie quality. Clips to
   listen to, local only: `captures/native-runs/p6-listen-battle/battle-replay-audio.wav`, and
   `captures/native-runs/p6-movie-audio/intro-movie.wav`.
@@ -79,11 +85,11 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   and the three frame redraws (`crates/backend/tests/gpu_frames.rs`, data in
   `captures/oracle-runs/gpu-frames`).
 - **Playable in a window (2026-10-14):** `dw1-mac` (`~/.local/bin`, Ember's launcher) builds the
-  release `dw1` and opens it with Ember's save in slot 1 (`--fresh` for blank cards). A
-  start-up splash (`crates/dw1/src/window/splash.rs`, window mode only, `DW1_NO_SPLASH=1`)
-  marks it as the native Rust build. Saves are kept (Phase 7, session 4); sound since Phase 6
-  (session 4); overlays without a certified replay may still trap (Phase 5). Ember asked for **one save slot
-  instead of memory cards** for Phase 7 (noted there).
+  release `dw1` and opens it with Ember's saves in the save slots (seeded from the DuckStation
+  card the first time; `--fresh` for empty slots that aren't kept). A start-up splash
+  (`crates/dw1/src/window/splash.rs`, window mode only, `DW1_NO_SPLASH=1`) marks it as the
+  native Rust build. Save slots since Phase 7, sound since Phase 6 (session 4); overlays
+  without a certified replay may still trap (Phase 5).
 - **Release builds replay too:** the game C is built with `-fno-inline
   -fno-optimize-sibling-calls` so the PadRead caller check names the same function at any
   optimisation level; release runs `new-game` in about 7 s.
@@ -642,14 +648,10 @@ unrelated blocks and unknown bytes. Done when emulator → port → emulator rou
 for both slots, a failed write leaves the old card intact, and saves made in the port load
 on the emulator with equal state.
 
-**Ember (2026-10-14): replace the memory cards with a single save slot.** A Mac build has no
-console hardware to imitate, so the player should see one save (in Application Support), not
-two cards, blocks and "insert a memory card" prompts. To work out: how the game's save and
-load screens and their card checks map onto one slot (a native-only path under `DW1_NATIVE`,
-or a libmcrd that presents one always-present card with one save and no free-space or format
-prompts); importing and exporting a `.mcd` so emulator saves (like Ember's fixture) still
-move both ways; and keeping the two-card model intact for the oracle replays, which must keep
-matching the emulator. It is an addition, labelled as one like Phase 8's options.
+**Ember (2026-10-14): save slots instead of memory cards, in the app's own format.** Done the
+same day (`docs/phase7-plan.md`): 15 slots, `.dw1save` files, the card steps gone from the
+screens, conversion to and from emulator cards, and the two-card model kept for the oracle
+replays. It is an addition, labelled as one like Phase 8's options.
 
 ### Phase 8: the Mac-native renderer and extras
 
@@ -731,42 +733,13 @@ is what the Rust is checked against.
 
 ## Open questions for Ember
 
-- **(2026-10-14) Fixture saves for the rest of Phase 5.** Battles (BTL) and the Green Gym's
-  training (TRN) match the emulator using your Save2. The other overlays need game progress only
-  playing gets, so a save in front of each would let me record them (put them on the DuckStation
-  card as more saves; tell me which slot is which):
-  1. **Battle Mode (VS):** a save whose Digimon is registered for Battle Mode (the title menu's
-     BATTLE MODE says "Digimon Not Registered" for Save1 and Save2).
-  2. **A tournament (STD):** a save just before entering one at the arena.
-  3. **Fishing (FISH):** a save at a fishing spot with a rod (and bait if it needs some).
-  4. **Digivolution (EVL):** a save shortly before Gabumon digivolves (any digivolution).
-  5. **Death and rebirth (DOO2/DOOA):** a save shortly before a partner dies of old age or on its
-     last life.
-  6. Any of curling (KAR), recruiting (DGET), the other gyms' training (TRN2) if you pass them.
-  Whatever is convenient; the more the better, but none of it blocks the work.
-
-- **(2026-10-14) Does it sound right?** Phase 6's gate ends with your ears. Run `dw1-mac` and
-  play a while (title, File City, a battle, the intro movie from a new game), or listen to the
-  two clips in `captures/native-runs/` (named in "Where things stand"). Things worth noticing:
-  wrong notes or instruments, music too fast or slow, effects too loud or quiet against the
-  music, crackles, the battle getting harsh when a lot plays at once (the port clips at full
-  scale like the PS1 should), latency between a button and its sound. If anything's off, a
-  timestamp and what you were doing is plenty.
-
-- **(2026-10-14) One save slot: which way?** Phase 7's addition (your idea) needs a design call.
-  Saves are now kept on the two cards in Application Support. For "one save, no cards", the
-  choices I see: (a) the game's own save and load screens stay, but the card library always
-  shows one present, formatted card holding just the one save, so the card prompts never come
-  up (least change to the game, the screens still say "memory card"); or (b) a native-only
-  save/load path that skips those screens (cleaner for a Mac app, more of the game rewritten).
-  Either way, saves import from and export to `.mcd` for the emulator. I'd lean to (a) first.
-  Which do you want?
-
-- **(2026-10-14) Where do you save in the game?** For Phase 7 I want a replay that saves in the
-  middle of play and check the card byte for byte against the emulator. The game's scripts put
-  the save machine on two screens I can't reach from your saves yet (one in Trash Mountain, one
-  in a part of File City). Where did you save Save1 and Save2 in DuckStation? If it's a short
-  walk from where Save1 or Save2 starts, I can record the route myself.
+- **(2026-10-14, reworded) Saves in front of the parts of the game not yet checked.** Some parts
+  of the game only load when you reach them: Battle Mode, tournaments (STD), fishing (FISH),
+  digivolving (EVL), death and rebirth (DOO2/DOOA), curling (KAR), recruiting (DGET), the other
+  gyms (TRN2). To check each plays exactly like the original, a save made just before one is
+  enough: if you pass one while playing in DuckStation, make an extra save there and say which
+  slot it is. (Battle Mode needs a save whose Digimon is registered at the Battle Registration
+  machine.) Nothing is blocked on it.
 
 ## Answered by Ember
 
@@ -797,3 +770,11 @@ is what the Rust is checked against.
   high-quality translation sources"). Applied to comments and docs only: Japanese inside the
   game's string literals (the kana name-entry grid, leftover VS strings) is data the game
   draws with its Shift-JIS font, so it stays byte-exact.
+- 2026-10-14: sound is right ("It does sound correct").
+- 2026-10-14: Save1 was made in the middle of File City in front of Jijimon's house; Save2 just
+  after loading into Native Forest from the Green Gym.
+- 2026-10-14: saving should make sense for a PC: a standard save slot system, one slot per
+  game, no memory cards; 15 slots; New Game on a used slot asks, then overwrites. Then: "change
+  the loading/saving to our own optimized format", with conversion kept so the saves stay
+  useful for the oracle (the `.dw1save` format, `export-card`/`import-card`).
+- 2026-10-14: the port looks good from a walk around in `dw1-mac`.

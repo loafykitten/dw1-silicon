@@ -8,6 +8,7 @@ use std::path::PathBuf;
 mod canon;
 mod headless;
 mod replay;
+mod saves;
 mod window;
 
 /// The disc's `.cue`: `DW1_DISC`, else `<workspace>/disc/Digimon World (USA).cue`.
@@ -170,17 +171,21 @@ fn insert_cards(keep: bool) {
         })
     };
     for (slot, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
-        let kept = dir.as_ref().map(|d| d.join(format!("card{}.mcd", slot + 1)));
+        let kept = dir
+            .as_ref()
+            .map(|d| d.join(format!("card{}.mcd", slot + 1)));
         // A kept card that isn't there yet (only that: any other error stops) starts as the
         // seed.
-        let saved = kept.as_ref().and_then(|path| match std::fs::metadata(path) {
-            Ok(_) => Some(path),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                eprintln!("dw1: saved card {}: {e}", path.display());
-                std::process::exit(1);
-            }
-        });
+        let saved = kept
+            .as_ref()
+            .and_then(|path| match std::fs::metadata(path) {
+                Ok(_) => Some(path),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    eprintln!("dw1: saved card {}: {e}", path.display());
+                    std::process::exit(1);
+                }
+            });
         let card = match saved {
             Some(path) => {
                 if std::env::var_os("DW1_REPLAY").is_some() {
@@ -206,6 +211,127 @@ fn insert_cards(keep: bool) {
         // SAFETY: registering a plain extern "C" function.
         unsafe { atexit(flush_cards_at_exit) };
     }
+}
+
+/// The saves to start the slots with: the cards earlier builds kept in the save directory
+/// (`card1.mcd`, `card2.mcd`), else `DW1_CARD1`/`DW1_CARD2`; card 1's saves keep their slots.
+fn seed_saves(dir: Option<&std::path::Path>) -> Result<saves::Saves, String> {
+    let mut all = saves::Saves::new();
+    for (n, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
+        // A kept card that isn't there falls back to the env's; any other error stops (the
+        // slots are seeded once, and would miss its saves for good).
+        let kept = match dir.map(|d| d.join(format!("card{}.mcd", n + 1))) {
+            Some(p) => match std::fs::metadata(&p) {
+                Ok(_) => Some(p),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(format!("{}: {e}", p.display())),
+            },
+            None => None,
+        };
+        let Some(path) = kept.or_else(|| std::env::var_os(var).map(Into::into)) else {
+            continue;
+        };
+        let found = saves::saves_on(&saves::read_card(&path)?);
+        eprintln!("dw1: {} save(s) taken from {}", found.len(), path.display());
+        let left = saves::merge(&mut all, found);
+        if left > 0 {
+            eprintln!(
+                "dw1: WARNING: {left} save(s) from {} didn't fit",
+                path.display()
+            );
+        }
+    }
+    Ok(all)
+}
+
+/// The save slots (Phase 7, `saves.rs`): the game sees one memory card holding the slots'
+/// saves, instantly, and no second card; its screens skip the card steps. When saves are kept,
+/// they're `saves/slot-NN.dw1save` in the save directory (locked for the run), seeded the first
+/// time ([`seed_saves`]); otherwise the slots start as the `DW1_CARD1`/`DW1_CARD2` saves and
+/// nothing is written.
+fn insert_slots(keep: bool) {
+    if std::env::var_os("DW1_REPLAY").is_some() {
+        eprintln!("dw1: a replay runs with the memory cards it was recorded with, not save slots");
+        std::process::exit(2);
+    }
+    let fail = |e: String| -> ! {
+        eprintln!("dw1: {e}");
+        std::process::exit(1);
+    };
+    match save_dir().filter(|_| keep) {
+        Some(dir) => {
+            lock_save_dir(&dir);
+            let (slots, saves) =
+                saves::open(&dir, || seed_saves(Some(&dir))).unwrap_or_else(|e| fail(e));
+            eprintln!(
+                "dw1: {} save slot(s) in use, kept in {}",
+                saves.len(),
+                slots.display()
+            );
+            psyq::libmcrd::insert_card(0, Some(saves::card_with(&saves)));
+            psyq::libmcrd::set_card_keeper(0, Some(Box::new(saves::SlotKeeper::new(slots, saves))));
+            // SAFETY: registering a plain extern "C" function.
+            unsafe { atexit(flush_cards_at_exit) };
+        }
+        None => {
+            let saves = seed_saves(None).unwrap_or_else(|e| fail(e));
+            psyq::libmcrd::insert_card(0, Some(saves::card_with(&saves)));
+        }
+    }
+    psyq::libmcrd::insert_card(1, None);
+    psyq::libmcrd::set_instant(true);
+    psyq::native::set_pc_saves(true);
+}
+
+/// `dw1 export-card <file>` / `dw1 import-card <file>`: moves saves between the slots and a
+/// memory card image an emulator uses. Returns false if the arguments aren't one of these.
+fn card_command(args: &[String]) -> bool {
+    let (cmd, file) = match args {
+        [cmd, file] if cmd == "export-card" || cmd == "import-card" => (cmd.as_str(), file),
+        _ => return false,
+    };
+    let fail = |e: String| -> ! {
+        eprintln!("dw1: {e}");
+        std::process::exit(1);
+    };
+    let Some(dir) = save_dir() else {
+        fail("no save directory (DW1_SAVE_DIR is empty)".into())
+    };
+    lock_save_dir(&dir);
+    let (slots, mut saves) =
+        saves::open(&dir, || seed_saves(Some(&dir))).unwrap_or_else(|e| fail(e));
+    let file = std::path::Path::new(file);
+    if cmd == "export-card" {
+        if file.exists() {
+            fail(format!("{} already exists", file.display()));
+        }
+        psyq::libmcrd::write_atomic(file, saves::card_with(&saves).as_bytes())
+            .unwrap_or_else(|e| fail(format!("{}: {e}", file.display())));
+        eprintln!("dw1: {} save(s) written to {}", saves.len(), file.display());
+    } else {
+        let found = saves::saves_on(&saves::read_card(file).unwrap_or_else(|e| fail(e)));
+        let before = saves.clone();
+        let left = saves::merge(&mut saves, found);
+        let keeper = saves::SlotKeeper::new(slots, before.clone());
+        let mut added = Vec::new();
+        for (&slot, data) in saves.iter().filter(|(s, _)| !before.contains_key(s)) {
+            // A slot file that isn't a valid save (left out by the load) is backed up first.
+            keeper
+                .write(slot, data)
+                .unwrap_or_else(|e| fail(format!("slot {}: {e}", slot + 1)));
+            added.push(slot + 1);
+        }
+        eprintln!(
+            "dw1: {} save(s) copied into slots {added:?}{}",
+            added.len(),
+            if left > 0 {
+                format!("; {left} didn't fit")
+            } else {
+                String::new()
+            }
+        );
+    }
+    true
 }
 
 unsafe extern "C" {
@@ -237,9 +363,9 @@ fn lock_save_dir(dir: &std::path::Path) {
             .write(true)
             .open(dir.join("lock"))?;
         f.try_lock().map_err(|e| match e {
-            std::fs::TryLockError::WouldBlock => std::io::Error::other(
-                "another copy of the game is using it (close it first)",
-            ),
+            std::fs::TryLockError::WouldBlock => {
+                std::io::Error::other("another copy of the game is using it (close it first)")
+            }
             std::fs::TryLockError::Error(e) => e,
         })?;
         Ok(f)
@@ -256,6 +382,10 @@ fn lock_save_dir(dir: &std::path::Path) {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if card_command(&args) {
+        return;
+    }
     if std::env::var_os("DW1_CRASH_TRACE").is_some() {
         install_crash_trace();
     }
@@ -278,8 +408,20 @@ fn main() {
     .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"))
         // A movie number, where 0 (the intro) is a value, not "off".
         || std::env::var_os("DW1_MOVIE").is_some_and(|x| !x.is_empty());
-    // Headless runs keep cards only when asked to (`DW1_SAVE_DIR` set): the replays write nothing.
-    insert_cards(!headless || std::env::var_os("DW1_SAVE_DIR").is_some_and(|d| !d.is_empty()));
+    // Headless runs keep saves only when asked to (`DW1_SAVE_DIR` set): the replays write
+    // nothing. The window build has save slots; headless runs have the memory cards the
+    // emulator comparisons need (`DW1_SAVES=slots` or `cards` to choose).
+    let keep = !headless || std::env::var_os("DW1_SAVE_DIR").is_some_and(|d| !d.is_empty());
+    match std::env::var("DW1_SAVES").as_deref() {
+        Ok("slots") => insert_slots(keep),
+        Ok("cards") => insert_cards(keep),
+        Ok(other) if !other.is_empty() => {
+            eprintln!("dw1: DW1_SAVES is slots or cards, not {other:?}");
+            std::process::exit(2);
+        }
+        _ if headless => insert_cards(keep),
+        _ => insert_slots(keep),
+    }
     if headless {
         psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
     } else {

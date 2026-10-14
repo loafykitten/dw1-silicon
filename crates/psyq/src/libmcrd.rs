@@ -9,10 +9,12 @@
 //!
 //! Sources: Psy-Q's `libmcrd.h` and `kernel.h` (McFunc*/McErr* constants, `struct DIRENTRY`),
 //! psx-spx "Memory Card Data Format" (the 128 KB layout), and how `main_menu.c` drives it.
-//! Card writes stay in memory unless the app gives a slot a file ([`set_card_file`]): then
-//! every change the game makes is written there at once, atomically and durably (a new
-//! temporary file, synced, renamed over the old one, the directory synced), the old file first
-//! kept as `<file>.bak` (written the same way) once per run (Phase 7).
+//! Card writes stay in memory unless the app gives a slot a keeper ([`set_card_keeper`]),
+//! which is handed the card after every change the game makes. [`set_card_file`] keeps a card
+//! whole in a file, atomically and durably (a new temporary file, synced, renamed over the old
+//! one, the directory synced), the old file first kept as `<file>.bak` (written the same way)
+//! once per run (Phase 7); the app's save slots keep each save in its own file instead
+//! (`crates/dw1/src/saves.rs`).
 //!
 //! # How the game drives it
 //!
@@ -469,6 +471,8 @@ pub struct Controller {
     strict: bool,
     /// When the card bus was last busy with an accept, directory read, read or write.
     bus_end: Option<u32>,
+    /// Every command takes no time (the app's save slots, which have no card to wait for).
+    instant: bool,
 }
 
 /// What `MemCardSync` returns [obs: the game's switch].
@@ -500,6 +504,7 @@ impl Controller {
             rechecks: 0,
             cost: 0,
             strict: false,
+            instant: false,
         }
     }
 
@@ -514,6 +519,9 @@ impl Controller {
 
     /// A latency, or the trap for one that wasn't measured.
     fn timing(&self, what: &str, vblanks: Option<u32>) -> u32 {
+        if self.instant {
+            return 0;
+        }
         match vblanks {
             Some(v) => v,
             None if self.strict => {
@@ -580,6 +588,10 @@ impl Controller {
         }
         self.cmd = cmd;
         self.result = result as u32;
+        if self.instant {
+            self.phase = Phase::Busy { until: now };
+            return true;
+        }
         let first = std::mem::take(&mut self.fresh);
         if first {
             self.recheck_at = Some(now.wrapping_add(RECHECK_FIRST_VBLANKS));
@@ -839,63 +851,81 @@ fn with<T>(f: impl FnOnce(&mut Controller) -> T) -> T {
         .get_or_insert_with(Controller::strict))
 }
 
-/// Where a slot's card is kept, and what was last written there.
-struct CardFile {
-    path: std::path::PathBuf,
-    saved: Option<Vec<u8>>,
-    backed_up: bool,
+/// Somewhere outside the program a slot's card is kept: the app's save files. libmcrd calls
+/// [`CardKeeper::keep`] after a command changed the card; the keeper writes it out (all of it,
+/// or the parts it keeps).
+pub trait CardKeeper: Send {
+    /// Writes `card` out. An error is reported and the call made again at the next change and
+    /// at exit, so it must be safe to repeat.
+    fn keep(&mut self, card: &Card) -> std::io::Result<()>;
+    /// Where the card goes, for messages.
+    fn describe(&self) -> String;
 }
 
-static FILES: Mutex<[Option<CardFile>; 2]> = Mutex::new([None, None]);
+/// A slot's keeper, and the card as it was last kept.
+struct Kept {
+    keeper: Box<dyn CardKeeper>,
+    saved: Option<Vec<u8>>,
+}
 
-/// Keeps slot `slot`'s card in `path` from now on: each change is written there (see the
-/// module docs). The card in the slot should be the file's contents (or what the file is to
-/// start as); nothing is written until the game changes it. `None` stops keeping it. The caller
-/// makes sure no other process keeps the same file (the app holds a lock on its save
-/// directory).
-pub fn set_card_file(slot: usize, path: Option<std::path::PathBuf>) {
+static KEEPERS: Mutex<[Option<Kept>; 2]> = Mutex::new([None, None]);
+
+/// Keeps slot `slot`'s card with `keeper` from now on: each change the game makes is handed to
+/// it. The card in the slot should be what the keeper already holds (nothing is kept until the
+/// game changes it). `None` stops keeping it.
+pub fn set_card_keeper(slot: usize, keeper: Option<Box<dyn CardKeeper>>) {
     assert!(slot < 2, "memory card slot {slot}");
     let saved = card(slot).map(|c| c.as_bytes().to_vec());
-    FILES.lock().unwrap()[slot] = path.map(|path| CardFile {
-        path,
-        saved,
-        backed_up: false,
-    });
+    KEEPERS.lock().unwrap()[slot] = keeper.map(|keeper| Kept { keeper, saved });
 }
 
-/// Whether every kept card is on disk as the game last left it (false after a write that
-/// failed and hasn't been retried successfully yet).
+/// Keeps slot `slot`'s card whole in the file `path` (see the module docs); `None` stops
+/// keeping it. The caller makes sure no other process keeps the same file (the app holds a
+/// lock on its save directory).
+pub fn set_card_file(slot: usize, path: Option<std::path::PathBuf>) {
+    set_card_keeper(
+        slot,
+        path.map(|path| {
+            Box::new(CardFile {
+                path,
+                backed_up: false,
+            }) as Box<dyn CardKeeper>
+        }),
+    );
+}
+
+/// Whether every kept card is kept as the game last left it (false after a write that failed
+/// and hasn't been retried successfully yet).
 pub fn cards_saved() -> bool {
-    let files = FILES.lock().unwrap();
-    files.iter().enumerate().all(|(slot, f)| match f {
-        Some(f) => card(slot).map(|c| c.as_bytes().to_vec()) == f.saved,
+    let kept = KEEPERS.lock().unwrap();
+    kept.iter().enumerate().all(|(slot, k)| match k {
+        Some(k) => card(slot).map(|c| c.as_bytes().to_vec()) == k.saved,
         None => true,
     })
 }
 
-/// Writes every kept card that changed since it was last written. A write that fails is
-/// reported (loudly: the game believes its save succeeded) and retried at the next change and
-/// when the program exits ([`flush_cards`]).
+/// Hands every kept card that changed since it was last kept to its keeper. A write that
+/// fails is reported (loudly: the game believes its save succeeded) and retried at the next
+/// change and when the program exits ([`flush_cards`]).
 fn persist() {
-    let mut files = FILES.lock().unwrap();
-    for (slot, file) in files.iter_mut().enumerate() {
-        let Some(file) = file else { continue };
+    let mut kept = KEEPERS.lock().unwrap();
+    for (slot, k) in kept.iter_mut().enumerate() {
+        let Some(k) = k else { continue };
         let Some(card) = card(slot) else { continue };
-        if file.saved.as_deref() == Some(card.as_bytes()) {
+        if k.saved.as_deref() == Some(card.as_bytes()) {
             continue;
         }
-        match write_card_file(file, card.as_bytes()) {
+        match k.keeper.keep(&card) {
             Ok(()) => {
-                file.saved = Some(card.as_bytes().to_vec());
+                k.saved = Some(card.as_bytes().to_vec());
                 SAVE_FAILED.store(false, std::sync::atomic::Ordering::Relaxed);
             }
             Err(e) => {
                 SAVE_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
                 eprintln!(
-                    "psyq: MEMORY CARD {} WAS NOT SAVED to {}: {e} (trying again at the next save \
+                    "psyq: THE SAVE WAS NOT WRITTEN to {}: {e} (trying again at the next save \
                  and at exit)",
-                    slot + 1,
-                    file.path.display()
+                    k.keeper.describe()
                 )
             }
         }
@@ -914,7 +944,7 @@ pub fn save_failed() -> bool {
 /// Writes any kept card whose last write failed (at exit). Gives up rather than wait if the
 /// library is busy.
 pub fn flush_cards() {
-    let free = CONTROLLER.try_lock().is_ok() && FILES.try_lock().is_ok();
+    let free = CONTROLLER.try_lock().is_ok() && KEEPERS.try_lock().is_ok();
     if free {
         persist();
     }
@@ -960,21 +990,42 @@ fn sync_dir(path: &std::path::Path) -> std::io::Result<()> {
     std::fs::File::open(dir)?.sync_all()
 }
 
-fn write_card_file(file: &mut CardFile, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(dir) = file.path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    if !file.backed_up {
-        // The card as it was on disk before this run first changes it, kept whole: the backup
-        // is replaced atomically too, so a failure here leaves the old backup as it was.
-        match std::fs::read(&file.path) {
-            Ok(old) => write_atomic(&file.path.with_extension("mcd.bak"), &old)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
+/// A card kept whole in one file (`card1.mcd`), the old file first kept as `<file>.bak` once
+/// per run.
+struct CardFile {
+    path: std::path::PathBuf,
+    backed_up: bool,
+}
+
+impl CardKeeper for CardFile {
+    fn keep(&mut self, card: &Card) -> std::io::Result<()> {
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir)?;
         }
-        file.backed_up = true;
+        if !self.backed_up {
+            // The card as it was on disk before this run first changes it, kept whole: the
+            // backup is replaced atomically too, so a failure here leaves the old backup as it
+            // was.
+            match std::fs::read(&self.path) {
+                Ok(old) => write_atomic(&self.path.with_extension("mcd.bak"), &old)?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+            self.backed_up = true;
+        }
+        write_atomic(&self.path, card.as_bytes())
     }
-    write_atomic(&file.path, bytes)
+
+    fn describe(&self) -> String {
+        self.path.display().to_string()
+    }
+}
+
+/// Makes every card command take no time (true), or the PS1's measured times (false, the
+/// default). The app's save slots are instant: there's no card to wait for, and the oracle
+/// replays, which must keep the PS1's timing, never turn it on.
+pub fn set_instant(instant: bool) {
+    with(|c| c.instant = instant);
 }
 
 /// Puts a card (or none) in slot 1 or 2 (`slot` 0 or 1). The default is a fresh formatted
@@ -1591,6 +1642,37 @@ mod tests {
         // A refused command costs nothing.
         assert!(m.exist(0, 0));
         assert_eq!(m.create_file(0, 0, name, 1), -1);
+        assert_eq!(m.take_cost(), 0);
+    }
+
+    #[test]
+    fn instant_commands_take_no_time() {
+        // Strict, so a state whose timing wasn't measured (an exist with no card) would trap
+        // if instant mode didn't skip the timings.
+        let mut m = Controller::strict();
+        m.instant = true;
+        m.insert(1, None);
+        let name = b"BASLUS-01032DMR0";
+        assert_eq!(m.create_file(0, 0, name, 1), 0);
+        assert_eq!(m.take_cost(), 0);
+        assert!(m.write_file(5, 0, name, 0, &[1; BLOCK]));
+        assert_eq!(m.busy_until(5), None, "done at once");
+        assert_eq!(
+            m.sync(5, false),
+            SyncState::Done {
+                cmd: MC_FUNC_WRITE_FILE,
+                result: 0
+            }
+        );
+        assert!(m.exist(5, 0x10));
+        assert_eq!(
+            m.sync(5, false),
+            SyncState::Done {
+                cmd: MC_FUNC_EXIST,
+                result: MC_ERR_CARD_NOT_EXIST as u32
+            }
+        );
+        assert!(m.dirents(5, 0, b"*", 0, 15).unwrap().len() == 1);
         assert_eq!(m.take_cost(), 0);
     }
 

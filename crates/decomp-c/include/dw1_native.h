@@ -61,6 +61,10 @@ _Noreturn void dw1_native_fatal(const char *what);
  * the file's values, as the PS1's load of the file would do (crates/decomp-c/src/overlays.rs). */
 void dw1_overlay_reset(int32_t lib);
 
+/* Nonzero when the game's save screens use the Mac app's save slots instead of memory cards
+ * (crates/psyq/src/native.rs; the decomp's main_menu.c, Phase 7). */
+extern int32_t dw1_pc_saves;
+
 /* BIOS A(2Fh)/A(30h), reached through the SDK's libc stubs on the PS1. */
 #define rand dw1_bios_rand
 #define srand dw1_bios_srand
