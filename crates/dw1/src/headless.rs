@@ -19,6 +19,8 @@ pub struct Headless {
     start_at: Option<u32>,
     out: PathBuf,
     replay: Option<Replay>,
+    /// DW1_REPLAY_LOG: print each poll with its recorded and native VBlank.
+    replay_log: bool,
 }
 
 /// The name of the function containing `addr` (the native game code is in this binary).
@@ -95,6 +97,7 @@ impl Headless {
             shots,
             stop_at: env_num("DW1_STOP_AT"),
             start_at: env_num("DW1_START_AT"),
+            replay_log: std::env::var("DW1_REPLAY_LOG").is_ok_and(|v| !v.is_empty() && v != "0"),
             out,
             replay,
         }
@@ -134,6 +137,9 @@ impl psyq::libetc::Host for Headless {
         }
         if self.stop_at == Some(vblank) {
             eprintln!("dw1: stopped at vblank {vblank}");
+            if let Some(note) = self.replay.as_ref().and_then(|r| r.timing_note()) {
+                eprintln!("dw1: {note}");
+            }
             std::process::exit(0);
         }
     }
@@ -146,7 +152,19 @@ impl psyq::libetc::Host for Headless {
             };
         };
         let name = function_name(caller);
-        match replay.poll(&name, psyq::libetc::vblank_count()) {
+        let vblank = psyq::libetc::vblank_count();
+        if self.replay_log
+            && let Some(p) = replay.polls.get(replay.polls_done())
+        {
+            eprintln!(
+                "dw1: poll {} native vblank {vblank} recorded {} (native {}) mask {:#x} {name}",
+                replay.polls_done(),
+                p.vblank,
+                i64::from(p.vblank) - 1144,
+                p.mask
+            );
+        }
+        match replay.poll(&name, vblank) {
             Ok(mask) => mask,
             Err(e) => {
                 eprintln!("dw1: {e}");
