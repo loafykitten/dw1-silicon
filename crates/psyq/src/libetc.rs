@@ -145,10 +145,11 @@ fn caller_address() -> usize {
     unsafe extern "C" {
         fn backtrace(buffer: *mut *mut std::ffi::c_void, size: i32) -> i32;
     }
-    // Not inlined, so frame [0] returns into PadRead and [1] into PadRead's caller.
+    // Not inlined: frame [0] returns into this function, [1] into PadRead and [2] into
+    // PadRead's caller (tests/pad_caller.rs).
     let mut frames = [std::ptr::null_mut(); 3];
     let n = unsafe { backtrace(frames.as_mut_ptr(), 3) };
-    if n >= 2 { frames[1] as usize } else { 0 }
+    if n >= 3 { frames[2] as usize } else { 0 }
 }
 
 #[cfg(test)]

@@ -77,18 +77,33 @@ impl Replay {
         let tables = symbols(symbols_dir)?;
         let mut polls = Vec::new();
         let mut format_ok = false;
+        let mut declared = None;
         for line in text.lines() {
             if line.starts_with('#') || line.trim().is_empty() {
                 continue;
             }
             let f: Vec<&str> = line.split_whitespace().collect();
-            if f == ["format", "1"] {
-                format_ok = true;
+            if f[0].parse::<usize>().is_err() {
+                // A header line ("key value..."), only before the polls.
+                if !polls.is_empty() {
+                    return Err(format!(
+                        "{}: header line after the polls: {line}",
+                        path.display()
+                    ));
+                }
+                match f[..] {
+                    ["format", "1"] => format_ok = true,
+                    ["polls", n] => {
+                        declared = Some(n.parse::<usize>().map_err(|e| format!("{line}: {e}"))?)
+                    }
+                    _ => {}
+                }
                 continue;
             }
-            let (Ok(seq), true) = (f[0].parse::<usize>(), f.len() == 4) else {
-                continue; // a header line
-            };
+            if f.len() != 4 {
+                return Err(format!("{}: malformed poll line: {line}", path.display()));
+            }
+            let seq: usize = f[0].parse().unwrap();
             if seq != polls.len() {
                 return Err(format!("{}: poll {seq} out of order", path.display()));
             }
@@ -102,6 +117,13 @@ impl Replay {
         }
         if !format_ok {
             return Err(format!("{}: not a format 1 pad replay", path.display()));
+        }
+        if declared != Some(polls.len()) {
+            return Err(format!(
+                "{}: the header declares {declared:?} polls, the file has {} (truncated?)",
+                path.display(),
+                polls.len()
+            ));
         }
         Ok(Replay {
             polls,
@@ -151,6 +173,40 @@ impl Replay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_rejects_truncated_and_malformed_replays() {
+        let dir = std::env::temp_dir().join(format!("dw1-replay-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("replay.txt");
+        let load = |text: &str| {
+            std::fs::write(&file, text).unwrap();
+            Replay::load(&file, &dir)
+        };
+        let header = "# test\nformat 1\npolls 2\n";
+        let ok = load(&format!("{header}0 1651 0 80010620\n1 1653 800 80010620\n")).unwrap();
+        assert_eq!(ok.polls.len(), 2);
+        assert!(load(header).err().unwrap().contains("truncated"));
+        assert!(
+            load(&format!("{header}0 1651 0 80010620\n"))
+                .err()
+                .unwrap()
+                .contains("truncated")
+        );
+        assert!(
+            load(&format!("{header}0 1651 0\n"))
+                .err()
+                .unwrap()
+                .contains("malformed")
+        );
+        assert!(
+            load(&format!("{header}0 1651 0 80010620\npolls 2\n"))
+                .err()
+                .unwrap()
+                .contains("after the polls")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn callers_resolve_per_overlay_and_polls_check_them() {

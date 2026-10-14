@@ -8,6 +8,7 @@
 //! Closing the window or Cmd-Q exits 0. `DW1_WINDOW_LOG=1` logs frames presented and the
 //! display size (first frame, on size changes, then every 60 frames).
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use sdl3::EventPump;
@@ -142,6 +143,32 @@ pub fn letterbox(src_w: u32, src_h: u32, win_w: u32, win_h: u32) -> (f32, f32, f
     (((ww - w) / 2.0).floor(), ((wh - h) / 2.0).floor(), w, h)
 }
 
+/// One gamepad's held inputs: buttons and each axis kept apart, so a stick returning to centre
+/// doesn't release a D-pad direction (or the other way round).
+#[derive(Default)]
+pub struct PadState {
+    buttons: u32,
+    axes: BTreeMap<i32, u32>,
+}
+
+impl PadState {
+    pub fn button(&mut self, button: Button, down: bool) {
+        if down {
+            self.buttons |= button_bit(button);
+        } else {
+            self.buttons &= !button_bit(button);
+        }
+    }
+
+    pub fn axis(&mut self, axis: Axis, value: i16) {
+        self.axes.insert(axis as i32, axis_bits(axis, value));
+    }
+
+    pub fn bits(&self) -> u32 {
+        self.axes.values().fold(self.buttons, |a, b| a | b)
+    }
+}
+
 pub struct Window {
     canvas: WindowCanvas,
     creator: TextureCreator<WindowContext>,
@@ -150,7 +177,8 @@ pub struct Window {
     gamepad_sys: sdl3::GamepadSubsystem,
     gamepads: Vec<Gamepad>,
     keys: u32,
-    pads: u32,
+    /// Per gamepad, by joystick id.
+    pads: BTreeMap<sdl3::joystick::JoystickId, PadState>,
     buf: Vec<u32>,
     pacer: Option<Pacer>,
     t0: Instant,
@@ -186,7 +214,7 @@ impl Window {
             gamepad_sys,
             gamepads: Vec::new(),
             keys: 0,
-            pads: 0,
+            pads: BTreeMap::new(),
             buf: vec![0; 640 * 480],
             pacer: None,
             t0: Instant::now(),
@@ -227,16 +255,17 @@ impl Window {
                 Event::GamepadAdded { which, .. } => self.open_gamepad(which),
                 Event::GamepadRemoved { which, .. } => {
                     self.gamepads.retain(|g| g.id().ok() != Some(which));
-                    if self.gamepads.is_empty() {
-                        self.pads = 0;
-                    }
+                    self.pads.remove(&which);
                 }
-                Event::GamepadButtonDown { button, .. } => self.pads |= button_bit(button),
-                Event::GamepadButtonUp { button, .. } => self.pads &= !button_bit(button),
-                Event::GamepadAxisMotion { axis, value, .. } => {
-                    let mask = axis_bits(axis, -i16::MAX) | axis_bits(axis, i16::MAX);
-                    self.pads = (self.pads & !mask) | axis_bits(axis, value);
+                Event::GamepadButtonDown { which, button, .. } => {
+                    self.pads.entry(which).or_default().button(button, true)
                 }
+                Event::GamepadButtonUp { which, button, .. } => {
+                    self.pads.entry(which).or_default().button(button, false)
+                }
+                Event::GamepadAxisMotion {
+                    which, axis, value, ..
+                } => self.pads.entry(which).or_default().axis(axis, value),
                 _ => {}
             }
         }
@@ -321,7 +350,7 @@ impl psyq::libetc::Host for Window {
     }
 
     fn pad(&mut self, _caller: usize) -> u32 {
-        self.keys | self.pads
+        self.pads.values().fold(self.keys, |a, p| a | p.bits())
     }
 }
 
@@ -364,6 +393,17 @@ mod tests {
         assert_eq!(axis_bits(Axis::LeftY, 20000), DOWN);
         assert_eq!(axis_bits(Axis::LeftX, 100), 0);
         assert_eq!(axis_bits(Axis::TriggerRight, 30000), R2);
+
+        // A centred stick doesn't release a held D-pad direction, nor the other way round.
+        let mut p = PadState::default();
+        p.button(Button::DPadLeft, true);
+        p.axis(Axis::LeftX, 100);
+        assert_eq!(p.bits(), LEFT);
+        p.axis(Axis::LeftX, -20000);
+        p.button(Button::DPadLeft, false);
+        assert_eq!(p.bits(), LEFT);
+        p.axis(Axis::LeftX, 0);
+        assert_eq!(p.bits(), 0);
     }
 
     #[test]
