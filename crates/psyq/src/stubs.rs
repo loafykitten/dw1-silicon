@@ -13,15 +13,6 @@ stubs! { dw1_exit }
 // libgpu
 stubs! { LoadClut OpenTIM ReadTIM SetDrawLoad }
 
-// libgte
-stubs! {
-    ApplyMatrix ApplyMatrixLV ApplyMatrixSV ApplyTransposeMatrixLV CompMatrix MulMatrix
-    MulMatrix0 NormalColorCol NormalColorCol3 PopMatrix PushMatrix RotMatrix RotMatrixYXZ
-    RotMatrixZYX RotNclip3 RotNclip4 RotTransPers RotTransPers3 RotTransPers4 ScaleMatrix
-    SetLightMatrix SetRotMatrix SetTransMatrix SquareRoot0 TransMatrix TransposeMatrix ratan2
-    rcos rsin
-}
-
 // libgs (its data globals are in `globals`).
 stubs! {
     GsGetLs GsGetLw GsGetLws

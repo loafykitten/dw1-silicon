@@ -47,6 +47,14 @@ pub fn with<R>(f: impl FnOnce(&mut Gte) -> R) -> R {
     f(&mut GTE.lock().unwrap())
 }
 
+/// Unit tests that check what the game's GTE holds between calls (or that need the matrix stack
+/// to themselves) take this first, so tests running in parallel don't interleave.
+#[cfg(test)]
+pub(crate) fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static GATE: Mutex<()> = Mutex::new(());
+    GATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// `mtc2 value, $reg`: write data register `reg`.
 #[unsafe(no_mangle)]
 pub extern "C" fn dw1_gte_mtc2(reg: u32, value: u32) {
@@ -88,6 +96,7 @@ mod tests {
 
     #[test]
     fn registers_and_commands_reach_the_model() {
+        let _gate = serial();
         // LZCS/LZCR: leading zeros of a positive word.
         dw1_gte_mtc2(dreg::LZCS as u32, 0x0000_1000);
         assert_eq!(dw1_gte_mfc2(dreg::LZCR as u32), 19);

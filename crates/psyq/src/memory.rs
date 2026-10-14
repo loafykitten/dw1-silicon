@@ -107,28 +107,6 @@ pub extern "C" fn dw1_gpu_unlink(link: u32) -> *mut u32 {
     ptr_of_link(link)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    static mut PACKET: [u32; 4] = [0; 4];
-
-    #[test]
-    fn links_round_trip_inside_the_data_segment() {
-        for p in [
-            (&raw const PACKET).cast::<u8>(),
-            ps1_ram_ptr(0x8001_0000).cast_const(),
-            (&raw const dw1_scratchpad).cast::<u8>(),
-        ] {
-            let link = link_of(p);
-            assert!(link < LINK_END);
-            assert_eq!(ptr_of_link(link).cast::<u8>().cast_const(), p);
-        }
-        assert!(ptr_of_link(LINK_END).is_null());
-        assert!(ptr_of_link(0xFFFF_FFFF).is_null());
-    }
-}
-
 // ---- 32-bit pointers inside loaded data ----
 //
 // Some PS1 data holds addresses in 32-bit fields: libgs maps a TMD file in place, replacing
@@ -164,4 +142,26 @@ pub extern "C" fn dw1_ptr32_decode(value: u32) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn dw1_ptr32_encode(p: *const u8) -> u32 {
     ptr32_of(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    static mut PACKET: [u32; 4] = [0; 4];
+
+    #[test]
+    fn links_round_trip_inside_the_data_segment() {
+        for p in [
+            (&raw const PACKET).cast::<u8>(),
+            ps1_ram_ptr(0x8001_0000).cast_const(),
+            (&raw const dw1_scratchpad).cast::<u8>(),
+        ] {
+            let link = link_of(p);
+            assert!(link < LINK_END);
+            assert_eq!(ptr_of_link(link).cast::<u8>().cast_const(), p);
+        }
+        assert!(ptr_of_link(LINK_END).is_null());
+        assert!(ptr_of_link(0xFFFF_FFFF).is_null());
+    }
 }
