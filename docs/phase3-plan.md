@@ -54,13 +54,30 @@ for this card. Only this one format is tested.
 Card reads, the game's own checksum code and `loadSavegame` needed nothing new (timing from the
 libmcrd model, unchanged). Added:
 
-- `libgpu`: `OpenTIM`, `ReadTIM`, `LoadClut` (the map loader's TIM images).
-- decomp (fork branch `dw1-native-continue`, one commit on `62ff326`): `clearMapDigimon` writes
-  a byte through a null `ENTITY_TABLE` slot (low RAM on the PS1); skipped natively.
-- Tests (`crates/decomp-c`): the fixture's save passes `createSavegameChecksum` (the game's C,
-  both slot payloads' layout 0x4FC checksum offset), and a flipped bit in either the 0x4E4 or
-  the 0xA00 checksummed range no longer matches. Ignored when the fixture is absent
-  (`DW1_FIXTURE_CARD` overrides the path).
+- `libgpu` (kept version of the 2D agent, fixed after review): `OpenTIM` replaces the cursor
+  and returns 0 whatever it points at; `ReadTIM` returns null without writing at a word that
+  isn't 0x10 (a bad address or the end of a run of TIMs), walks concatenated TIMs in turn, and
+  gives a CLUT-less TIM (flag bit 3 clear) null `crect`/`caddr`. All measured in Redux with
+  `oracle/call-sdk.lua` (`captures/oracle-runs/p3-tim`: two TIMs of modes 0xA, 0xB then a
+  zero terminator, a 0x11 and a zero word, a CLUT-less TIM). Test: `tim_reading_matches_the_sdk`.
+- Replay headers name the initial cards: `card1_sha1`, `card2_sha1` (`fresh` = no card file,
+  the new card Redux makes itself, SHA-1 ec2d2493...) and `card1_fixture`. Redux's `replay.lua`
+  hashes `memcard1.mcd`/`memcard2.mcd` in the cwd before the run and refuses to replay on any
+  other card; recording on a card needs `DW1REPLAY_CARD1_FIXTURE=<name>`. Native checks
+  `DW1_CARD1`/`DW1_CARD2` against the header (a replay without the lines is rejected).
+- decomp (fork branch `dw1-native-continue`): `clearMapDigimon` writes a byte through a null
+  `ENTITY_TABLE` slot (low RAM on the PS1); skipped natively.
+- Tests (`crates/decomp-c`, ignored without the fixture, which `build.rs` looks for; an explicit
+  `DW1_FIXTURE_CARD` that can't be read fails): the game's `createSavegameChecksum` accepts both
+  payloads of the fixture; with payload 0 corrupted (in the 0x4E4 or the 0xA00 range) the
+  backup, payload 1, is the one the CONTINUE read picks; with payload 1 corrupted payload 0 is;
+  with one bit flipped in each (every combination of the two ranges) the load is refused. The
+  pick mirrors the two `if`s of menu state 0x19; the checksum is the game's C.
+- Corrupted copies of the fixture, run against Redux (`captures/fixtures/*-bad0.mcd`: payload 0
+  one bit off; `*-bad01.mcd`: both): with both bad Redux shows "Data Error" and goes back to the title menu (
+  2841 polls) and native matches all 8 checkpoints byte for byte; with only
+  payload 0 bad Redux loads the backup, and native matches checkpoints 0-5 (then the same TMD
+  0x3E trap).
 
 ## Left
 

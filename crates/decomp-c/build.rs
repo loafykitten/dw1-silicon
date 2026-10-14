@@ -68,6 +68,13 @@ const BOUND_HEADERS: &[&str] = &[
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    // The save-card test needs Ember's fixture (local, gitignored); without it the test is ignored.
+    println!("cargo::rustc-check-cfg=cfg(dw1_fixture_card)");
+    let fixture = manifest.join("../../captures/fixtures/ember-day2-gabumon.mcd");
+    println!("cargo:rerun-if-changed={}", fixture.display());
+    if fixture.exists() {
+        println!("cargo:rustc-cfg=dw1_fixture_card");
+    }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let decomp = manifest
         .join("../../decomp")

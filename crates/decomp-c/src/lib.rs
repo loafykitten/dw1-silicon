@@ -289,26 +289,21 @@ mod tests {
     const PAYLOAD_START: [usize; 2] = [0x200, 0x200 + 0xF00];
     const CHECKSUM_AT: usize = 0x4FC;
 
-    fn fixture() -> Option<Vec<u8>> {
-        let path = std::env::var_os("DW1_FIXTURE_CARD")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../captures/fixtures/ember-day2-gabumon.mcd");
-                p.exists().then_some(p)
-            })?;
-        std::fs::read(path).ok()
+    /// The fixture card's bytes. `DW1_FIXTURE_CARD` names one explicitly (an unreadable file
+    /// fails the test); otherwise the default fixture, which the build script found (the test
+    /// is ignored without it).
+    fn fixture() -> Vec<u8> {
+        let path = match std::env::var_os("DW1_FIXTURE_CARD") {
+            Some(p) => std::path::PathBuf::from(p),
+            None => std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../captures/fixtures/ember-day2-gabumon.mcd"),
+        };
+        std::fs::read(&path).unwrap_or_else(|e| panic!("fixture card {}: {e}", path.display()))
     }
 
-    /// Ember's fixture card, read as-is (DuckStation raw format), holds a save the game's own
-    /// checksum accepts; flipping one byte of the payload makes it reject it. The save buffer
-    /// is global state, so both checks share one test.
-    #[test]
-    fn fixture_save_checksum_is_valid_and_corruption_is_rejected() {
-        let Some(bytes) = fixture() else {
-            eprintln!("skipped: no fixture card (captures/fixtures or DW1_FIXTURE_CARD)");
-            return;
-        };
+    /// The fixture's 8 KB save block.
+    fn fixture_save() -> Vec<u8> {
+        let bytes = fixture();
         let card = psyq::libmcrd::Card::from_bytes(&bytes).expect("a 128 KB raw card");
         let files = card.files();
         let file = files
@@ -316,33 +311,58 @@ mod tests {
             .find(|f| f.name.starts_with(b"BASLUS-01032DMR"))
             .expect("the DW1 save file");
         assert_eq!(file.blocks.len(), 1);
-        let data = &card.as_bytes()[(file.blocks[0] + 1) * 8192..][..8192];
+        let data = card.as_bytes()[(file.blocks[0] + 1) * 8192..][..8192].to_vec();
         // The save header starts with its id, "SC" (a PS1 save file, not the card's "MC").
         assert_eq!(&data[..2], b"SC");
+        data
+    }
 
-        let load = |buf: &[u8]| unsafe {
-            (*core::ptr::addr_of_mut!(SAVE_FILE)).copy_from_slice(buf);
-        };
-        let stored = |slot: usize| {
-            let at = PAYLOAD_START[slot] + CHECKSUM_AT;
-            i32::from_le_bytes(data[at..at + 4].try_into().unwrap())
-        };
-        load(data);
-        assert_eq!(
-            unsafe { createSavegameChecksum(0) },
-            stored(0),
-            "slot 0 checksum"
-        );
-        // One flipped bit in the payload (inside the 0x4E4 summed bytes) no longer matches.
-        let mut bad = data.to_vec();
-        bad[PAYLOAD_START[0] + 0x100] ^= 1;
-        load(&bad);
-        assert_ne!(unsafe { createSavegameChecksum(0) }, stored(0));
-        // And in the battle records (the 0xA00 bytes).
-        let mut bad = data.to_vec();
-        bad[PAYLOAD_START[0] + 0x500 + 0x10] ^= 1;
-        load(&bad);
-        assert_ne!(unsafe { createSavegameChecksum(0) }, stored(0));
+    fn stored(data: &[u8], slot: usize) -> i32 {
+        let at = PAYLOAD_START[slot] + CHECKSUM_AT;
+        i32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+    }
+
+    /// What the CONTINUE read (main_menu.c, menu state 0x19) does with a loaded save buffer, by
+    /// the game's own `createSavegameChecksum`: the payload it loads (0 or 1), or `None` for
+    /// the "bad data" error. The selection mirrors that function's two `if`s; its effect on a
+    /// real card was checked against Redux (docs/phase3-plan.md).
+    fn continue_picks(buf: &[u8]) -> Option<usize> {
+        unsafe { (*core::ptr::addr_of_mut!(SAVE_FILE)).copy_from_slice(buf) };
+        (0..2).find(|&slot| unsafe { createSavegameChecksum(slot as i32) } == stored(buf, slot))
+    }
+
+    /// Ember's fixture card, read as-is (DuckStation raw format), holds a save the game's own
+    /// checksum accepts in both payloads (the second is the backup copy). A flipped bit in
+    /// either checksummed range of a payload rejects that payload: with the first bad the
+    /// backup is used, with both bad the load is refused. The save buffer is global state, so
+    /// all of it is one test.
+    #[test]
+    #[cfg_attr(
+        not(dw1_fixture_card),
+        ignore = "needs captures/fixtures/ember-day2-gabumon.mcd or DW1_FIXTURE_CARD"
+    )]
+    fn fixture_save_checksums_backup_and_rejection() {
+        let data = fixture_save();
+        assert_eq!(continue_picks(&data), Some(0), "both payloads valid");
+        assert_ne!(stored(&data, 0), 0);
+        assert_eq!(stored(&data, 1), stored(&data, 0), "the backup is a copy");
+
+        // Each corruption: a bit in the 0x4E4 summed bytes, and one in the 0xA00 battle records.
+        let spots = [0x100, 0x500 + 0x10];
+        for (i, &spot) in spots.iter().enumerate() {
+            let mut bad = data.clone();
+            bad[PAYLOAD_START[0] + spot] ^= 1;
+            assert_eq!(continue_picks(&bad), Some(1), "payload 0 bad (spot {i})");
+            let mut bad = data.clone();
+            bad[PAYLOAD_START[1] + spot] ^= 1;
+            assert_eq!(continue_picks(&bad), Some(0), "payload 1 bad (spot {i})");
+            for (j, &other) in spots.iter().enumerate() {
+                let mut bad = data.clone();
+                bad[PAYLOAD_START[0] + spot] ^= 1;
+                bad[PAYLOAD_START[1] + other] ^= 1;
+                assert_eq!(continue_picks(&bad), None, "both bad (spots {i}, {j})");
+            }
+        }
     }
 }
 

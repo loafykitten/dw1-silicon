@@ -133,6 +133,7 @@ dependencies = [
  "png",
  "psyq",
  "sdl3",
+ "sha1_smol",
 ]
 
 [[package]]
