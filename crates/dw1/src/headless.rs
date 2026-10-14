@@ -5,7 +5,9 @@
 //! put side by side.
 //!
 //! Env: `DW1_SHOTS=first:last:step` (screenshots `shot_<vblank>.png`), `DW1_STOP_AT=<vblank>`
-//! (exit 0 there), `DW1_OUT=<dir>` (default `captures/native-runs/latest`), `DW1_REPLAY=<file>`
+//! (exit 0 there; `DW1_VRAM_DUMP=<file>` writes the VRAM there, and `DW1_GP0_DUMP=1` prints every
+//! polygon packet with its draw state and a `V <n>` line per VBlank, for
+//! `tools/oracle/gpu_frame_requests.py`), `DW1_OUT=<dir>` (default `captures/native-runs/latest`), `DW1_REPLAY=<file>`
 //! (pad input from an emulator replay, `oracle/replays/`; the run stops when it diverges or the
 //! recording ends), `DW1_START_AT=<vblank>` (without a replay, pad 1 holds Start from there on).
 //!
@@ -234,6 +236,16 @@ impl Headless {
 
 impl psyq::libetc::Host for Headless {
     fn vblank(&mut self, vblank: u32) {
+        if backend::gpu::dump_polygons() {
+            eprintln!("V {vblank}");
+        }
+        if let Some(path) = std::env::var_os("DW1_VRAM_DUMP")
+            && self.stop_at == Some(vblank)
+        {
+            let bytes: Vec<u8> =
+                psyq::gpu::with(|g| g.vram().iter().flat_map(|w| w.to_le_bytes()).collect());
+            std::fs::write(&path, bytes).unwrap_or_else(|e| eprintln!("dw1: {e}"));
+        }
         if let Some((first, last, step)) = self.shots
             && (first..=last).contains(&vblank)
             && (vblank - first).is_multiple_of(step)
