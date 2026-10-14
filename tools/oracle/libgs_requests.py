@@ -368,6 +368,41 @@ def gen(seed, scale):
                ins=ins + [(g.b(VIEW), g.mat('any') + struct.pack('<I', BUF + offs[0]).hex())] + g.seeds(lw=False, lc=False, mode=False),
                outs=[(g.b(VIEW), 36)] + coord_outs(g, offs))
 
+    # ---- a current-stamp node is never looked above: its super may be SCREEN or garbage ----
+    def cached_over(sup_val, depth_below, fn, view=False):
+        ins = [g.new_stamp()]
+        s = g.stamp
+        # nodes leaf first; the node at index depth_below carries the stamp and the odd super
+        offs = []
+        for k in range(depth_below + 1):
+            off = COORD0 + k * 0x80
+            sup = BUF + off + 0x80 if k < depth_below else sup_val
+            flg = s if k == depth_below else r.choice([0, 1, s, 2]) if k else r.choice([0, 1, 2])
+            ins.append((g.b(off), g.coord_hex(flg, g.game_mat(), g.mat(), sup)))
+            offs.append(off)
+        ins += g.seeds(lw=False, lc=False, org=False, mode=False)
+        if view:
+            g.emit('GsSetView2', [g.b(VIEW)],
+                   ins=ins + [(g.b(VIEW), view_hex(BUF + offs[0]))], outs=[(g.b(VIEW), 36)] + coord_outs(g, offs))
+        else:
+            args = [g.b(offs[0]), g.b(MAT_A)] + ([g.b(MAT_B)] if fn == 'GsGetLws' else [])
+            g.emit(fn, args, ins=ins, outs=coord_outs(g, offs) + [(g.b(MAT_A), 32), (g.b(MAT_B), 32)])
+
+    for rep in range(max(1, N // 20)):
+        for sup_val in (1, 0xDEADBEEF, 0x801F0000 + 4, 0x12345):
+            for below in (0, 1, 2, 3):
+                for fn in ('GsGetLw', 'GsGetLs', 'GsGetLws'):
+                    cached_over(sup_val, below, fn)
+                cached_over(sup_val, below, None, view=True)
+    # cache boundaries in the middle of a chain: a stamped node under dirty and clean parents
+    for _ in range(N // 3):
+        depth = r.choice([3, 4])
+        ins, offs = build_chain(g, depth, flgs=[r.choice([0, 1, 'S']) for _ in range(depth)])
+        k = r.randrange(1, depth)
+        g.emit(r.choice(['GsGetLw', 'GsGetLs']), [g.b(offs[r.randrange(0, k)]), g.b(MAT_A)],
+               ins=ins + g.seeds(lw=False, lc=False, org=False, mode=False),
+               outs=coord_outs(g, offs) + [(g.b(MAT_A), 32)])
+
     # ---- a super of SCREEN (1): the real code faults ----
     for fn in ('GsGetLw', 'GsGetLs', 'GsGetLws'):
         ins = [(g.b(COORD0), g.coord_hex(0, g.game_mat(), g.mat(), 1))]

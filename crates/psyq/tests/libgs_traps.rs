@@ -13,6 +13,8 @@ fn coord(sup: *mut GsCoordinate2) -> GsCoordinate2 {
 
 fn run_case(name: &str) {
     let mut out = Matrix::default();
+    // Not 0: a node with flg 0 would then carry the current stamp, and the walk up stops there.
+    unsafe { psyq::globals::PSDCNT = 5 };
     match name {
         "screen_super" => {
             // A `super` of SCREEN (1): the real code dereferences it and faults.

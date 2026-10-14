@@ -76,8 +76,10 @@ pub unsafe extern "C" fn GsMulCoord3(m1: *mut Matrix, m2: *const Matrix) {
 
 /// The chain from `m` up to its root: `[m, parent, ..., root]`. A `super` that is neither null
 /// nor a coordinate system (`SCREEN`, 1, which the real code dereferences and faults on), or a
-/// chain deeper than the real code's own stack, stops the program.
-unsafe fn chain(m: *mut GsCoordinate2) -> Vec<*mut GsCoordinate2> {
+/// chain deeper than the real code's own stack, stops the program. The ascent stops at the
+/// first non-root node whose `flg` is the current stamp (the real code never looks above it,
+/// so what its `super` holds doesn't matter); the flag says whether it did.
+unsafe fn chain(m: *mut GsCoordinate2, stamp: u32) -> (Vec<*mut GsCoordinate2>, bool) {
     let mut nodes = vec![];
     let mut p = m;
     while !p.is_null() {
@@ -88,9 +90,13 @@ unsafe fn chain(m: *mut GsCoordinate2) -> Vec<*mut GsCoordinate2> {
             crate::trap::unimplemented("a GsCOORDINATE2 chain deeper than 32");
         }
         nodes.push(p);
-        p = unsafe { (*p).sup };
+        let (sup, flg) = unsafe { ((&raw const (*p).sup).read(), (&raw const (*p).flg).read()) };
+        if !sup.is_null() && flg == stamp {
+            return (nodes, true);
+        }
+        p = sup;
     }
-    nodes
+    (nodes, false)
 }
 
 /// Brings `workm` (the local-to-world matrix) of `m` and its parents up to date and returns a
@@ -110,12 +116,14 @@ unsafe fn chain(m: *mut GsCoordinate2) -> Vec<*mut GsCoordinate2> {
 /// workm, coord)`.
 unsafe fn update_workm(m: *mut GsCoordinate2) -> *const Matrix {
     unsafe {
-        let nodes = chain(m);
         let stamp = PSDCNT;
+        let (nodes, cut) = chain(m, stamp);
         let n = nodes.len();
         let flg = |i: usize| (&raw const (*nodes[i]).flg).read();
         // Nodes 0..first are recomputed (leaf first).
-        let first = if let Some(base) = (0..n - 1).find(|&i| flg(i) == stamp) {
+        let first = if cut {
+            n - 1
+        } else if let Some(base) = (0..n - 1).find(|&i| flg(i) == stamp) {
             base
         } else if flg(n - 1) == 0 || flg(n - 1) == stamp {
             n
