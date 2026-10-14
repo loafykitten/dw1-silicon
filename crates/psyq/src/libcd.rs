@@ -134,6 +134,16 @@ pub struct Drive {
     pos: i32,
     /// The movie stream, once `StSetRing` has made one.
     stream: Option<Stream>,
+    /// Bytes the app changes in sectors as data reads deliver them ([`patch_file`]).
+    patches: Vec<SectorPatch>,
+}
+
+/// Bytes to put at `offset` (in the raw 2352-byte sector) of sector `lba`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SectorPatch {
+    lba: u32,
+    offset: usize,
+    bytes: Vec<u8>,
 }
 
 /// The XA audio sectors a stream call took in, decoded into the SPU's CD input. (Sectors are
@@ -158,7 +168,55 @@ impl Drive {
             mode: 0,
             pos: 0,
             stream: None,
+            patches: Vec::new(),
         }
+    }
+
+    /// Changes file `path`'s bytes as reads deliver them: `edit` gets the file and returns
+    /// (offset in the file, new bytes) pairs. Returns how many edits there were.
+    pub fn patch_file(
+        &mut self,
+        path: &str,
+        edit: impl FnOnce(&[u8]) -> Vec<(usize, Vec<u8>)>,
+    ) -> Result<usize, DriveError> {
+        let disc_err = |e: pack::DiscError| DriveError::Disc(e.to_string());
+        let entry = self
+            .disc
+            .find(path)
+            .map_err(disc_err)?
+            .filter(|e| !e.is_dir)
+            .ok_or_else(|| DriveError::Disc(format!("no file {path} to patch")))?;
+        let data = self
+            .disc
+            .read_file(path)
+            .map_err(disc_err)?
+            .ok_or_else(|| DriveError::Disc(format!("no file {path} to patch")))?;
+        let edits = edit(&data);
+        // All or nothing.
+        if let Some((at, _)) = edits.iter().find(|(at, bytes)| {
+            at.checked_add(bytes.len())
+                .is_none_or(|end| end > data.len())
+        }) {
+            return Err(DriveError::Disc(format!(
+                "a patch at {at:#x} runs past the end of {path}"
+            )));
+        }
+        for (at, bytes) in &edits {
+            // A file's sectors are consecutive, SECTOR_DATA bytes of it each [doc: ISO 9660].
+            let mut done = 0;
+            while done < bytes.len() {
+                let pos = at + done;
+                let in_sector = pos % SECTOR_DATA;
+                let n = (SECTOR_DATA - in_sector).min(bytes.len() - done);
+                self.patches.push(SectorPatch {
+                    lba: entry.lba + (pos / SECTOR_DATA) as u32,
+                    offset: DATA_OFFSET + in_sector,
+                    bytes: bytes[done..done + n].to_vec(),
+                });
+                done += n;
+            }
+        }
+        Ok(edits.len())
     }
 
     /// `CdInit`: resets the drive to its power-on state (mode 0, at the start, not reading).
@@ -310,6 +368,9 @@ impl Drive {
             self.disc
                 .read_raw(lba, &mut raw)
                 .map_err(|e| DriveError::Disc(e.to_string()))?;
+            for p in self.patches.iter().filter(|p| p.lba == lba) {
+                raw[p.offset..p.offset + p.bytes.len()].copy_from_slice(&p.bytes);
+            }
             chunk.copy_from_slice(&raw[start..start + size]);
         }
         self.pos += sectors as i32;
@@ -343,6 +404,17 @@ static DRIVE: Mutex<Option<Drive>> = Mutex::new(None);
 /// call stops the program with a message.
 pub fn insert_disc(disc: Disc) {
     *DRIVE.lock().unwrap() = Some(Drive::new(disc));
+}
+
+/// Changes file `path` on the inserted disc as the game reads it (see [`Drive::patch_file`]):
+/// the app's text changes. Movie streams aren't patched.
+pub fn patch_file(
+    path: &str,
+    edit: impl FnOnce(&[u8]) -> Vec<(usize, Vec<u8>)>,
+) -> Result<usize, String> {
+    let mut guard = DRIVE.lock().unwrap();
+    let drive = guard.as_mut().ok_or("no disc inserted")?;
+    drive.patch_file(path, edit).map_err(|e| e.to_string())
 }
 
 /// Runs `f` on the drive, or stops the program when there's no disc or `f` fails.
@@ -815,6 +887,43 @@ mod tests {
         d.read(1, 0, &mut next).unwrap();
         assert!(next.iter().all(|&b| b == 0x12));
         assert_eq!(d.mode(), 0x80, "mode 0 keeps the current mode");
+    }
+
+    #[test]
+    fn patched_files_read_changed() {
+        let mut d = drive();
+        // A.TXT is sectors 20-22; one edit crosses from 20 into 21, one is past the end.
+        let n = d
+            .patch_file("A.TXT", |data| {
+                assert_eq!(data.len(), 5000);
+                vec![(SECTOR_DATA - 2, b"wxyz".to_vec()), (10, b"ab".to_vec())]
+            })
+            .unwrap();
+        assert_eq!(n, 2);
+        d.command(CDL_SETLOC, &msf(20)).unwrap();
+        let mut out = vec![0u8; 2 * SECTOR_DATA];
+        d.read(2, 0x80, &mut out).unwrap();
+        assert_eq!(&out[10..12], b"ab");
+        assert_eq!(&out[SECTOR_DATA - 2..SECTOR_DATA + 2], b"wxyz");
+        assert_eq!(out[SECTOR_DATA + 2], 0x11, "only the edited bytes change");
+        // A batch with one bad edit installs none of it.
+        assert!(
+            d.patch_file("A.TXT", |_| vec![
+                (20, b"no".to_vec()),
+                (4999, b"ab".to_vec())
+            ])
+            .is_err()
+        );
+        assert!(d.patch_file("NOPE.BIN", |_| Vec::new()).is_err());
+        d.command(CDL_SETLOC, &msf(20)).unwrap();
+        d.read(1, 0, &mut out[..SECTOR_DATA]).unwrap();
+        assert_eq!(out[20], 0x10);
+        // Whole-sector reads carry the change 12 bytes further in.
+        d.command(CDL_SETMODE, &[CDL_MODE_SIZE1]).unwrap();
+        d.command(CDL_SETLOC, &msf(20)).unwrap();
+        let mut whole = vec![0u8; WHOLE_SECTOR];
+        d.read(1, 0, &mut whole).unwrap();
+        assert_eq!(&whole[12 + 10..12 + 12], b"ab");
     }
 
     #[test]

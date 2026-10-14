@@ -136,9 +136,14 @@ machine (above; bedtime was too far for the pinned Redux's Lua limit near VBlank
 slot list's second line (place and day; reviewed by gpt-6.1-sol, no findings; checked with the
 longest place name and with all 15 slots full, scrolling).
 
-Not done: multi-generation backups; the save machine's own script line still says "Save Machine
-for Memory Card Battle Data" (map script text, not `main_menu.c`); saving is instant, so the
-"Saving data file" box only flashes.
+Then, Ember's asks: the save machine's script lines ("a Save Machine for Memory Card Battle
+Data", four places in `\SCN\DG.SCN`) read "Save Machine for Battle Data" in the slots build
+(`crates/dw1/src/pc_text.rs`: same byte length, padded with spaces, patched into the sectors as
+the drive delivers them, `psyq::libcd::patch_file`); a write in instant mode stays busy for one
+second (`libmcrd::INSTANT_WRITE_VBLANKS`), so the "Saving data file" box can be read (the save is
+on disk when it starts), and that box is one line tall in slot mode.
+
+Not done: multi-generation backups.
 
 ## Review (gpt-6.1-sol, 2026-10-14)
 

@@ -19,7 +19,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   exported, loads on the emulator with all 9 checkpoints identical to the port's, and an in-game
   save (the Battle Registration machine, Ember's tip) recorded on the emulator replays with
   identical state and byte-identical cards (`register-save`, the tenth replay). The slot list
-  shows each save's place and day. Headless runs keep the two cards (all ten replays match); `DW1_PAD_SCRIPT` drives screens the emulator
+  shows each save's place and day; the save machine no longer mentions memory cards, and the
+  "Saving data file" box stays up for a second (Ember's asks). Headless runs keep the two cards (all ten replays match); `DW1_PAD_SCRIPT` drives screens the emulator
   can't. `dw1-mac` seeds the slots from Ember's DuckStation card the first time.
 - **Phase 6 (sound) is done:** Ember listened and says it sounds right (2026-10-14).
 - **Session 4 in short:** battles, training and the Item Keeper certified (Phase 5), then sound
@@ -742,8 +743,8 @@ is what the Rust is checked against.
   enough: if you pass one while playing in DuckStation (or in `dw1-mac`: its saves convert to
   emulator cards), make an extra save there and say which slot it is. (Battle Mode needs a save
   whose Digimon is registered at the Battle Registration machine.) Nothing is blocked on it.
-  Ember asked (2026-10-14) whether this meant autosave: no, it's a request for test saves; the
-  answer explained the checking method.
+  Ember asked (2026-10-14) whether this meant autosave: no, it's a request for test saves. Ember
+  will collect them over time while playing; keep working on what doesn't need them.
 
 ## Answered by Ember
 

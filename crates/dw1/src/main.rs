@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 mod canon;
 mod headless;
+mod pc_text;
 mod replay;
 mod saves;
 mod window;
@@ -281,6 +282,7 @@ fn insert_slots(keep: bool) {
     psyq::libmcrd::insert_card(1, None);
     psyq::libmcrd::set_instant(true);
     psyq::native::set_pc_saves(true);
+    pc_text::apply();
 }
 
 /// `dw1 export-card <file>` / `dw1 import-card <file>`: moves saves between the slots and a

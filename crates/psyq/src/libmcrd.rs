@@ -471,7 +471,8 @@ pub struct Controller {
     strict: bool,
     /// When the card bus was last busy with an accept, directory read, read or write.
     bus_end: Option<u32>,
-    /// Every command takes no time (the app's save slots, which have no card to wait for).
+    /// Every command takes no time (the app's save slots, which have no card to wait for),
+    /// except that a write shows for [`INSTANT_WRITE_VBLANKS`].
     instant: bool,
 }
 
@@ -589,7 +590,14 @@ impl Controller {
         self.cmd = cmd;
         self.result = result as u32;
         if self.instant {
-            self.phase = Phase::Busy { until: now };
+            let shown = if cmd == MC_FUNC_WRITE_FILE {
+                INSTANT_WRITE_VBLANKS
+            } else {
+                0
+            };
+            self.phase = Phase::Busy {
+                until: now.wrapping_add(shown),
+            };
             return true;
         }
         let first = std::mem::take(&mut self.fresh);
@@ -1021,8 +1029,13 @@ impl CardKeeper for CardFile {
     }
 }
 
-/// Makes every card command take no time (true), or the PS1's measured times (false, the
-/// default). The app's save slots are instant: there's no card to wait for, and the oracle
+/// How long an instant write still takes (the save is on disk when it starts): one second, so
+/// the game's "Saving data file" box, up while the write runs, can be read rather than flash.
+/// Ember asked for it (2026-10-14).
+pub const INSTANT_WRITE_VBLANKS: u32 = 60;
+
+/// Makes every card command take no time (true), except a write's [`INSTANT_WRITE_VBLANKS`],
+/// or the PS1's measured times (false, the default). The app's save slots are instant: there's no card to wait for, and the oracle
 /// replays, which must keep the PS1's timing, never turn it on.
 pub fn set_instant(instant: bool) {
     with(|c| c.instant = instant);
@@ -1646,7 +1659,7 @@ mod tests {
     }
 
     #[test]
-    fn instant_commands_take_no_time() {
+    fn instant_commands_take_no_time_but_writes_show() {
         // Strict, so a state whose timing wasn't measured (an exist with no card) would trap
         // if instant mode didn't skip the timings.
         let mut m = Controller::strict();
@@ -1656,23 +1669,32 @@ mod tests {
         assert_eq!(m.create_file(0, 0, name, 1), 0);
         assert_eq!(m.take_cost(), 0);
         assert!(m.write_file(5, 0, name, 0, &[1; BLOCK]));
-        assert_eq!(m.busy_until(5), None, "done at once");
         assert_eq!(
-            m.sync(5, false),
+            m.busy_until(5),
+            Some(5 + INSTANT_WRITE_VBLANKS),
+            "shown for a second"
+        );
+        assert_eq!(
+            m.sync(5 + INSTANT_WRITE_VBLANKS - 1, false),
+            SyncState::Busy
+        );
+        assert_eq!(
+            m.sync(5 + INSTANT_WRITE_VBLANKS, false),
             SyncState::Done {
                 cmd: MC_FUNC_WRITE_FILE,
                 result: 0
             }
         );
-        assert!(m.exist(5, 0x10));
+        let later = 5 + INSTANT_WRITE_VBLANKS;
+        assert!(m.exist(later, 0x10));
         assert_eq!(
-            m.sync(5, false),
+            m.sync(later, false),
             SyncState::Done {
                 cmd: MC_FUNC_EXIST,
                 result: MC_ERR_CARD_NOT_EXIST as u32
             }
         );
-        assert!(m.dirents(5, 0, b"*", 0, 15).unwrap().len() == 1);
+        assert!(m.dirents(later, 0, b"*", 0, 15).unwrap().len() == 1);
         assert_eq!(m.take_cost(), 0);
     }
 
