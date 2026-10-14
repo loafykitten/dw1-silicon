@@ -351,6 +351,7 @@ impl Gpu {
                 tg = to5((tg * g) >> 4, d);
                 tb = to5((tb * b) >> 4, d);
             }
+            let rejected = self.st.check_mask && self.vram[Self::idx(x, y)] & 0x8000 != 0;
             self.put(
                 x,
                 y,
@@ -361,7 +362,7 @@ impl Gpu {
                 abr,
                 c & 0x8000 != 0,
             );
-            if tail && semi && c & 0x8000 != 0 && !dith && !t.raw && abr == 2 {
+            if !rejected && tail && semi && c & 0x8000 != 0 && !dith && !t.raw && abr == 2 {
                 // [obs] The last pixel of an odd row subtracts one more from green and blue.
                 let p = &mut self.vram[Self::idx(x, y)];
                 for sh in [5, 10] {
@@ -423,6 +424,9 @@ impl Gpu {
         miny = miny.max(st.clip_y0);
         let maxx = maxx.min(st.clip_x1);
         let maxy = maxy.min(st.clip_y1);
+        if minx > maxx || miny > maxy {
+            return;
+        }
         let tl0 = top_left(v1, v2);
         let tl1 = top_left(v2, v0);
         let tl2 = top_left(v0, v1);
@@ -457,6 +461,7 @@ impl Gpu {
         // [obs] A textured Gouraud polygon without dither takes its colour once per pair of
         // pixels, counted from the row's first pixel (the texture coordinate is per pixel).
         let pairs = gouraud && t.is_some() && !dith && !semi;
+        let need_tail = semi && !dith && t.is_some_and(|t| !t.raw) && (abr == 2 || abr == 3);
         let mut sv = [*v0, *v1, *v2];
         sv.sort_by_key(|p| (p.y, p.x));
         let (tv, mv, bv) = (sv[0], sv[1], sv[2]);
@@ -496,38 +501,39 @@ impl Gpu {
                         ((da << 16) / den) * (y - ep.y) as i64
                     };
             }
-            // [obs] A semi-transparent textured polygon's last pixel of a row is blended on 8 bits
-            // when the row has an odd number of pixels (the others go two at a time).
-            let (mut xlast, mut odd) = (i32::MIN, false);
-            if semi && t.is_some() {
-                let (mut first, mut last) = (i32::MAX, i32::MIN);
-                for x in bminx..=bmaxx {
-                    let w0 = edge(v1, v2, x, y);
-                    let w1 = edge(v2, v0, x, y);
-                    let w2 = edge(v0, v1, x, y);
-                    if w0 < 0 || w1 < 0 || w2 < 0 {
-                        continue;
+            // The covered pixels of the row: each edge function is linear in x, so each gives a
+            // bound (a pixel on an edge counts only on a top or left edge).
+            let (mut first, mut last) = (bminx, bmaxx);
+            for (a, b, tl) in [(v1, v2, tl0), (v2, v0, tl1), (v0, v1, tl2)] {
+                // edge(a, b, x, y) = c * x + k
+                let c = -((b.y - a.y) as i64);
+                let k = (b.x - a.x) as i64 * (y - a.y) as i64 + (b.y - a.y) as i64 * a.x as i64;
+                let (lo, hi) = if c == 0 {
+                    if k > 0 || (k == 0 && tl) {
+                        (i64::MIN, i64::MAX)
+                    } else {
+                        (i64::MAX, i64::MIN)
                     }
-                    if (w0 == 0 && !tl0) || (w1 == 0 && !tl1) || (w2 == 0 && !tl2) {
-                        continue;
-                    }
-                    first = first.min(x);
-                    last = last.max(x);
-                }
-                xlast = last;
-                odd = last >= first && (last - first) % 2 == 0;
+                } else if c > 0 {
+                    // c * x + k >= 0 (> 0 when the edge is excluded)
+                    let n = if tl { -k } else { -k + 1 };
+                    ((n + c - 1).div_euclid(c), i64::MAX)
+                } else {
+                    // -|c| * x + k >= 0  <=>  x <= k / |c|
+                    let n = if tl { k } else { k - 1 };
+                    (i64::MIN, n.div_euclid(-c))
+                };
+                first = first.max(lo.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+                last = last.min(hi.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
             }
-            for x in minx..=maxx {
-                let tail = odd && x == xlast;
-                let w0 = edge(v1, v2, x, y);
-                let w1 = edge(v2, v0, x, y);
-                let w2 = edge(v0, v1, x, y);
-                if w0 < 0 || w1 < 0 || w2 < 0 {
-                    continue;
-                }
-                if (w0 == 0 && !tl0) || (w1 == 0 && !tl1) || (w2 == 0 && !tl2) {
-                    continue;
-                }
+            if first > last {
+                continue;
+            }
+            // [obs] A semi-transparent modulated texture's last pixel of a row is blended
+            // differently when the row has an odd number of pixels (the others go two at a time).
+            let odd = need_tail && (last - first) % 2 == 0;
+            for x in first.max(minx)..=last.min(maxx) {
+                let tail = odd && x == last;
                 let mut val = [0i32; 5];
                 for &i in &used {
                     let xi = if i < 3 && pairs {
@@ -1071,5 +1077,62 @@ mod tests {
         gpu.set_display_enable(true);
         let mut out = vec![0u32; 640 * 480];
         assert!(gpu.read_display(&mut out).is_some());
+    }
+
+    /// A modulated, subtractive, semi-transparent textured triangle with E6 mask checking on must
+    /// leave masked pixels alone, including the last pixel of its odd rows (found in review).
+    #[test]
+    fn mask_checking_also_protects_odd_row_tails() {
+        let mut g = Gpu::new();
+        // 15-bit texture page 0 with one texel 0x8421 (semi-transparent)
+        for i in 0..64 * 8 {
+            g.vram_mut()[i % 64 + (i / 64) * VRAM_W] = 0x8421;
+        }
+        for y in 8..16 {
+            for x in 8..16 {
+                g.vram_mut()[y * VRAM_W + x] = 0xFFFF;
+            }
+        }
+        g.gp0(&[0xE600_0002]); // check mask
+        let tpage = (2 << 7) | (2 << 5); // 15-bit, subtract
+        g.gp0(&[
+            0x2680_8080,
+            (10 << 16) | 10,
+            0,
+            (10 << 16) | 13,
+            tpage << 16,
+            (13 << 16) | 10,
+            0,
+        ]);
+        for y in 8..16 {
+            for x in 8..16 {
+                assert_eq!(g.vram()[y * VRAM_W + x], 0xFFFF, "({x}, {y})");
+            }
+        }
+    }
+
+    /// Triangles entirely outside the draw area cost next to nothing (a bounding-box scan per
+    /// row used to make a semi-transparent textured one 100 times slower).
+    #[test]
+    fn clipped_away_triangles_are_cheap() {
+        let mut g = Gpu::new();
+        g.gp0(&[
+            0xE300_0000,
+            0xE400_0000 | (239 << 10) | 319,
+            0xE100_0000 | (2 << 5),
+        ]);
+        let t = std::time::Instant::now();
+        for _ in 0..2000 {
+            g.gp0(&[
+                0x2680_8080,
+                (400 << 16) | 400,
+                0,
+                (400 << 16) | 719,
+                0x0040_0000,
+                (639 << 16) | 400,
+                0,
+            ]);
+        }
+        assert!(t.elapsed().as_millis() < 500, "{:?}", t.elapsed());
     }
 }
