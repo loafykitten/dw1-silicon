@@ -85,6 +85,14 @@ unsafe fn link_in(slot: *mut u32, pk: *mut u32, len: u32) {
     }
 }
 
+/// Reads a caller-built argument struct. The game builds these on its stack or in globals and may
+/// leave fields it doesn't care about unset; a volatile read keeps the compiler from treating
+/// those bytes as uninitialised-and-therefore-anything (they only matter if a field the checks
+/// below look at is garbage, and then the checks stop the program).
+unsafe fn read_arg<T: Copy>(p: *const T) -> T {
+    unsafe { std::ptr::read_volatile(p) }
+}
+
 /// `GsSortBoxFill(bp, ot, pri)`: a filled rectangle at `(x, y)`, `w` by `h`, in the colour
 /// `(r, g, b)`, drawn at priority `pri` [doc].
 ///
@@ -99,7 +107,7 @@ unsafe fn link_in(slot: *mut u32, pk: *mut u32, len: u32) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GsSortBoxFill(bp: *const GsBoxf, ot: *mut GsOt, pri: u16) {
     unsafe {
-        let b = *bp;
+        let b = read_arg(bp);
         if b.attribute & !ATTR_ALPHA_ON != 0 {
             unimplemented("GsSortBoxFill with an unobserved attribute bit (not GsALON)");
         }
@@ -125,7 +133,8 @@ pub unsafe extern "C" fn GsSortBoxFill(bp: *const GsBoxf, ot: *mut GsOt, pri: u1
 /// caller, usually on its stack) in the table at `pri`. libgs copies it to the work area because
 /// the caller's copy won't outlive the call [doc; obs].
 ///
-/// [obs] The copy is the tag's length in words after the tag, byte for byte; the caller's link
+/// [obs] The copy is the tag's length in words after the tag, byte for byte (but for the
+/// GPU-ignored pad halfwords, zeroed); the caller's link
 /// is ignored and the copy's tag holds the length and the table's old link. Only `POLY_FT4`
 /// (nine words, command 0x2E: semi-transparent) has been captured; other lengths follow the
 /// same rule by construction but are stopped until seen.
@@ -136,16 +145,25 @@ pub unsafe extern "C" fn GsSortBoxFill(bp: *const GsBoxf, ot: *mut GsOt, pri: u1
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GsSortPoly(pp: *const u32, ot: *mut GsOt, pri: u16) {
     unsafe {
-        let len = pp.read() >> 24;
+        // Only the length byte of the tag is read typed: the game's `SetPolyFT4` writes just the
+        // length and command bytes, so the link bytes and the primitive's pad halfwords can be
+        // uninitialised stack. The payload is copied as bytes.
+        let len = pp.cast::<u8>().add(3).read();
         if len != 9 {
             unimplemented("GsSortPoly with a primitive other than POLY_FT4 (unobserved)");
         }
         let slot = entry("GsSortPoly", ot, pri);
         let pk = GsGetWorkBase().cast::<u32>();
-        for i in 1..=len as usize {
-            pk.add(i).write(pp.add(i).read());
-        }
-        link_in(slot, pk, len);
+        std::ptr::copy_nonoverlapping(
+            pp.cast::<u8>().add(4),
+            pk.cast::<u8>().add(4),
+            4 * len as usize,
+        );
+        // POLY_FT4's two pad halfwords (the high halves of words 7 and 9) are ignored by the GPU;
+        // zeroed so the packet holds no uninitialised bytes.
+        pk.cast::<u16>().add(2 * 7 + 1).write(0);
+        pk.cast::<u16>().add(2 * 9 + 1).write(0);
+        link_in(slot, pk, len as u32);
         GsSetWorkBase(pk.add(1 + len as usize).cast());
     }
 }
@@ -177,7 +195,7 @@ pub unsafe extern "C" fn GsSortPoly(pp: *const u32, ot: *mut GsOt, pri: u16) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn GsSortSprite(sp: *const GsSprite, ot: *mut GsOt, pri: u16) {
     unsafe {
-        let s = *sp;
+        let s = read_arg(sp);
         if s.attribute != 0 {
             unimplemented("GsSortSprite with an unobserved attribute (blend, colour mode, ...)");
         }
