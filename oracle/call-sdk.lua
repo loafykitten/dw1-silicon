@@ -21,6 +21,8 @@
 -- Output (results.txt), one line per call: "<n> v0=<hex> [<addr>=<hex bytes>]... [gte=...]".
 -- A call that faults the CPU (the SDK's trapping `add`s, on an overflow) is recorded as
 -- "<n> v0=EXC<cause code>" with nothing else, and the run goes on.
+-- Env: DW1_TIMES=1 adds "vb=<start>+<elapsed> cyc=<cycles>" (emulator VBlank numbers; CPU cycles, 564,398 per VBlank) to each result line, to
+-- time blocking calls (libmcrd).
 -- Env: DW1_DIFF=1 adds "diff=<addr>:<hex>,..." to each result line: the RAM ranges (merged within
 -- 16 bytes, at most 48, each at most 64 bytes shown) the call changed outside the scratch buffer
 -- and the stack, with their new bytes. For finding which globals a function touches; interrupt
@@ -125,6 +127,7 @@ local regs = PCSX.getRegisters()
 local callSR = 0
 local saved, current, results, skipNext = nil, 0, {}, false
 local vblank = 0
+local TIMES = os.getenv('DW1_TIMES') == '1'
 
 local DIFF = os.getenv('DW1_DIFF') == '1'
 local snap = DIFF and ffi.new('uint8_t[?]', 0x200000) or nil
@@ -153,6 +156,7 @@ local function startCall(i)
     r.ra = TRIGGER
     callSR = regs.CP0.r[12]
     if DIFF then ffi.copy(snap, mem, 0x200000) end
+    c.vb0, c.cy0 = vblank, PCSX.getCPUCycles()
     regs.pc = c.fn
 end
 
@@ -163,6 +167,7 @@ end
 local function finishCall(i, excCode)
     local c = calls[i]
     local parts = { string.format('%d v0=%08x', i, regs.GPR.n.v0) }
+    if TIMES then parts[#parts + 1] = string.format('vb=%d+%d cyc=%d', c.vb0, vblank - c.vb0, tonumber(PCSX.getCPUCycles() - c.cy0)) end
     if excCode then
         parts = { string.format('%d v0=EXC%d', i, excCode) }
         results[#results + 1] = table.concat(parts, ' ')
