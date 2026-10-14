@@ -3,6 +3,16 @@
 //! all of VRAM, every VRAM read-back and the display read-out must match bit for bit. A
 //! mismatch is shrunk to a minimal op list and printed.
 //!
+//! The model no longer follows the C everywhere: it was fitted to PCSX-Redux's software
+//! renderer (`tests/gpu_oracle.rs` in `crates/backend`), which rounds interpolated colours and
+//! texture coordinates instead of truncating them, steps them from the left edge of each row,
+//! draws a quad's second triangle first, and dithers only Gouraud polygons (and, when it is
+//! on, ignores the raw flag of a textured one). So the polygons generated here give every
+//! vertex the same colour and the same texture coordinate (nothing to interpolate, the two
+//! agree), a quad is sent as its two triangles in the model's order (they can read each other's
+//! pixels as texture), and the dither bit of E1 stays off. Coverage, blending, masking, texture lookup,
+//! rectangles, lines and transfers are still compared bit for bit.
+//!
 //! Case count per test: env `GPU_DIFF_CASES` (default 2500).
 
 /// Shows up as ignored (not passed) in a checkout without `ref/DW2-PC`.
@@ -217,41 +227,48 @@ mod diff {
                     pts[1] = pts[0]; // degenerate
                 }
             }
+            // One texture coordinate and one colour for every vertex (see the header).
             let mut uvs = [(0i32, 0i32); 4];
             if tex {
-                if axis && self.r.pct(70) {
-                    let (u0, v0) = (self.r.range(0, 255), self.r.range(0, 255));
-                    let (du, dv) = (self.r.range(0, 120), self.r.range(0, 120));
-                    uvs = [(u0, v0), (u0 + du, v0), (u0, v0 + dv), (u0 + du, v0 + dv)];
-                    for uv in &mut uvs {
-                        *uv = (uv.0.min(255), uv.1.min(255));
-                    }
-                } else {
-                    for uv in &mut uvs {
-                        *uv = (self.r.range(0, 255), self.r.range(0, 255));
-                    }
-                }
+                uvs = [(self.r.range(0, 255), self.r.range(0, 255)); 4];
             }
             let clut = self.r.u32() & 0xFFFF;
             let tpage = self.r.u32() & 0xFFFF;
-            let mut w = Vec::new();
+            let col = self.colour();
+            let mut vwords = [0u32; 4];
+            let mut spare = [0u32; 4];
             for k in 0..nv {
-                let col = self.colour();
-                if k == 0 {
-                    w.push((op << 24) | col);
-                } else if gouraud {
-                    w.push(col);
-                }
-                w.push(self.vword(pts[k].0, pts[k].1));
-                if tex {
-                    let hi = match k {
-                        0 => clut,
-                        1 => tpage,
-                        _ => self.r.u32() & 0xFFFF,
-                    };
-                    w.push((hi << 16) | ((uvs[k].1 as u32) << 8) | uvs[k].0 as u32);
-                }
+                vwords[k] = self.vword(pts[k].0, pts[k].1);
+                spare[k] = self.r.u32() & 0xFFFF;
             }
+            // A triangle from vertices `ix`; the first carries the CLUT, the second the page.
+            let emit = |op: u32, ix: [usize; 3]| {
+                let mut w = Vec::new();
+                for (j, &k) in ix.iter().enumerate() {
+                    if j == 0 {
+                        w.push((op << 24) | col);
+                    } else if gouraud {
+                        w.push(col);
+                    }
+                    w.push(vwords[k]);
+                    if tex {
+                        let hi = [clut, tpage, spare[k]][j];
+                        w.push((hi << 16) | ((uvs[k].1 as u32) << 8) | uvs[k].0 as u32);
+                    }
+                }
+                w
+            };
+            // A quad goes to both sides as the two triangles the model draws, in its order
+            // (the second one first): where they overlap, a pixel can be read as texture by the
+            // other, so the order shows. (A quad of the C is the other order; the oracle test
+            // covers quads.)
+            let w = if quad {
+                let mut w = emit(op & !8, [1, 2, 3]);
+                w.extend(emit(op & !8, [0, 1, 2]));
+                w
+            } else {
+                emit(op, [0, 1, 2])
+            };
             self.count(&format!(
                 "poly {} {} {}",
                 if quad { "quad" } else { "tri" },
@@ -353,11 +370,9 @@ mod diff {
         fn state_of(&mut self, which: u32) -> Vec<u32> {
             let w = match which {
                 1 => {
-                    let mut v = self.r.u32() & 0x3FFF;
-                    if self.mix == Mix::Blend && self.r.pct(50) {
-                        v |= 0x200;
-                    }
-                    v
+                    // Bit 9 (dither) stays off: the model dithers differently from the C (see
+                    // the header).
+                    self.r.u32() & 0x3DFF
                 }
                 2 => {
                     if self.r.pct(25) {
