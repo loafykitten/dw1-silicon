@@ -74,6 +74,18 @@ versions 1 and 2 now (its C rejects 3).
 - OP1 reaches frame 3,637 (`MOV_MOVIES[0].frameCount`) about 5,640 VBlanks after the read
   starts; the file is longer than that.
 
+## Pictures against PCSX-Redux (2026-10-13)
+
+Movie 1 (the new-game movie, which the route plays in full) from Redux at VBlanks 5750-6590,
+every 30, against `DW1_MOVIE=1` natively, each Redux frame matched to the closest native frame:
+every one pairs with the native frame 5,690 VBlanks earlier (the boot before the movie, which
+natively takes no time), so frames come out in the same order and cadence. The pixels are close
+but not identical: about 50,000 of 76,800 differ in 24-bit colour, by at most 3-4 levels of 255
+in a channel (about 10,000 at 15-bit depth). That is the IDCT and colour conversion rounding:
+`backend::mdec` (from DW2-PC) and Redux's MDEC model round differently, and neither is known to
+be the hardware's. Not chased now: it can't be seen, and matching Redux's rounding wouldn't
+make it hardware-exact. Revisit with hardware captures if they ever exist.
+
 ## Tests
 
 `psyq/src/stream.rs` (assembly, arrival times, ring, loss and backloc), `libpress.rs` (slices,
