@@ -10,7 +10,9 @@ and open questions.
   battles, training and the Item Keeper certified (nine replays, `tools/replay-check.sh`), the
   rest waits on fixture saves from Ember; Phase 6 (sound) is in: effects, music sequencer,
   reverb, movie XA audio, played in the window, matched against the emulator on four replays
-  (`tools/sound-check.sh`), waiting for Ember's listen. Public repo `loafykitten/dw1-silicon`
+  (`tools/sound-check.sh`), waiting for Ember's listen; Phase 7 (saving) has the window build
+  keeping its cards safely in Application Support, byte-identical to the emulator's on every
+  replay. Public repo `loafykitten/dw1-silicon`
   (branch `phase0`); decomp fork branch `dw1-native` pushed. Direction: hybrid (decomp C game +
   Rust for everything new), full Rust as the endgame. Sony's SDK is reimplemented clean (never
   translated from disassembly). PLAN.md's "Where things stand" is the handoff, including how to

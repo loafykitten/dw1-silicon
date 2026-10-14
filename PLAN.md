@@ -9,10 +9,14 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 - **Phase 7 (saving) has started** (`docs/phase7-plan.md`): after all nine replays the port's
   memory cards are byte-identical to the emulator's (`DW1_CARD_DUMP=1`), and the window build
-  now keeps its cards in `~/Library/Application Support/dw1-silicon` (atomic writes, a `.bak` of
-  the old file; `dw1-mac` seeds card 1 from Ember's save the first time, `--fresh` keeps
-  nothing). Left: a recorded in-game save (the save machine) and Ember's one-save-slot design
-  (Open questions).
+  now keeps its cards in `~/Library/Application Support/dw1-silicon` (atomic, durable writes, a
+  `.bak` of the old file, a lock so two copies can't share it, a failed save shown in the window
+  title; `dw1-mac` seeds card 1 from Ember's save the first time, `--fresh` keeps nothing).
+  Reviewed twice by gpt-6.1-sol. Left: a recorded in-game save (the save machine: where Ember
+  saves) and Ember's one-save-slot design (Open questions).
+- **Session 4 in short:** battles, training and the Item Keeper certified (Phase 5), then sound
+  (Phase 6) and saving (Phase 7) as below. Ember's open questions are at the end of this file:
+  fixture saves, does it sound right, one save slot, where to save in the game.
 - **Phase 6 (sound) is mostly done, waiting for Ember's ears** (`docs/phase6-plan.md`). The
   PS1 sound libraries now drive the SPU model with register writes on the virtual clock:
   sound effects, the music sequencer (new: `crates/psyq/src/sequencer.rs`), reverb, and the
