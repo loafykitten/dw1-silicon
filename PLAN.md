@@ -20,8 +20,14 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   save (the Battle Registration machine, Ember's tip) recorded on the emulator replays with
   identical state and byte-identical cards (`register-save`, the tenth replay). The slot list
   shows each save's place and day; the save machine no longer mentions memory cards, and the
-  "Saving data file" box stays up for a second (Ember's asks). Headless runs keep the two cards (all ten replays match); `DW1_PAD_SCRIPT` drives screens the emulator
-  can't. `dw1-mac` seeds the slots from Ember's DuckStation card the first time.
+  "Saving data file" box stays up for a second (Ember's asks). Headless runs keep the two cards
+  (all ten replays match); `DW1_PAD_SCRIPT` drives screens the emulator can't. `dw1-mac` seeds
+  the slots from Ember's DuckStation card the first time.
+- **Next session: start Phase 8** (the Mac-native renderer and extras, below): write
+  `docs/phase8-plan.md` from `docs/backend-gpu.md` and the Phase 8 section, keeping 1x with extras
+  off matching the emulator's picture. Ember is collecting fixture saves over time while playing
+  (Phase 5's remaining overlays); keep to work that doesn't need them. Battle Mode's player 2 on
+  pad 2 stays as is for now (Ember: "we'll adjust that later").
 - **Phase 6 (sound) is done:** Ember listened and says it sounds right (2026-10-14).
 - **Session 4 in short:** battles, training and the Item Keeper certified (Phase 5), then sound
   (Phase 6) and saving with save slots (Phase 7). Ember's open questions are at the end of this

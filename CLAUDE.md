@@ -12,7 +12,7 @@ and open questions.
   `tools/sound-check.sh`; Ember says it sounds right); Phase 7 (saving) done: the window build has
   15 save slots in the app's own `.dw1save` format with the memory card screens gone, converting
   to and from emulator cards, an in-game save certified against the emulator byte for byte
-  (`docs/phase7-plan.md`). Public repo `loafykitten/dw1-silicon`
+  (`docs/phase7-plan.md`). Next: Phase 8 (renderer). Public repo `loafykitten/dw1-silicon`
   (branch `phase0`); decomp fork branch `dw1-native` pushed. Direction: hybrid (decomp C game +
   Rust for everything new), full Rust as the endgame. Sony's SDK is reimplemented clean (never
   translated from disassembly). PLAN.md's "Where things stand" is the handoff, including how to
