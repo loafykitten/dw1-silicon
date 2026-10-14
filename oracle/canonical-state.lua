@@ -1,4 +1,4 @@
--- Canonical game-state dump, schema v1 (docs/canonical-state.md).
+-- Canonical game-state dump, schema v2 (docs/canonical-state.md).
 --
 -- A versioned, fixed-width, little-endian serialization of the semantic game state, read from
 -- PS1 RAM, plus a text rendering for diffs. Never a raw struct dump: padding, unused fields,
@@ -16,7 +16,7 @@
 -- the order of C.fields, arrays inline, no padding. C.layout() lists offsets.
 
 local C = {}
-C.VERSION = 1
+C.VERSION = 2
 
 local SIZE = { u8 = 1, s8 = 1, u16 = 2, s16 = 2, u32 = 4, s32 = 4 }
 local SIGNED = { s8 = true, s16 = true, s32 = true }
@@ -156,7 +156,10 @@ abs('script.state_2', 'u16', A.SCRIPT_STATE_2, 'SCRIPT_STATE_2')
 abs('script.delay_frames', 'u16', A.DELAY_FRAMES, 'DELAY_FRAMES')
 abs('script.stack_depth', 'u16', A.SCRIPT_STACK_OFFSET, 'SCRIPT_STACK_OFFSET')
 -- Script stack: 8 entries of { buffer, offset, script id, smth0, smth1 }; entries at or beyond
--- the depth are zero (they hold stale bytes), as are pointer parts that mean nothing.
+-- the depth are zero (they hold stale bytes). Within an active entry, smth0 is the type and the
+-- pusher sets only the members that mean something for it (schema v2): type 1 (call) sets the
+-- script pointer and id, type 4 (warp) sets smth1 (the section to run), type 3 sets neither;
+-- the rest are stale stack bytes, so they are written as zero.
 local STACK = A.SCRIPT_STATE + 0x25C
 local function stackEntries(field)
     return function()
@@ -166,11 +169,12 @@ local function stackEntries(field)
             local v = 0
             if i < depth then
                 local base = STACK + 8 * i
-                if field == 'buffer' then v = (normScript(rd(base, 'u32')))
-                elseif field == 'offset' then v = select(2, normScript(rd(base, 'u32')))
-                elseif field == 'id' then v = rd(base + 4, 'u16')
-                elseif field == 'smth0' then v = rd(base + 6, 'u8')
-                else v = rd(base + 7, 'u8') end
+                local kind = rd(base + 6, 'u8')
+                if field == 'buffer' then v = kind == 1 and (normScript(rd(base, 'u32'))) or 0
+                elseif field == 'offset' then v = kind == 1 and select(2, normScript(rd(base, 'u32'))) or 0
+                elseif field == 'id' then v = kind == 1 and rd(base + 4, 'u16') or 0
+                elseif field == 'smth0' then v = kind
+                else v = kind == 4 and rd(base + 7, 'u8') or 0 end
             end
             out[#out + 1] = v
         end

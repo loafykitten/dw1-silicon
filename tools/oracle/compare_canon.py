@@ -47,8 +47,8 @@ def check_bin(path: Path) -> str | None:
         return "bad or missing DW1CANON header"
     version = int.from_bytes(data[8:12], "little")
     body = int.from_bytes(data[12:16], "little")
-    if version != 1:
-        return f"schema version {version}, expected 1"
+    if version != 2:
+        return f"schema version {version}, expected 2"
     if body != BODY_LEN or len(data) != 16 + body:
         return f"body length {body}, file {len(data)} bytes, expected body {BODY_LEN}"
     return None
@@ -66,7 +66,7 @@ def checkpoints(directory: Path) -> dict[str, Path]:
 def parse(path: Path) -> dict[str, str]:
     """The .txt's fields; raises ValueError unless it has exactly the schema's fields."""
     lines = path.read_text().splitlines()
-    if not lines or lines[0] != "# dw1 canonical state schema v1":
+    if not lines or lines[0] != "# dw1 canonical state schema v2":
         raise ValueError("missing or wrong schema header line")
     fields = {}
     for line in lines[1:]:
