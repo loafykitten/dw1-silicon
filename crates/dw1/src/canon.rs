@@ -1,4 +1,4 @@
-//! The canonical game-state record (schema v1, `docs/canonical-state.md`), collected from the
+//! The canonical game-state record (schema v2, `docs/canonical-state.md`), collected from the
 //! native game's globals and encoded byte for byte like `oracle/canonical-state.lua`, so the
 //! port's state at a checkpoint can be compared with the emulator's.
 //!
@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 
 use decomp_c::bindings as c;
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAGIC: &[u8; 8] = b"DW1CANON";
 pub const HEADER_LEN: usize = 16;
 
@@ -299,7 +299,7 @@ impl Record {
     }
 }
 
-/// Body length in bytes (818 for schema v1).
+/// Body length in bytes (818 for schema v2).
 #[cfg(test)]
 pub fn body_len() -> usize {
     FIELDS.iter().map(|f| f.ty.size() * f.count).sum()
@@ -479,28 +479,34 @@ pub fn collect() -> Record {
             unsafe { (&raw const (*entry($i)).$m).read_volatile() }
         };
     }
-    let part = |f: &dyn Fn(usize) -> i64| -> Vec<i64> {
-        (0..8).map(|i| if i < depth { f(i) } else { 0 }).collect()
+    // Schema v2: within an active entry smth[0] is the type; type 1 (call) sets the pointer and
+    // id, type 4 (warp) sets smth[1], type 3 sets neither. The rest is stale: zero.
+    let part = |only: Option<i64>, f: &dyn Fn(usize) -> i64| -> Vec<i64> {
+        (0..8)
+            .map(|i| {
+                let kind = i64::from(member!(i, smth)[0]);
+                if i < depth && only.is_none_or(|k| k == kind) {
+                    f(i)
+                } else {
+                    0
+                }
+            })
+            .collect()
     };
-    b.many(
-        "script.stack_buffer",
-        part(&|i| norm(member!(i, scriptPtr)).0),
-    );
-    b.many(
-        "script.stack_offset",
-        part(&|i| norm(member!(i, scriptPtr)).1),
-    );
+    let ptr = |i: usize| norm(member!(i, scriptPtr));
+    b.many("script.stack_buffer", part(Some(1), &|i| ptr(i).0));
+    b.many("script.stack_offset", part(Some(1), &|i| ptr(i).1));
     b.many(
         "script.stack_script_id",
-        part(&|i| i64::from(member!(i, scriptId))),
+        part(Some(1), &|i| i64::from(member!(i, scriptId))),
     );
     b.many(
         "script.stack_smth0",
-        part(&|i| i64::from(member!(i, smth)[0])),
+        part(None, &|i| i64::from(member!(i, smth)[0])),
     );
     b.many(
         "script.stack_smth1",
-        part(&|i| i64::from(member!(i, smth)[1])),
+        part(Some(4), &|i| i64::from(member!(i, smth)[1])),
     );
     let state_bytes = |a: *const u8, n: usize| -> Vec<i64> {
         (0..n)
@@ -678,7 +684,7 @@ mod tests {
         let bytes = collect().encode();
         assert_eq!(bytes.len(), 834);
         assert_eq!(&bytes[..8], b"DW1CANON");
-        assert_eq!(&bytes[8..16], &[1, 0, 0, 0, 0x32, 3, 0, 0]);
+        assert_eq!(&bytes[8..16], &[2, 0, 0, 0, 0x32, 3, 0, 0]);
     }
 
     fn sample() -> Record {
@@ -719,7 +725,7 @@ mod tests {
         bad[0] = b'X';
         assert!(Record::decode(&bad).is_err());
         let mut bad = bytes;
-        bad[8] = 2;
+        bad[8] = 3;
         assert!(Record::decode(&bad).unwrap_err().contains("version"));
     }
 
@@ -734,7 +740,7 @@ mod tests {
         rec.values[at("tamer.pos")] = vec![-1, 2, -2735];
         rec.values[at("mode.main_state")] = vec![-1];
         let text = rec.render();
-        assert!(text.starts_with("# dw1 canonical state schema v1\n"));
+        assert!(text.starts_with("# dw1 canonical state schema v2\n"));
         assert!(text.contains("\nrng.custom_val2 = 0x0013cc25\n"));
         assert!(text.contains("\npartner.learned_moves = 0x00000004 0x00000000\n"));
         assert!(text.contains("\npartner.moves = 46 255 255 53\n"));
@@ -761,7 +767,7 @@ mod tests {
     #[test]
     fn emulator_records_round_trip_when_present() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../captures/oracle-runs/s08-replay/record");
+            .join("../../captures/oracle-runs/s08-replay/v2");
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return;
         };

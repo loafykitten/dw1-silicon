@@ -1,4 +1,4 @@
-# Canonical state schema v1
+# Canonical state schema v2
 
 2026-10-13. `oracle/canonical-state.lua` serializes the game's semantic state from PS1 RAM into a
 versioned, fixed-width, little-endian binary (834 bytes) and a text rendering for diffs. The
@@ -13,7 +13,7 @@ frame of the new-game route (below). No game data is in this document.
 
 ## File format
 
-`"DW1CANON"` (8 bytes), u32 schema version (1), u32 body length (818), then every field in the
+`"DW1CANON"` (8 bytes), u32 schema version (2), u32 body length (818), then every field in the
 table order, arrays inline, no padding, no alignment. Signed types are two's complement. The
 `.txt` rendering has one `name = value` line per field (arrays space-separated; byte arrays and
 RNG words in hex). Any change to the field list or encoding bumps the version.
@@ -27,7 +27,13 @@ RNG words in hex). Any change to the field list or encoding bumps the version.
   maphead SCN buffer, 2 the cached map SCN buffer, 3 anywhere else) plus a byte offset from that
   buffer's base (`MAPHEAD_SCRIPT_PTR`, `MAP_SCRIPT_PTR`); kind 3 and null have offset 0.
 - **Script stack entries at or beyond the depth** (`SCRIPT_STACK_OFFSET`) are stale bytes and are
-  written as zero.
+  written as zero. **Within an active entry, only the members its type sets are recorded** (v2):
+  `smth[0]` is the type. Every pusher in `script_interp.c` sets: type 1 (call: `JUMP_AND_LINK`,
+  `JUMP_TO_FILE_AND_LINK`, in both script interpreters) the script pointer, script id and `smth[0]`; type 4
+  (`WARP_TO`, `TELEPORT`, `SECTION_ON_EXIT` and a battle-outcome return) `smth[0]` and `smth[1]` only (the section to run, 0xFF for the maphead); type 3 (opcode 0xFB,
+  map reload) `smth[0]` only. So buffer, offset and script id are recorded only when `smth[0] == 1`,
+  and `smth1` only when `smth[0] == 4`; everything else is zero (it is stale stack memory that
+  differs between the PS1 and the native build).
 - **Layout was verified from the code:** position stride 0x88, location +0x78, yaw +0x72 (the
   `initializeDigimonObject` and `setTamerDirection` assembly); `triggers` +0xF5, `pstats` +0x159 and
   the stack at +0x25C inside `ScriptState` (the `getTriggerOffset`, `readPStat` and
@@ -44,6 +50,13 @@ RNG words in hex). Any change to the field list or encoding bumps the version.
 - RNGs: `custom_val1/2` are the game's `customRandom` states (`s = s * 0x41C650AD + 0x3039`,
   VAL2 starts at 0x0013CC25, VAL1 at 0); `bios_rand_state` is the BIOS `rand()` state at RAM
   0x9010 (`x = x * 0x41C64E6D + 0x3039`, see `docs/s08-oracle.md`).
+
+## v2 changes
+
+v1 recorded stale members of active script-stack entries (a warp or map-reload entry's pointer
+and id, a call's `smth[1]`), which differ between PS1 and native memory. v2 zeroes them as above;
+the version is 2 and nothing else changed (same 834 bytes and field order). The v1 and v2
+records of the new-game route differ only where such an entry was pending at a checkpoint.
 
 ## Exclusions
 
