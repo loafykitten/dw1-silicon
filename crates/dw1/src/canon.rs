@@ -465,18 +465,51 @@ pub fn collect() -> Record {
     b.one("script.delay_frames", g!(DELAY_FRAMES));
     let depth = usize::from(g!(SCRIPT_STACK_OFFSET));
     b.one("script.stack_depth", depth as i64);
-    // Entries at or beyond the depth hold stale bytes: zero.
-    let ss = g!(SCRIPT_STATE);
-    let part = |f: &dyn Fn(&c::StackEntry) -> i64| -> Vec<i64> {
-        (0..8)
-            .map(|i| if i < depth { f(&ss.stack[i]) } else { 0 })
+    // Entries at or beyond the depth hold stale bytes: zero, and never read. An active entry
+    // is read member by member through raw pointers: pushScriptStack copies whole entries
+    // whose members the pusher may not have set (warp entries set only smth[0..1]).
+    let depth = depth.min(8);
+    let entry = |i: usize| -> *const c::StackEntry {
+        (unsafe { &raw const SCRIPT_STATE.stack })
+            .cast::<c::StackEntry>()
+            .wrapping_add(i)
+    };
+    macro_rules! member {
+        ($i:expr, $m:ident) => {
+            unsafe { (&raw const (*entry($i)).$m).read_volatile() }
+        };
+    }
+    let part = |f: &dyn Fn(usize) -> i64| -> Vec<i64> {
+        (0..8).map(|i| if i < depth { f(i) } else { 0 }).collect()
+    };
+    b.many(
+        "script.stack_buffer",
+        part(&|i| norm(member!(i, scriptPtr)).0),
+    );
+    b.many(
+        "script.stack_offset",
+        part(&|i| norm(member!(i, scriptPtr)).1),
+    );
+    b.many(
+        "script.stack_script_id",
+        part(&|i| i64::from(member!(i, scriptId))),
+    );
+    b.many(
+        "script.stack_smth0",
+        part(&|i| i64::from(member!(i, smth)[0])),
+    );
+    b.many(
+        "script.stack_smth1",
+        part(&|i| i64::from(member!(i, smth)[1])),
+    );
+    let state_bytes = |a: *const u8, n: usize| -> Vec<i64> {
+        (0..n)
+            .map(|k| i64::from(unsafe { a.add(k).read_volatile() }))
             .collect()
     };
-    b.many("script.stack_buffer", part(&|e| norm(e.scriptPtr).0));
-    b.many("script.stack_offset", part(&|e| norm(e.scriptPtr).1));
-    b.many("script.stack_script_id", part(&|e| i64::from(e.scriptId)));
-    b.many("script.stack_smth0", part(&|e| i64::from(e.smth[0])));
-    b.many("script.stack_smth1", part(&|e| i64::from(e.smth[1])));
+    let cards = state_bytes((unsafe { &raw const SCRIPT_STATE.cards }).cast(), 33);
+    let triggers = state_bytes((unsafe { &raw const SCRIPT_STATE.triggers }).cast(), 100);
+    let pstats = state_bytes((unsafe { &raw const SCRIPT_STATE.pstats }).cast(), 256);
 
     b.one("rng.custom_val1", g!(decomp_c::CUSTOM_RNG_VAL1));
     b.one("rng.custom_val2", g!(decomp_c::CUSTOM_RNG_VAL2));
@@ -490,7 +523,7 @@ pub fn collect() -> Record {
     b.one("clock.last_handled_frame", g!(LAST_HANDLED_FRAME));
     b.one("clock.subframe_count", g!(SUBFRAME_COUNT));
     b.one("clock.is_gametime_running", g!(IS_GAMETIME_RUNNING));
-    b.one("clock.time_speed", ss.pstats[0]);
+    b.one("clock.time_speed", pstats[0]);
     b.one("clock.playtime_frames", g!(PLAYTIME_FRAMES));
     b.one("clock.playtime_minutes", g!(PLAYTIME_MINUTES));
     b.one("clock.playtime_hours", g!(PLAYTIME_HOURS));
@@ -574,9 +607,9 @@ pub fn collect() -> Record {
     b.many("inventory.item_ids", bytes(&inv.types.array));
     b.many("inventory.counts", bytes(&inv.amounts.array));
 
-    b.many("progress.cards", bytes(&ss.cards));
-    b.many("progress.triggers", bytes(&ss.triggers));
-    b.many("progress.pstats", bytes(&ss.pstats));
+    b.many("progress.cards", cards);
+    b.many("progress.triggers", triggers);
+    b.many("progress.pstats", pstats);
     b.one("progress.merit", g!(MERIT));
     b.one("progress.battles_started", g!(BATTLES_STARTED));
     b.one("progress.battles_fled", g!(BATTLES_FLED));

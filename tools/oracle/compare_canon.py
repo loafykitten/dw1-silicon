@@ -8,14 +8,50 @@ pair is identical, and (unless --allow-unpaired) no checkpoint on either side is
 
 The native run usually stops early (an unimplemented SDK call), so it has fewer checkpoints
 than the oracle; pass --allow-unpaired to compare just the ones both have. --also-bin checks
-that each pair's .bin files are byte-identical too.
+that each pair's .bin files are byte-identical too (always checked now). Every record must be
+well formed: the .txt has the schema's header line and exactly its fields and counts (from
+docs/canonical-state.md), the .bin a valid DW1CANON header; anything else counts as a difference.
 """
+from __future__ import annotations
+
 import argparse
 import re
 import sys
 from pathlib import Path
 
 NAME = re.compile(r"^ckpt_(\d{4})_(.+)\.txt$")
+SIZES = {"u8": 1, "s8": 1, "u16": 2, "s16": 2, "u32": 4, "s32": 4}
+DOC = Path(__file__).resolve().parents[2] / "docs" / "canonical-state.md"
+
+
+def schema() -> list[tuple[str, int, int]]:
+    """(name, element size, count) of every field, from the layout table in docs/canonical-state.md."""
+    rows = []
+    for line in DOC.read_text().splitlines():
+        m = re.match(r"^\| 0x[0-9A-F]{4} \| \d+ \| `([^`]+)` \| (\w+)(?:\[(\d+)\])? \|", line)
+        if m:
+            rows.append((m.group(1), SIZES[m.group(2)], int(m.group(3) or 1)))
+    if not rows:
+        raise SystemExit(f"{DOC}: no layout table found")
+    return rows
+
+
+FIELDS = schema()
+BODY_LEN = sum(size * count for _, size, count in FIELDS)
+
+
+def check_bin(path: Path) -> str | None:
+    """Why the .bin is not a valid record, or None."""
+    data = path.read_bytes()
+    if len(data) < 16 or data[:8] != b"DW1CANON":
+        return "bad or missing DW1CANON header"
+    version = int.from_bytes(data[8:12], "little")
+    body = int.from_bytes(data[12:16], "little")
+    if version != 1:
+        return f"schema version {version}, expected 1"
+    if body != BODY_LEN or len(data) != 16 + body:
+        return f"body length {body}, file {len(data)} bytes, expected body {BODY_LEN}"
+    return None
 
 
 def checkpoints(directory: Path) -> dict[str, Path]:
@@ -28,20 +64,47 @@ def checkpoints(directory: Path) -> dict[str, Path]:
 
 
 def parse(path: Path) -> dict[str, str]:
+    """The .txt's fields; raises ValueError unless it has exactly the schema's fields."""
+    lines = path.read_text().splitlines()
+    if not lines or lines[0] != "# dw1 canonical state schema v1":
+        raise ValueError("missing or wrong schema header line")
     fields = {}
-    for line in path.read_text().splitlines():
-        if line.startswith("#") or not line.strip():
+    for line in lines[1:]:
+        if not line.strip():
             continue
         name, sep, value = line.partition(" = ")
         if not sep:
-            raise SystemExit(f"{path}: malformed line: {line!r}")
+            raise ValueError(f"malformed line: {line!r}")
+        if name in fields:
+            raise ValueError(f"duplicate field {name}")
         fields[name] = value
+    want = [n for n, _, _ in FIELDS]
+    if list(fields) != want:
+        missing = [n for n in want if n not in fields]
+        extra = [n for n in fields if n not in want]
+        raise ValueError(f"fields differ from the schema: missing {missing[:3]}, extra {extra[:3]}"
+                         if missing or extra else "fields out of order")
+    for name, _, count in FIELDS:
+        if len(fields[name].split()) != count:
+            raise ValueError(f"{name}: {len(fields[name].split())} values, expected {count}")
     return fields
 
 
 def diff_pair(native: Path, oracle: Path, also_bin: bool) -> list[str]:
-    a, b = parse(native), parse(oracle)
     out = []
+    for side, path in (("native", native), ("oracle", oracle)):
+        try:
+            parse(path)
+        except ValueError as e:
+            out.append(f"  invalid {side} {path.name}: {e}")
+        bin_path = path.with_suffix(".bin")
+        if not bin_path.exists():
+            out.append(f"  {side} {bin_path.name} is missing")
+        elif (why := check_bin(bin_path)) is not None:
+            out.append(f"  invalid {side} {bin_path.name}: {why}")
+    if out:
+        return out
+    a, b = parse(native), parse(oracle)
     for name in a.keys() | b.keys():
         if name not in a:
             out.append(f"  {name}: only in the oracle: {b[name]}")
@@ -56,7 +119,7 @@ def diff_pair(native: Path, oracle: Path, also_bin: bool) -> list[str]:
                 out.append(f"  {name}: {len(idx)} of {len(va)} differ: {shown}{more}")
             else:
                 out.append(f"  {name}: native {a[name]} oracle {b[name]}")
-    if also_bin and not out:
+    if not out:
         if native.with_suffix(".bin").read_bytes() != oracle.with_suffix(".bin").read_bytes():
             out.append("  .txt identical but .bin files differ")
     order = {n: i for i, n in enumerate(list(b) + list(a))}
@@ -68,7 +131,7 @@ def main() -> int:
     ap.add_argument("native", type=Path)
     ap.add_argument("oracle", type=Path)
     ap.add_argument("--allow-unpaired", action="store_true")
-    ap.add_argument("--also-bin", action="store_true")
+    ap.add_argument("--also-bin", action="store_true", help="(default now; kept for compatibility)")
     args = ap.parse_args()
     nat, ora = checkpoints(args.native), checkpoints(args.oracle)
     paired = sorted(nat.keys() & ora.keys())
