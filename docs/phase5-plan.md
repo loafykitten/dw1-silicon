@@ -70,6 +70,17 @@ recording up to it). So: check a new recording's milestone screenshots or final 
 exploration, and if they differ, explore again from the recording's own end (route-driven up to
 there), as `training-six` does after `training-all`.
 
+## The Item Keeper (shop menus)
+
+`oracle/replays/keeper-fixture.txt` (`DW1ROUTE_PROFILE=keeper-fixture`, Ember's Gabumon save,
+2,741 polls, to VBlank 7200): from screen 168 around the fence to the Item Keeper's door (screen
+211), Agumon's introduction, then the storage window (Keeping / In hand) open for a while with a
+few presses, closed. This is the item-menu code (`tickItemKeeperWindow`, `isItemMenuBoxBusy`)
+whose fall-through `flipTextboxPage` result was inferred from the original code (returns 2
+natively; docs/phase5-returns-audit.md). Certified (`p5-keeper-replay1`); natively 11 of 11
+checkpoints, and 116 of 116 at every 25 polls. `tools/oracle/map_triggers.py` lists a screen's
+tile triggers and warps from a RAM dump (how the door was found).
+
 ## What it took
 
 ### Oracle and tools

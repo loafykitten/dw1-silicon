@@ -64,6 +64,7 @@ local PROFILE = DW1ROUTE_PROFILE or os.getenv('DW1ROUTE_PROFILE') or 'new-game'
 local EXTRA = {
     ['file-city-walk'] = { base = 'new-game', file = '/route-file-city-walk-schedule.lua' },
     ['care-fixture'] = { base = 'continue', file = '/route-care-schedule.lua' },
+    ['keeper-fixture'] = { base = 'continue', file = '/route-keeper-schedule.lua' },
     ['battle-fixture'] = { base = 'continue-save2', file = '/route-battle-schedule.lua' },
     ['training-fixture'] = { base = 'continue-save2', file = '/route-training-schedule.lua' },
     ['training-bonus'] = { base = 'continue-save2',
