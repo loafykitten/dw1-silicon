@@ -17,6 +17,8 @@
 --   DW1_CAPTURE_MAX=<n>         most calls recorded (default 400)
 --   DW1_CAPTURE_STATES=1        also write callNNNN_in.bin / callNNNN_out.bin (DW1STATE format,
 --                               see capture-libgs.lua; 2 MiB each)
+--   DW1_CAPTURE_VRAM=0          skip the per-VBlank VRAM dumps (long windows)
+--   DW1_CAPTURE_DEREF=1         append the words at a1 and a2 after each call (MemCardSync's cmd/result)
 --   DW1_CAPTURE_STOP=<vblank>   end the run here (default: after the window and the last shot),
 --                               once every recorded call has returned
 --   DW1_CAPTURE_GRACE=<n>       VBlanks to wait for those returns before failing (default 600)
@@ -55,6 +57,7 @@ local FROM = num('DW1_CAPTURE_FROM', 2000)
 local WINDOW = num('DW1_CAPTURE_VBLANKS', 2)
 local MAX_CALLS = num('DW1_CAPTURE_MAX', 400)
 local STATES = os.getenv('DW1_CAPTURE_STATES') == '1'
+local DEREF = os.getenv('DW1_CAPTURE_DEREF') == '1'
 
 -- Function addresses from the decomp's symbol list.
 local funcs = {}
@@ -96,7 +99,7 @@ end
 
 local index = {}
 local vblank, calls, done = 0, 0, false
-local entryBps, pending, retired = {}, {}, {}
+local entryBps, pending, retired, retBps = {}, {}, {}, {}
 
 local function pendingCount()
     local n = 0
@@ -125,13 +128,37 @@ local function onEntry(fn)
             n, vblank, fn.name, r.a0, r.a1, r.a2, r.a3, r.sp, r.ra) }
         index[#index + 1] = rec
         if STATES then writeState(string.format('call%04d_in.bin', n)) end
-        -- One-shot breakpoint on the return address; these SDK calls don't recurse.
-        pending[n] = PCSX.addBreakpoint(r.ra, 'Exec', 4, fn.name .. ' return', function()
-            rec.v0 = string.format('%08x', PCSX.getRegisters().GPR.n.v0)
-            if STATES then writeState(string.format('call%04d_out.bin', n)) end
-            retired[n], pending[n] = pending[n], nil
-            return false
-        end)
+        -- A persistent breakpoint per return address (LuaJIT allows about 2,000 ffi callbacks,
+        -- so one per call would run out); it retires the newest pending call from that address.
+        pending[n] = rec
+        rec.ra, rec.a1, rec.a2 = r.ra, r.a1, r.a2
+        if not retBps[r.ra] then
+            local ra = r.ra
+            retBps[ra] = PCSX.addBreakpoint(ra, 'Exec', 4, 'return ' .. ra, function()
+                local best
+                for k, rc in pairs(pending) do
+                    if rc.ra == ra and (not best or k > best) then best = k end
+                end
+                if best then
+                    local rc = pending[best]
+                    rc.v0 = string.format('%08x', PCSX.getRegisters().GPR.n.v0)
+                    if DEREF then
+                        local words = ''
+                        for _, a in ipairs({ rc.a1, rc.a2 }) do
+                            local o = a % 0x80000000
+                            if a >= 0x80000000 and o + 4 <= 0x200000 then
+                                words = words .. string.format(' [%08x]=%08x', a,
+                                    ffi.cast('uint32_t*', ffi.cast('uint8_t*', PCSX.getMemPtr()) + o)[0])
+                            end
+                        end
+                        rc.v0 = rc.v0 .. words
+                    end
+                    if STATES then writeState(string.format('call%04d_out.bin', best)) end
+                    pending[best] = nil
+                end
+                return true
+            end)
+        end
         return true
     end
 end
@@ -149,7 +176,7 @@ KEEP_CAPTURE_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
             entryBps[#entryBps + 1] = PCSX.addBreakpoint(fn.addr, 'Exec', 4, fn.name, onEntry(fn))
         end
     end
-    if #funcs > 0 and vblank > FROM and vblank <= FROM + WINDOW then
+    if #funcs > 0 and vblank > FROM and vblank <= FROM + WINDOW and os.getenv('DW1_CAPTURE_VRAM') ~= '0' then
         local v = PCSX.GPU.getVRAM()
         DW1ROUTE_WRITE(string.format('vram_%05d.bin', vblank), ffi.string(v.data, v.size))
     end
