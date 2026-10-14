@@ -20,6 +20,11 @@
 //! path (when modulated and subtracting, green and blue lose one more), and blend mode B + F/4
 //! quarters the texel before modulating it.
 //!
+//! Lines [obs]: a line longer in x than in y runs from its left end to its right end whichever way
+//! it was given (colours stay in the order given), any other from the first point to the second;
+//! the minor coordinate is the 16.16 slope times the step plus a half, and along x the sample is
+//! taken in the middle of the pixel (about one line in five still differs by a pixel at a tie).
+//!
 //! Rasterization rules (as in the C, [obs] the same in Redux): pixel centres on integer
 //! coordinates, top and left polygon edges included, right and bottom excluded; a quad is the
 //! triangles (v0 v1 v2) and (v1 v2 v3), [obs] drawn in the other order, so where they overlap
@@ -479,7 +484,8 @@ impl Gpu {
             // The edge's x at this row in 16.16, its offset from the top vertex truncated.
             let xe =
                 ((ep.x as i64) << 16) + (((eq.x - ep.x) as i64 * (y - ep.y) as i64) << 16) / den;
-            let xs0 = (xe + 0xFFFF) >> 16;
+            // [obs] pairs count from the row's first visible pixel (after the draw area's left edge)
+            let xs0 = ((xe + 0xFFFF) >> 16).max(minx as i64);
             let mut base = [0i64; 5];
             for &i in &used {
                 let da = attr(&eq, i) - attr(&ep, i);
@@ -671,6 +677,27 @@ impl Gpu {
     /// along the longer axis, dithered when Gouraud (E1 bit 9), clipped to the draw area per
     /// pixel. A segment of 1024 or more columns or 512 or more rows is not drawn.
     fn line_seg(&mut self, a: &Vtx, b: &Vtx, gouraud: bool, semi: bool, abr: i32) {
+        // [obs] A line that is longer in x than in y is drawn from its left end to its right end,
+        // whichever way round it was given, with the colours staying in the order given (the
+        // first colour at the left end); any other line is drawn from the first point to the
+        // second.
+        let major_x = (b.x - a.x).abs() > (b.y - a.y).abs();
+        let (a, b) = if major_x && a.x > b.x {
+            (
+                &Vtx {
+                    x: b.x,
+                    y: b.y,
+                    ..*a
+                },
+                &Vtx {
+                    x: a.x,
+                    y: a.y,
+                    ..*b
+                },
+            )
+        } else {
+            (a, b)
+        };
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         let adx = dx.abs();
@@ -681,22 +708,39 @@ impl Gpu {
             return;
         }
         let st = self.st;
+        // [obs] Along the longer axis one pixel per step; the other coordinate is the line's
+        // 16.16 slope (truncated toward zero) times the step, plus a half for rounding; along x
+        // the half step is added too (the sample is taken in the middle of the pixel).
+        let (min0, dmin) = if major_x { (a.y, dy) } else { (a.x, dx) };
+        let slope = if n == 0 {
+            0
+        } else {
+            ((dmin as i64) << 16) / n as i64
+        };
         for i in 0..=n {
-            // 16.16 fixed point, rounded to the nearest pixel
-            let (x, y) = if n == 0 {
-                (a.x, a.y)
+            let mut v = ((min0 as i64) << 16) + 0x8000 + slope * i as i64;
+            if major_x {
+                v += slope >> 1;
+            }
+            let minor = (v >> 16) as i32;
+            let step = if !major_x && b.y < a.y { -i } else { i };
+            let (x, y) = if major_x {
+                (a.x + i, minor)
             } else {
-                let step = |d: i32| ((d as i64 * i as i64 * 65536 / n as i64 + 32768) >> 16) as i32;
-                (a.x + step(dx), a.y + step(dy))
+                (minor, a.y + step)
             };
             if x < st.clip_x0 || x > st.clip_x1 || y < st.clip_y0 || y > st.clip_y1 {
                 continue;
             }
             let (mut r, mut g, mut bl) = (a.r, a.g, a.b);
             if gouraud && n != 0 {
-                r = a.r + (b.r - a.r) * i / n;
-                g = a.g + (b.g - a.g) * i / n;
-                bl = a.b + (b.b - a.b) * i / n;
+                // [obs] the colour steps round down (toward minus infinity), not toward zero
+                let f = |c0: i32, c1: i32| -> i32 {
+                    c0 + ((c1 - c0) as i64 * i as i64).div_euclid(n as i64) as i32
+                };
+                r = f(a.r, b.r);
+                g = f(a.g, b.g);
+                bl = f(a.b, b.b);
             }
             let d = if dith {
                 DITHER_TBL[(y & 3) as usize][(x & 3) as usize]
