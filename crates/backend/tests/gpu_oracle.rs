@@ -6,8 +6,8 @@
 //! the test shows as ignored. Each case is replayed on a fresh model whose VRAM holds the same
 //! textures (see the generator's header), and the test rectangle must match pixel for pixel.
 //!
-//! A small residue is tolerated (see the budget at the end): rounding ties that differ by one
-//! step in long thin triangles. Set `DW1_GPU_STRICT=1` to require an exact match.
+//! A small residue is tolerated, case by case (`gpu_oracle_known.txt`): rounding ties that differ
+//! by one step in long thin triangles. Set `DW1_GPU_STRICT=1` to require an exact match.
 //!
 //! Debugging a failure: `DW1_GPU_SHOW=N` prints the first N mismatching cases with their words
 //! and the differing pixels.
@@ -75,6 +75,7 @@ mod oracle {
         let mut bad = 0;
         let mut bad_px = 0;
         let mut n = 0;
+        let mut per_case: Vec<(usize, usize)> = Vec::new();
         for (i, line) in cases.lines().enumerate() {
             let f: Vec<&str> = line.split_whitespace().collect();
             let num = |k: usize| f[k].parse::<usize>().unwrap();
@@ -102,6 +103,7 @@ mod oracle {
             if !diffs.is_empty() {
                 bad += 1;
                 bad_px += diffs.len();
+                per_case.push((i, diffs.len()));
                 if bad <= show {
                     eprintln!(
                         "case {i}: {} pixels differ; words {:x?}",
@@ -115,17 +117,71 @@ mod oracle {
             }
         }
         eprintln!("{bad} of {n} cases differ ({bad_px} pixels)");
-        // Known residue: about 1,600 pixels in a million textured and shaded ones still
-        // differ by one step at a rounding tie, in long thin triangles (the model rounds as
-        // Redux does but not in the last bit of its fixed-point steps). The budget keeps
-        // anything bigger from sneaking in; `DW1_GPU_STRICT=1` demands zero.
-        if std::env::var_os("DW1_GPU_STRICT").is_some() {
-            assert!(bad == 0, "{bad} of {n} cases differ ({bad_px} pixels)");
+        // Lines and rectangles must actually draw (an earlier version of the cases drew
+        // nothing, and passed): nearly all of them leave a pixel other than the fill.
+        let (mut prims, mut drawn) = (0, 0);
+        for (i, line) in cases.lines().enumerate() {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let prim_op = u32::from_str_radix(f[5 + 8], 16).unwrap() >> 24;
+            if (0x40..0x80).contains(&prim_op) {
+                prims += 1;
+                let blank = outs[i].chunks(2).all(|c| c == [0xFF, 0x7F]);
+                drawn += usize::from(!blank);
+            }
         }
         assert!(
-            bad <= n / 12 && bad_px <= 2_000,
-            "{bad} of {n} cases differ ({bad_px} pixels): more than the known residue"
+            prims >= 50 && drawn * 10 >= prims * 8,
+            "only {drawn} of {prims} line and rectangle cases draw anything"
         );
+        // Known residue (`gpu_oracle_known.txt`): cases that still differ, with their exact
+        // pixel counts. A rounding tie in a long thin triangle can differ by one step (the
+        // model rounds as Redux does but not in the last bit of its fixed-point steps). Any
+        // case not listed, or a listed one with more pixels, fails; fewer pixels is reported
+        // so the list gets tightened. `DW1_GPU_UPDATE=1` prints the list for the current run.
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in cases.bytes() {
+            hash = (hash ^ b as u64).wrapping_mul(0x100_0000_01b3);
+        }
+        let header = format!("cases {n} {hash:016x}");
+        if std::env::var_os("DW1_GPU_UPDATE").is_some() {
+            println!("{header}");
+            for (i, px) in &per_case {
+                println!("{i} {px}");
+            }
+            return;
+        }
+        let known_text = include_str!("gpu_oracle_known.txt");
+        let mut lines = known_text.lines();
+        assert_eq!(
+            lines.next(),
+            Some(header.as_str()),
+            "the captures are not from the current tools/oracle/gpu_requests.py (or the \
+             known list is stale): rerun it, then `DW1_GPU_UPDATE=1` for a new list"
+        );
+        let known: std::collections::BTreeMap<usize, usize> = lines
+            .map(|l| {
+                let mut it = l.split_whitespace().map(|x| x.parse::<usize>().unwrap());
+                (it.next().unwrap(), it.next().unwrap())
+            })
+            .collect();
+        let strict = std::env::var_os("DW1_GPU_STRICT").is_some();
+        let mut failures = Vec::new();
+        for (i, px) in &per_case {
+            match known.get(i) {
+                None => failures.push(format!("case {i}: {px} pixels differ (new)")),
+                Some(k) if px > k || strict => {
+                    failures.push(format!("case {i}: {px} pixels differ (known: {k})"))
+                }
+                Some(k) if px < k => eprintln!("case {i}: now {px} pixels, list says {k}"),
+                _ => {}
+            }
+        }
+        for i in known.keys() {
+            if !per_case.iter().any(|(c, _)| c == i) {
+                eprintln!("case {i} is exact now; drop it from the list");
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     /// The game's fade quad (`tools/oracle/gpu_snap_requests.py`) redrawn in Redux over the game's
