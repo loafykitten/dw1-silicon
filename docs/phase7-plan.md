@@ -17,9 +17,13 @@ replays: both cards byte-identical to the emulator's. Two of them write a card (
 fixtures and leave them as they were, on both sides.
 
 Because the bytes are the emulator's, emulator -> port -> emulator holds on these paths: a card
-the port wrote is the card the emulator would have written. Not yet covered: an in-game save
-(the save machine, script instruction 48, `tickSaveMachine`), which needs a recorded route to
-it; the write path is the same `MemCardWriteFile` with a different save in the buffer.
+the port wrote is the card the emulator would have written. An in-game save is covered too
+(added the same day, Ember's tip): `oracle/replays/register-save.txt` continues Ember's save in
+front of Jijimon's house, goes in to the Battle Registration machine, declines to register and
+answers "Do you want to save?" Yes (the save machine, `tickSaveMachine`): 11 of 11 checkpoints
+identical, and both cards byte-identical to the emulator's after the save
+(`captures/oracle-runs/p7-register-save`; the tenth replay in `tools/replay-check.sh`, which
+compares the checkpoints, not the cards).
 
 ## Keeping the cards
 
@@ -69,7 +73,13 @@ Battle Mode (each player picks a save holding registered Digimon).
   GAME, CONTINUE GAME, DELETE GAME or BATTLE: PLAYER 1/2; New Game can take a used slot after
   "Overwrite adventure?" (No first) and shows used slots as selectable; backing out goes to the
   title; Delete reloads the list; Battle Mode's player 2 picks from the same slots (on pad 2, as
-  on the PS1). The operation and error boxes lose their memory card lines ("Saving data file";
+  on the PS1). A used slot's second line, blank in the US game (its card titles have no place),
+  shows where the save was made (the loading screen's name for it) and the day ("Day N", counted
+  from the first, so the calendar's Year 2 Day 1 is Day 31, as the 300-days medal counts), laid
+  out with the font's glyph widths (`dw1_text_width`, the decomp's `font.c`): the place under the
+  player's name, the day at the right edge when it fits after the place (it doesn't after the
+  dozen longest names, such as Great Canyon Top Area); read from the slot's save when the list
+  loads. The operation and error boxes lose their memory card lines ("Saving data file";
   "Save Data / Data Error"); a partner in training "cannot be registered" without the card
   wording. Everything else (the sleep menu, the registration machine, the boxes and font) is the
   game's own. With the flag off the code is the PS1's: the nine certified replays still match.
@@ -121,10 +131,14 @@ keeper's own names count. The re-review's points, fixed too: the save directory 
 before a backup's original goes, deletions sync on retry, the parent of `saves/` is synced on
 every start, and a kept card that can't be checked stops the seed instead of being skipped.
 
-Not done: a recorded emulator replay of the in-game save itself (bedtime is about 70,000 VBlanks
-after Ember's save, past the pinned Redux's Lua limit near 32,768; the card write path is the one
-the new-game replays already check byte for byte), the slot list's second line (empty in the US
-game; it could show the day and place), multi-generation backups.
+Then (same day): the in-game save recorded on the emulator through the Battle Registration
+machine (above; bedtime was too far for the pinned Redux's Lua limit near VBlank 32,768), and the
+slot list's second line (place and day; reviewed by gpt-6.1-sol, no findings; checked with the
+longest place name and with all 15 slots full, scrolling).
+
+Not done: multi-generation backups; the save machine's own script line still says "Save Machine
+for Memory Card Battle Data" (map script text, not `main_menu.c`); saving is instant, so the
+"Saving data file" box only flashes.
 
 ## Review (gpt-6.1-sol, 2026-10-14)
 

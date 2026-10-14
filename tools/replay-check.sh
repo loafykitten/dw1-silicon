@@ -5,6 +5,7 @@
 #   tools/replay-check.sh [--debug] [NAME...]     NAME: new-game file-city-walk care-fixture
 #                                                 battle-fixture battle-twice training-fixture
 #                                                 training-bonus training-six keeper-fixture
+#                                                 register-save
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
@@ -34,7 +35,8 @@ battle-twice p5-twice-replay1 ember-save2-prefight
 training-fixture p5-trn-replay1 ember-save2-prefight
 training-bonus p5-bonus-replay1 ember-save2-prefight
 training-six p5-six-replay1 ember-save2-prefight
-keeper-fixture p5-keeper-replay1 ember-day2-gabumon'
+keeper-fixture p5-keeper-replay1 ember-day2-gabumon
+register-save p7-register-save ember-day2-gabumon'
 
 want="$*"
 echo "$table" | while read -r name oracle card; do
