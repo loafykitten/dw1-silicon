@@ -129,6 +129,9 @@ mod oracle {
             gte: None,
         };
         for w in words {
+            if w.starts_with("diff=") {
+                continue; // DW1_DIFF metadata from call-sdk.lua: RAM ranges the call changed
+            }
             if let Some(g) = w.strip_prefix("gte=") {
                 res.gte = Some(g.split(',').map(word).collect());
             } else {

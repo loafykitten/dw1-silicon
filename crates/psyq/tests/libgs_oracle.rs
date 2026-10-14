@@ -129,6 +129,9 @@ mod oracle {
             gte: None,
         };
         for w in words {
+            if w.starts_with("diff=") {
+                continue; // DW1_DIFF metadata from call-sdk.lua: RAM ranges the call changed
+            }
             if let Some(g) = w.strip_prefix("gte=") {
                 res.gte = Some(g.split(',').map(word).collect());
             } else {
@@ -209,6 +212,9 @@ mod oracle {
     struct Chain {
         /// (image address, native struct), leaf first.
         nodes: Vec<(u32, Box<GsCoordinate2>)>,
+        /// What the last node's `super` holds (0, SCREEN, or the address of something above a
+        /// current-stamp node, which the function must not look at), as a native pointer.
+        tail: usize,
     }
 
     impl Chain {
@@ -216,6 +222,7 @@ mod oracle {
         unsafe fn build(img: &mut Image, start: u32) -> Chain {
             let mut nodes: Vec<(u32, Box<GsCoordinate2>)> = vec![];
             let mut a = start;
+            let stamp = unsafe { PSDCNT };
             while a != 0 && a != 1 && nodes.len() < 40 {
                 let mut n: Box<GsCoordinate2> = unsafe { Box::new_zeroed().assume_init() };
                 n.flg = img.read_u32(a);
@@ -236,15 +243,18 @@ mod oracle {
                 n.param = (PARAM_MARK + a as usize) as *mut u8;
                 n.sub = (SUB_MARK + a as usize) as *mut GsCoordinate2;
                 let sup = img.read_u32(a + 72);
+                let cached = sup != 0 && n.flg == stamp;
                 nodes.push((a, n));
                 a = sup;
+                if cached {
+                    // The real code never looks above a current non-root node.
+                    break;
+                }
             }
-            // Link each node to the next one; the last one's super is NULL, or SCREEN (1).
-            let last_sup = if a == 1 {
-                std::ptr::without_provenance_mut::<GsCoordinate2>(1)
-            } else {
-                std::ptr::null_mut()
-            };
+            // Link each node to the next one; the last one's super is NULL, SCREEN (1), or
+            // whatever lies above a cached node.
+            let tail = a as usize;
+            let last_sup = std::ptr::without_provenance_mut::<GsCoordinate2>(tail);
             let n = nodes.len();
             for i in 0..n {
                 let next: *mut GsCoordinate2 = if i + 1 < n {
@@ -254,7 +264,7 @@ mod oracle {
                 };
                 nodes[i].1.sup = next;
             }
-            Chain { nodes }
+            Chain { nodes, tail }
         }
 
         fn leaf(&mut self) -> *mut GsCoordinate2 {
@@ -265,7 +275,14 @@ mod oracle {
 
         /// Writes flg, coord and workm back into the image.
         unsafe fn store(&mut self, img: &mut Image) {
-            for (a, n) in &mut self.nodes {
+            let ptrs: Vec<usize> = self
+                .nodes
+                .iter_mut()
+                .map(|(_, n)| &mut **n as *mut GsCoordinate2 as usize)
+                .collect();
+            for (i, (a, n)) in self.nodes.iter_mut().enumerate() {
+                let want_sup = ptrs.get(i + 1).copied().unwrap_or(self.tail);
+                assert_eq!(n.sup as usize, want_sup, "super changed");
                 assert_eq!(n.param as usize, PARAM_MARK + *a as usize, "param changed");
                 assert_eq!(n.sub as usize, SUB_MARK + *a as usize, "sub changed");
                 img.write(*a, &n.flg.to_le_bytes());
@@ -404,7 +421,12 @@ mod oracle {
                     } else {
                         chain.leaf()
                     };
+                    let want_sup = view.sup;
                     let r = GsSetView2(&*view);
+                    // GsSetView2 only reads the view.
+                    let now = std::slice::from_raw_parts((&raw const view.view).cast::<u8>(), 32);
+                    assert_eq!(now, &bytes[..], "the view matrix changed");
+                    assert_eq!(view.sup, want_sup, "the view's super changed");
                     chain.store(img);
                     r as u32
                 }
@@ -439,6 +461,14 @@ mod oracle {
         let only: Option<Vec<String>> = std::env::var("DW1_LIBGS_ONLY")
             .ok()
             .map(|v| v.split(',').map(str::to_string).collect());
+        if let Some(names) = &only {
+            for n in names {
+                assert!(
+                    reqs.lines().any(|l| l.split_whitespace().next() == Some(n)),
+                    "DW1_LIBGS_ONLY names {n}, which no request calls"
+                );
+            }
+        }
         let child: Option<usize> = std::env::var("DW1_LIBGS_CHILD")
             .ok()
             .and_then(|v| v.parse().ok());
@@ -479,6 +509,12 @@ mod oracle {
                     apply(&mut img, &rq);
                     unsafe { call(&mut img, &rq) };
                     return;
+                }
+                // The stamp the target request ran under: the latest one written before it.
+                for (a, bytes) in &rq.ins {
+                    if *a == 0x8013_6E08 {
+                        img.write(*a, bytes);
+                    }
                 }
                 continue;
             }
@@ -593,6 +629,7 @@ mod oracle {
         if child.is_some() {
             return;
         }
+        assert!(!stats.is_empty(), "no request was compared");
         assert_eq!(bad, 0, "{bad} requests differ from the real SDK");
         assert!(
             !partial,
