@@ -570,6 +570,15 @@ unrelated blocks and unknown bytes. Done when emulator → port → emulator rou
 for both slots, a failed write leaves the old card intact, and saves made in the port load
 on the emulator with equal state.
 
+**Ember (2026-10-14): replace the memory cards with a single save slot.** A Mac build has no
+console hardware to imitate, so the player should see one save (in Application Support), not
+two cards, blocks and "insert a memory card" prompts. To work out: how the game's save and
+load screens and their card checks map onto one slot (a native-only path under `DW1_NATIVE`,
+or a libmcrd that presents one always-present card with one save and no free-space or format
+prompts); importing and exporting a `.mcd` so emulator saves (like Ember's fixture) still
+move both ways; and keeping the two-card model intact for the oracle replays, which must keep
+matching the emulator. It is an addition, labelled as one like Phase 8's options.
+
 ### Phase 8: the Mac-native renderer and extras
 
 The `render` crate on wgpu/Metal: render scale, no wobble, Retina, window
