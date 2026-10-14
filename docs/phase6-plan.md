@@ -218,3 +218,24 @@ the intro movie the decoder's FIFO stays between about 750 and 2,700 frames (17-
 runs dry after the first sector (`captures/native-runs/p6-movie-audio/intro-movie.wav`, local
 only: 121 s, sound throughout but for a second of silence in the movie itself). Not compared
 with the emulator yet: the SPU capture logs registers, and the CD input isn't register traffic.
+
+### The comparison after the second review (2026-10-14)
+
+gpt-6.1-sol's second review: a song's drift allowance grew with every matched event (10%
+tempo errors could pass), the window's audio sink could outlive its stream, a log stopping
+early could pass, the audio queue limit dropped new sound and kept the stale backlog, and
+repeated poll VBlanks broke the loading-gap lookup. Fixed: a song event may now be 2 VBlanks
+off plus one per 2,000 VBlanks of song time (the song-start tick plus the emulator's lost ticks),
+on one clock for all voices; music is judged by its notes per song whatever voice each got, with
+voice-by-voice differences reported apart (they follow releases ending a moment either side of
+a tick); both logs must reach the replay's end; the window takes libspu's sink away before its
+stream closes, and clears the queue when it falls a quarter second behind.
+
+`tools/sound-check.sh` runs the four captured replays and compares them; all pass:
+
+| replay | sound effects | music notes | globals |
+|---|---|---|---|
+| battle-fixture | 371 same, 57 off by one, 5 loading gap, 36 fade steps | 937 same | 3,956 same |
+| battle-twice | 524 same, 59 off by one, 6 loading gap, 36 fade steps | 1,332 same, 118 off by one | 5,599 same |
+| training-six | 611 same, 12 off by one, 5 loading gap, 24 fade steps | 70 same, 54 off by one, 146 drifted | 11,025 same |
+| new-game | 226 same, 75 loading gap | 501 same, 629 off by one, 84 drifted | 7,126 same |

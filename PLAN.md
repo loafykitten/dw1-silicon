@@ -7,6 +7,20 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-14, session 4): start here
 
+- **Phase 6 (sound) is mostly done, waiting for Ember's ears** (`docs/phase6-plan.md`). The
+  PS1 sound libraries now drive the SPU model with register writes on the virtual clock:
+  sound effects, the music sequencer (new: `crates/psyq/src/sequencer.rs`), reverb, and the
+  movies' XA audio; the window build plays it (SDL3 audio, `DW1_MUTE=1` for silence) and
+  headless runs can write `DW1_WAV=<file>`. Every formula was measured by calling the SDK in
+  the emulator (`oracle/sdk-probe.lua`, synthetic SEQs poked into RAM) or by logging a route's
+  SPU traffic (`oracle/capture-spu.lua`); `tools/sound-check.sh` compares four replays' sound
+  with the emulator's (battle-fixture, battle-twice, training-six, new-game: all pass; music is
+  compared in song time, since the emulator's music keeps playing through loading screens that
+  take the port none). Left: Ember listens ("sounds right"), the `SsUtAutoVol` fade's exact
+  values (approximate), comparing XA audio with the emulator, MDEC movie quality. Clips to
+  listen to, local only: `captures/native-runs/p6-listen-battle/battle-replay-audio.wav`, and
+  `captures/native-runs/p6-movie-audio/intro-movie.wav`.
+
 - **Phase 5 is under way: battles match the emulator** (`docs/phase5-plan.md`). Ember made a
   fixture save in front of a wild ModokiBetamon (`captures/fixtures/ember-save2-prefight.mcd`,
   save 2 on the card; `DW1ROUTE_PROFILE=continue-save2` loads it). Two certified replays:
@@ -57,8 +71,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 - **Playable in a window (2026-10-14):** `dw1-mac` (`~/.local/bin`, Ember's launcher) builds the
   release `dw1` and opens it with Ember's save in slot 1 (`--fresh` for blank cards). A
   start-up splash (`crates/dw1/src/window/splash.rs`, window mode only, `DW1_NO_SPLASH=1`)
-  marks it as the native Rust build. Card writes stay in memory (Phase 7); no sound (Phase 6);
-  battles, training, shops and other overlays trap (Phase 5). Ember asked for **one save slot
+  marks it as the native Rust build. Card writes stay in memory (Phase 7); sound since Phase 6
+  (session 4); overlays without a certified replay may still trap (Phase 5). Ember asked for **one save slot
   instead of memory cards** for Phase 7 (noted there).
 - **Release builds replay too:** the game C is built with `-fno-inline
   -fno-optimize-sibling-calls` so the PadRead caller check names the same function at any
@@ -720,6 +734,14 @@ is what the Rust is checked against.
      last life.
   6. Any of curling (KAR), recruiting (DGET), the other gyms' training (TRN2) if you pass them.
   Whatever is convenient; the more the better, but none of it blocks the work.
+
+- **(2026-10-14) Does it sound right?** Phase 6's gate ends with your ears. Run `dw1-mac` and
+  play a while (title, File City, a battle, the intro movie from a new game), or listen to the
+  two clips in `captures/native-runs/` (named in "Where things stand"). Things worth noticing:
+  wrong notes or instruments, music too fast or slow, effects too loud or quiet against the
+  music, crackles, the battle getting harsh when a lot plays at once (the port clips at full
+  scale like the PS1 should), latency between a button and its sound. If anything's off, a
+  timestamp and what you were doing is plenty.
 
 ## Answered by Ember
 

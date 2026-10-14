@@ -45,6 +45,14 @@ def replay_polls(path):
     return vbs
 
 
+def replay_final_vblank(path):
+    for line in open(path):
+        f = line.split()
+        if len(f) == 2 and f[0] == 'final_vblank':
+            return int(f[1])
+    return 1 << 30
+
+
 def parse_voices(spec):
     lo, _, hi = spec.partition('-')
     return set(range(int(lo), int(hi or lo) + 1))
@@ -177,14 +185,18 @@ def close(a, b):
 POLLS = []
 
 
+GAP_POLLS = []
+
+
 def gaps(t):
     """The loading gaps (polls more than 2 VBlanks apart) that VBlank t lies in, its ends
     included: the port stamps a VBlank's writes after its polls, and loads in no time, so an
     event of a gap can land on either of its polls."""
-    i = bisect.bisect_left(POLLS, t)
+    p = GAP_POLLS  # the poll VBlanks without repeats (several polls can share a VBlank)
+    i = bisect.bisect_left(p, t)
     out = set()
     for g in (i, i + 1):
-        if 0 < g < len(POLLS) and POLLS[g - 1] <= t <= POLLS[g] and POLLS[g] - POLLS[g - 1] > 2:
+        if 0 < g < len(p) and p[g - 1] <= t <= p[g] and p[g] - p[g - 1] > 2:
             out.add(g)
     return out
 
@@ -199,21 +211,21 @@ def compare_lists(name, ora, nat, report, show, song=False):
     stats = defaultdict(int)
     i = j = 0
     # A song's events may drift slowly against the port's: the emulator misses a 240 Hz tick
-    # now and then while the game is busy (23 instead of 11 over 19,000 VBlanks of the training
-    # replay), so the offset is followed, a VBlank at a time (more after a long silence).
-    offset = last = 0
+    # now and then while the game is busy (23 instead of the clock's 11 over 19,000 VBlanks of
+    # the training replay, 3 VBlanks), and where the SsSeqPlay call falls between two ticks
+    # shifts a whole song by up to a tick: a song event may be off by 2 VBlanks plus one for
+    # every 2,000 VBlanks of song time.
     while i < len(ora) or j < len(nat):
         o = ora[i] if i < len(ora) else None
         n = nat[j] if j < len(nat) else None
         if o and n and o[1] == n[1]:
             drift = n[0] - o[0]
-            # The emulator's lost ticks add up to about a VBlank in 1,000 at worst.
-            allowed = 1 + (o[0] - last) // 1000
+            allowed = 2 + max(o[0], 0) // 2000
             if drift == 0:
                 stats['same'] += 1
             elif close(o[0], n[0]):
                 stats['off by one'] += 1
-            elif song and abs(drift - offset) <= allowed:
+            elif song and abs(drift) <= allowed:
                 stats['drifted'] += 1
             elif not song and same_gap(o[0], n[0]):
                 stats['same loading gap'] += 1
@@ -221,8 +233,6 @@ def compare_lists(name, ora, nat, report, show, song=False):
                 stats['late/early'] += 1
                 if len(report) < show:
                     report.append(f'{name}: {o[1]} at oracle {o[0]}, port {n[0]}')
-            if song and abs(drift - offset) <= allowed:
-                offset, last = drift, o[0]
             i, j = i + 1, j + 1
             continue
         if (not song and o and n and o[1][0] == n[1][0] == 'set' and o[1][1] in ('voll', 'volr')
@@ -272,7 +282,9 @@ def main():
     voices = parse_voices(a.voices)
     mask = sum(1 << v for v in voices)
     polls = replay_polls(a.replay)
+    final_vblank = replay_final_vblank(a.replay)
     POLLS.extend(polls)
+    GAP_POLLS.extend(sorted(set(polls)))
 
     def native_stamp(f):
         polls_done, since, raw = int(f[-2]), int(f[-1]), int(f[0])
@@ -285,12 +297,19 @@ def main():
     # Before ResetCallback (Redux VBlank 1144) the emulator's log has the BIOS's own sounds.
     ora_ev = [e for e in spu_events.events(a.oracle, stamp=oracle_stamp) if e[0][0] >= 1144]
     nat_ev = spu_events.events(a.native, stamp=native_stamp)
+    nat_polls = 0
+    for line in open(a.native):
+        f = line.split()
+        if len(f) >= 7:
+            nat_polls = max(nat_polls, int(f[-2]))
     if a.oracle_end:
         ora_ev = [e for e in ora_ev if e[0][0] < a.oracle_end - 1]
         nat_ev = [e for e in nat_ev if e[0][0] < a.oracle_end - 1]
     ora_v, ora_g = voice_streams(ora_ev, voices)
     nat_v, nat_g = voice_streams(nat_ev, voices)
     report, total, music = [], defaultdict(int), defaultdict(int)
+    voices_soft = defaultdict(int)
+    notes_o, notes_n = defaultdict(list), defaultdict(list)
     ora_stops, nat_stops = ora_v.pop('stops'), nat_v.pop('stops')
     # A song still playing when a log ends stops there.
     for stops, starts, evs in ((ora_stops, ora_v.pop('starts'), ora_ev), (nat_stops, nat_v.pop('starts'), nat_ev)):
@@ -312,9 +331,45 @@ def main():
             ora_l = [x for x in ora_l if x[0] < stop]
             nat_l = [x for x in nat_l if x[0] < stop]
             music['song tail'] += tail
-        stats = compare_lists(label, ora_l, nat_l, report, a.show, is_song)
+        stats = compare_lists(label, ora_l, nat_l, report if not is_song else [], a.show, is_song)
         for k, v in stats.items():
-            (music if is_song else total)[k] += v
+            if is_song and k in ('differ', 'only oracle', 'only port', 'late/early'):
+                # Judged below, voice by voice only as a soft count: which voice a note gets
+                # can follow a release ending a moment either side of a tick.
+                voices_soft[k] += v
+            else:
+                (music if is_song else total)[k] += v
+        if is_song:
+            for x in ora_l:
+                if x[1][0] == 'keyon':
+                    notes_o[st[1]].append(x)
+            for x in nat_l:
+                if x[1][0] == 'keyon':
+                    notes_n[st[1]].append(x)
+    # Each song's notes, whatever voice they got: the same notes at the same song time.
+    for song in sorted(set(notes_o) | set(notes_n)):
+        nat_left = sorted(notes_n[song])
+        used = [False] * len(nat_left)
+        for t, what in sorted(notes_o[song]):
+            allowed = 2 + max(t, 0) // 2000
+            hit = None
+            for k, (tn, wn) in enumerate(nat_left):
+                if not used[k] and wn == what and abs(tn - t) <= allowed:
+                    hit = k
+                    break
+            if hit is None:
+                music['notes only oracle'] += 1
+                if len(report) < a.show:
+                    report.append(f'song {song}: note only in the emulator at {t}: {what}')
+                continue
+            used[hit] = True
+            d = abs(nat_left[hit][0] - t)
+            music['notes same' if d == 0 else 'notes off by one' if d == 1 else 'notes drifted'] += 1
+        for k, u in enumerate(used):
+            if not u:
+                music['notes only port'] += 1
+                if len(report) < a.show:
+                    report.append(f'song {song}: note only in the port at {nat_left[k][0]}: {nat_left[k][1]}')
     if a.oracle_end:
         polls = [vb for vb in polls if vb < a.oracle_end - 2]
     # The reverb voice mask follows the voices keyed, and music runs on its own clock (see
@@ -325,15 +380,22 @@ def main():
         print(line)
     print('sound effects:', dict(total))
     print('music:', dict(music))
+    if voices_soft:
+        print('music voice by voice (not failures):', dict(voices_soft))
     print('globals:', dict(gst))
-    bad = sum(t['differ'] + t['only oracle'] + t['only port'] + t['late/early']
-              for t in (total, music)) + gst['differ']
+    bad = (total['differ'] + total['only oracle'] + total['only port'] + total['late/early']
+           + music['notes only oracle'] + music['notes only port'] + gst['differ'])
     # An empty or truncated capture must not pass: the logs must reach the same point of the
     # replay (the song tails above take a song still playing at a log's end as stopped there).
-    ora_last = max(e[0][0] for e in ora_ev)
-    nat_last = max(e[0][0] for e in nat_ev)
-    if abs(ora_last - nat_last) > 600:
-        print(f'the logs end apart: oracle at VBlank {ora_last}, port at {nat_last} (estimated)')
+    ora_last = 0
+    for line in open(a.oracle):
+        ora_last = max(ora_last, int(line.split(maxsplit=1)[0]))
+    want = min(a.oracle_end, final_vblank) if a.oracle_end else final_vblank
+    if ora_last < want - 5:
+        print(f'the emulator log ends at VBlank {ora_last}, before the replay\'s {want}')
+        bad += 1
+    if nat_polls < len(polls):
+        print(f'the port log ends after {nat_polls} of the replay\'s {len(polls)} polls')
         bad += 1
     if not any(e[1] == 'keyon' for e in ora_ev) or not any(e[1] == 'keyon' for e in nat_ev):
         print('no key-ons on one side: nothing compared')

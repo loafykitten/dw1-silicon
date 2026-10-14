@@ -38,8 +38,8 @@ pub const FIELD_MILLIHZ: u64 = 59_817;
 /// shorter than the PS1's); SDL resamples to the device, 5 cents flat.
 pub const AUDIO_HZ: i32 = ((psyq::libspu::CYCLES_PER_VBLANK * FIELD_MILLIHZ)
     / (psyq::libspu::CYCLES_PER_SAMPLE * 1000)) as i32;
-/// Most audio queued before new samples are dropped (a quarter second): after a stall the
-/// sound catches up instead of lagging behind the picture for good.
+/// Most audio queued before the queue is dropped (a quarter second): after a stall the sound
+/// catches up instead of lagging behind the picture for good.
 const AUDIO_MAX_QUEUED_BYTES: i32 = AUDIO_HZ * 4 / 4;
 
 /// How many fields behind the clock may fall before it resyncs instead of racing to catch up.
@@ -242,11 +242,13 @@ fn open_audio(sdl: &sdl3::Sdl) -> Option<AudioStreamOwner> {
     let sink = SinkStream(stream.raw());
     psyq::libspu::set_audio_sink(Box::new(move |samples: &[i16]| {
         let sink = &sink;
-        // SAFETY: the stream stays open as long as the window (which owns it) lives, and the
-        // window lives until the program exits.
+        // SAFETY: the window owns the stream and takes this sink away before closing it
+        // (`Drop for Window`).
         unsafe {
+            // Behind by more than the limit (a stall): drop what's queued and start again
+            // from now, rather than play stale sound late for good.
             if sdl3::sys::audio::SDL_GetAudioStreamQueued(sink.0) > AUDIO_MAX_QUEUED_BYTES {
-                return;
+                sdl3::sys::audio::SDL_ClearAudioStream(sink.0);
             }
             sdl3::sys::audio::SDL_PutAudioStreamData(
                 sink.0,
@@ -256,6 +258,14 @@ fn open_audio(sdl: &sdl3::Sdl) -> Option<AudioStreamOwner> {
         }
     }));
     Some(stream)
+}
+
+impl Drop for Window {
+    /// The audio stream goes with the window: take libspu's sink (which holds its pointer)
+    /// away first.
+    fn drop(&mut self) {
+        psyq::libspu::clear_audio_sink();
+    }
 }
 
 // SAFETY: SDL objects must stay on the main thread, and the host is only ever called from the

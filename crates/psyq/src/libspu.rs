@@ -710,6 +710,11 @@ pub fn set_audio_sink(sink: AudioSink) {
     state().sink = Some(sink);
 }
 
+/// Stops sending samples anywhere (the host's audio stream is closing).
+pub fn clear_audio_sink() {
+    state().sink = None;
+}
+
 /// Flushes the register log, if there is one (at exit).
 pub fn flush_log() {
     state().flush_log();
