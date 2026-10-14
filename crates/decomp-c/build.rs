@@ -390,6 +390,8 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("GsCOORDINATE2")
         .allowlist_type("GsIMAGE")
         .allowlist_type("GsRVIEW2")
+        .allowlist_type("GsVIEW2")
+        .allowlist_type("GsF_LIGHT")
         .allowlist_type("TMD_STRUCT")
         .allowlist_type("TMDModel")
         .allowlist_type("VabHdr")

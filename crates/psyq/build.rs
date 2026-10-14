@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     disc();
     gte_capture();
+    libgs_light_capture();
     println!("cargo::rustc-check-cfg=cfg(have_libgs_capture)");
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-env-changed=DW1_LIBGS_CAPTURE");
@@ -75,6 +76,33 @@ fn gte_capture() {
     } else {
         println!(
             "cargo::warning=libgte oracle run not found ({}): tests/libgte_oracle.rs will be ignored",
+            dir.display()
+        );
+    }
+}
+
+/// Sets `cfg(have_libgs_light_capture)` when the libgs light/view/coordinate oracle run
+/// (`tools/oracle/libgs_requests.py`'s requests, `req.txt` and `results.txt`) exists:
+/// `DW1_LIBGS_LIGHT_CAPTURE`, default `<workspace>/captures/oracle-runs/libgs-light`. Without it
+/// `tests/libgs_oracle.rs` is ignored.
+fn libgs_light_capture() {
+    println!("cargo::rustc-check-cfg=cfg(have_libgs_light_capture)");
+    println!("cargo::rerun-if-env-changed=DW1_LIBGS_LIGHT_CAPTURE");
+    let dir = match std::env::var_os("DW1_LIBGS_LIGHT_CAPTURE") {
+        Some(d) => PathBuf::from(d),
+        None => {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs/libgs-light")
+        }
+    };
+    println!(
+        "cargo::rerun-if-changed={}",
+        dir.join("results.txt").display()
+    );
+    if dir.join("req.txt").exists() && dir.join("results.txt").exists() {
+        println!("cargo::rustc-cfg=have_libgs_light_capture");
+    } else {
+        println!(
+            "cargo::warning=libgs light oracle run not found ({}): tests/libgs_oracle.rs will be ignored",
             dir.display()
         );
     }
