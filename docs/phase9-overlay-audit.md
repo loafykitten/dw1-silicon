@@ -189,6 +189,20 @@ Both form a location pointer using `posData + 0x78` bytes. Clang confirms that n
 
 **Fix direction:** reconstruct an explicit caller/state-derived value, following the missing-return fixes. Recomputing the queued technique is a possible native fix, but its equivalence should be checked against the emulator.
 
+**Measured for STD (cup stream, 2026-10-15).** The `cup` recording reaches it: the first opponent's
+ranged finisher, once its 0x50-frame charge is spent, comes back through
+`STD_tickDigimonAttackRanged` into this path. `oracle/probe-std-tech.lua` breaks at 0x8006569C (the
+`MOVE_DATA[tech]` load, `sll $v1, $s3, 4`) on a replay of the recording: one hit, VBlank 10904, the
+enemy (`$s0` 0x80155828) called from 0x80061FE0, `$s3` = 0x57, its `move` argument (the finisher's
+technique; `MOVE_DATA[0x57].unk3` is 1, so no timer is set). In the disassembly `$s3` is the
+caller's: `STD_tickDigimonAttackRanged` and `STD_tickQueuedMove`/`STD_tickConfusedState` copy their
+fourth argument (`move`, `arg3`) into it, and `STD_tickAttackHits` holds the attacker's address there.
+Natively `STD_startQueuedMove` now takes that value from each caller (`callerS3`) and uses it as
+`tech`; the `STD_tickAttackHits` call still stops (an address), as does a value outside
+`MOVE_DATA`. `cup` is identical natively at all 33 standard and 259 dense checkpoints with it.
+`VS_startFighterMove` keeps its stop: no recording reaches it (Battle Mode's finishers), so its
+callers' `$s3` is unmeasured.
+
 **12. Fishing appends native object records at insufficient alignment — class 8**
 
 - [fish/fish_model.c:31](/Users/fenn/Developer/dw1-silicon/decomp/src/fish/fish_model.c:31), `FISH_loadTMDModel`
