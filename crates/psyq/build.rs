@@ -14,6 +14,7 @@ fn main() {
     libgpu_capture();
     sprite_capture();
     sortot_capture();
+    tmd_capture();
     println!("cargo::rerun-if-changed=build.rs");
 }
 
@@ -187,6 +188,32 @@ fn sprite_capture() {
         "DW1_LIBGS_SPRITE_BTL_CAPTURE",
         "libgs-sprite-btl",
     );
+}
+
+/// The `GsSortObject4J` request runs of `tools/oracle/tmd_requests.py` (Phase 9), for
+/// `tests/libgs_tmd_oracle.rs`.
+/// `DW1_LIBGS_TMD_CAPTURES` names the root holding the runs (default
+/// `<workspace>/captures/oracle-runs`).
+fn tmd_capture() {
+    println!("cargo::rerun-if-env-changed=DW1_LIBGS_TMD_CAPTURES");
+    let root = match std::env::var_os("DW1_LIBGS_TMD_CAPTURES") {
+        Some(d) => PathBuf::from(d),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs"),
+    };
+    for set in ["fast", "div", "attr", "bits"] {
+        let cfg = format!("have_libgs_tmd_{set}_capture");
+        println!("cargo::rustc-check-cfg=cfg({cfg})");
+        let dir = root.join(format!("p9-render-s4j-{set}"));
+        println!("cargo::rerun-if-changed={}", dir.join("results.txt").display());
+        if dir.join("req.txt").exists() && dir.join("results.txt").exists() {
+            println!("cargo::rustc-cfg={cfg}");
+        } else {
+            println!(
+                "cargo::warning=libgs TMD oracle run not found ({}): its test in tests/libgs_tmd_oracle.rs will be ignored",
+                dir.display()
+            );
+        }
+    }
 }
 
 /// Sets `cfg(<cfg>)` when an `oracle/call-sdk.lua` run's `req.txt` and `results.txt` exist in

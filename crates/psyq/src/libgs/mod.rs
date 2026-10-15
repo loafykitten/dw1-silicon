@@ -6,19 +6,23 @@
 //! `p2-landing`, `p2-menu`, 2026-10-13). Rules are tagged `[doc]`, `[hdr]` or `[obs]`.
 
 mod coord;
+mod divide;
 mod light;
 mod model;
 mod sort2d;
 mod sort4j;
 mod tim;
+mod tmd;
 mod view;
 
 pub use coord::*;
+pub use divide::*;
 pub use light::*;
 pub use model::*;
 pub use sort2d::*;
 pub use sort4j::*;
 pub use tim::*;
+pub use tmd::*;
 pub use view::*;
 
 use std::sync::Mutex;

@@ -12,7 +12,8 @@
 --   <function> <a0> <a1> <a2> <a3> [in=<addr>:<hex bytes>]... [out=<addr>:<length>]...
 --              [gte=<cN|dN>:<hex u32>]... [gtein=<w>,<w>,...] [stack=<a5>,<a6>,...] [gteout]
 -- An argument or address is a hex number, or B+<hex>, an offset into a scratch buffer (64 KB of
--- stack RAM the game doesn't reach at the menu). `in` writes bytes before the call, `out`
+-- stack RAM the game doesn't reach at the menu). `in`/`out` addresses from 1f800000 to 1f8003ff
+-- are the scratchpad. `in` writes bytes before the call, `out`
 -- reads bytes after it, `gte` sets a GTE control (c) or data (d) register before the call,
 -- `gtein` sets all 64 (d0..d31, then c0..c31; a word of `x` leaves that register alone) so a
 -- call is repeatable, `stack` gives the arguments after the fourth (hex or B+ offsets, written
@@ -27,6 +28,8 @@
 -- 16 bytes, at most 48, each at most 64 bytes shown) the call changed outside the scratch buffer
 -- and the stack, with their new bytes. For finding which globals a function touches; interrupt
 -- handlers add a little noise (compare with a call of a function that does nothing).
+-- Env: DW1_RESTORE=1 puts RAM and the scratchpad back as they were before the first call before
+-- each call (see startCall).
 -- Env: DW1_DUMP_REGS=1 prints the game's callee-saved registers at the first call (to see whether
 -- a function leaks one into its results).
 -- Env: DW1_CALL_AT (VBlank to start at, default 2300: the main menu); DW1_SYMBOLS (the symbol
@@ -121,7 +124,14 @@ do
 end
 
 local mem = ffi.cast('uint8_t*', PCSX.getMemPtr())
+local scratchpad = ffi.cast('uint8_t*', PCSX.getScratchPtr())
 local function phys(a) return bit.band(a, 0x1FFFFF) end
+-- The byte array and offset an `in`/`out` address names: the 1 KB scratchpad at 0x1F800000,
+-- else main RAM.
+local function at(a)
+    if a >= 0x1F800000 and a < 0x1F800400 then return scratchpad, a - 0x1F800000 end
+    return mem, phys(a)
+end
 
 local regs = PCSX.getRegisters()
 local callSR = 0
@@ -132,12 +142,30 @@ local TIMES = os.getenv('DW1_TIMES') == '1'
 local DIFF = os.getenv('DW1_DIFF') == '1'
 local snap = DIFF and ffi.new('uint8_t[?]', 0x200000) or nil
 
+-- DW1_RESTORE=1: every call starts from the RAM and scratchpad of the first trigger, so a call
+-- that faults after scribbling over memory (an input the SDK has no answer for) doesn't spoil the
+-- calls after it.
+local RESTORE = os.getenv('DW1_RESTORE') == '1'
+local ramSnap, scratchSnap
+
 local function startCall(i)
     local c = calls[i]
+    if RESTORE then
+        if not ramSnap then
+            ramSnap = ffi.new('uint8_t[?]', 0x200000)
+            scratchSnap = ffi.new('uint8_t[?]', 0x400)
+            ffi.copy(ramSnap, mem, 0x200000)
+            ffi.copy(scratchSnap, scratchpad, 0x400)
+        else
+            ffi.copy(mem, ramSnap, 0x200000)
+            ffi.copy(scratchpad, scratchSnap, 0x400)
+        end
+    end
     for _, w in ipairs(c.ins) do
         local a, hex = w[1], w[2]
+        local base, off = at(a)
         for k = 0, #hex / 2 - 1 do
-            mem[phys(a) + k] = tonumber(hex:sub(k * 2 + 1, k * 2 + 2), 16)
+            base[off + k] = tonumber(hex:sub(k * 2 + 1, k * 2 + 2), 16)
         end
     end
     for _, g in ipairs(c.gte) do
@@ -175,7 +203,8 @@ local function finishCall(i, excCode)
     end
     for _, o in ipairs(c.outs) do
         local hex = {}
-        for k = 0, o[2] - 1 do hex[#hex + 1] = string.format('%02x', mem[phys(o[1]) + k]) end
+        local base, off = at(o[1])
+        for k = 0, o[2] - 1 do hex[#hex + 1] = string.format('%02x', base[off + k]) end
         parts[#parts + 1] = string.format('%08x=%s', o[1], table.concat(hex))
     end
     if c.gteout then
@@ -250,6 +279,10 @@ local function onTrigger(excCode)
         return true
     end
     -- All done: put the game back as it was, run on, and quit at the next VBlank.
+    if ramSnap then
+        ffi.copy(mem, ramSnap, 0x200000)
+        ffi.copy(scratchpad, scratchSnap, 0x400)
+    end
     for n = 0, 33 do regs.GPR.r[n] = saved.gpr[n] end
     for n = 0, 31 do regs.CP2D.r[n], regs.CP2C.r[n] = saved.cp2d[n], saved.cp2c[n] end
     regs.pc = saved.pc

@@ -15,9 +15,6 @@ stubs! { SetDrawLoad }
 
 // libgs: the TMD primitive handlers GsSortObject4J dispatches to through GsFCALL4.
 stubs! {
-    GsTMDdivTF3NL GsTMDdivTF4L GsTMDdivTF4NL GsTMDdivTG3NL GsTMDdivTG4NL GsTMDdivTNF3
-    GsTMDdivTNF4 GsTMDdivTNG3 GsTMDdivTNG4 GsTMDfastF3L GsTMDfastF4L GsTMDfastF4NL
-    GsTMDfastG3L GsTMDfastG4L GsTMDfastNF4 GsTMDfastTF3L GsTMDfastTF3NL GsTMDfastTF4L
-    GsTMDfastTF4NL GsTMDfastTG3NL GsTMDfastTG4NL GsTMDfastTNF3
-    GsTMDfastTNG3 GsTMDfastTNG4
+    GsTMDdivTF3NL GsTMDdivTF4L GsTMDdivTF4NL GsTMDdivTG3NL GsTMDdivTG4NL GsTMDfastF4NL
+    GsTMDfastG3L GsTMDfastNF4 GsTMDfastTF3NL GsTMDfastTF4NL GsTMDfastTG3NL GsTMDfastTG4NL
 }
