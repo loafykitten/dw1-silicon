@@ -12,14 +12,37 @@ options, each labelled as original or added, with the original picture always av
 The long-term goal is the whole game in Rust, migrated one module at a time and checked
 against the original at every step.
 
-**Status:** early. The plan is written and reviewed, and setup is under way; nothing is
-playable yet. See [PLAN.md](PLAN.md).
+**Status:** playable, being checked. The game runs natively with sound,
+saves (as 15 save slots) and a sharper picture; new games, File City, raising your partner,
+battles, training, the Item Keeper and saving are checked against the original game step by
+step, and the rest (tournaments, Battle Mode, fishing, digivolving and so on) runs the game's own
+code but isn't checked yet. A first full playthrough is under way. See [PLAN.md](PLAN.md).
+
+## Building and playing
+
+You need a Mac with Apple Silicon, your own disc image of Digimon World (USA) as a `.cue`/`.bin`
+pair, Apple's command line tools (`xcode-select --install`) and Rust ([rustup](https://rustup.rs)).
+Then:
+
+```sh
+git clone https://github.com/loafykitten/dw1-silicon.git
+cd dw1-silicon
+git submodule update --init decomp
+git -C decomp submodule update --init external/psyq_headers
+python3 -m venv .venv && .venv/bin/pip install pyyaml cmake
+tools/make-app.sh --install    # Digimon World.app in ~/Applications
+```
+
+The first start asks for your disc image. **[The guide](docs/guide.html)** (open it in a browser)
+covers installing the tools, controls, the picture settings, saves and moving them to and from
+DuckStation, and what to do when something goes wrong.
 
 ## You need your own copy of the game
 
 This repository contains no game data: no disc image, no assets, no text, no music. The
-port builds its data on your machine from your own disc image of Digimon World (USA) and
-checks it against a list of known hashes. Please don't open issues asking where to get the
+port reads your own disc image of Digimon World (USA) and checks it against the known good
+dump's hash before it starts. The app you build holds code and text made from the game, so it's
+for your own Mac: please don't share it. Please don't open issues asking where to get the
 game.
 
 ## Credits

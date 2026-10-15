@@ -12,7 +12,7 @@
 //! Picture settings (`settings.rs`, kept between runs; a note in the corner says what changed
 //! and whether it's original or an addition): F2 render scale (auto, 1, 2, 3, 4, 6, 8), F3 no
 //! wobble, F4 fit (integer, the original look, or fill at 4:3), F5 full colour, F11 or
-//! Cmd-Ctrl-F fullscreen.
+//! Cmd-Ctrl-F fullscreen. F12 writes a bug snapshot (`snapshot.rs`).
 //!
 //! Before the game starts, `Window::splash` shows a short text screen (about 2.8 s; any key,
 //! button or click skips it) saying this is the native Mac build. `DW1_NO_SPLASH=1` skips it;
@@ -34,6 +34,7 @@ use sdl3::gamepad::{Axis, Button, Gamepad};
 use sdl3::keyboard::{Mod, Scancode};
 
 mod disc_picker;
+mod snapshot;
 mod splash;
 
 /// The PS1's NTSC non-interlaced field rate: 53.693175 MHz / (3413 x 263) = 59.817 Hz
@@ -204,8 +205,11 @@ pub struct Window {
     settings: Settings,
     kept: Settings,
     settings_path: Option<std::path::PathBuf>,
-    /// What the corner note says and until when.
+    /// What the corner note says and until when, and a message note's text.
     note: Option<(Note, Instant)>,
+    message: String,
+    /// The last minute of pad input, for bug snapshots.
+    pad_log: snapshot::PadLog,
     note_buf: Vec<u32>,
     pump: EventPump,
     gamepad_sys: sdl3::GamepadSubsystem,
@@ -285,6 +289,8 @@ enum Note {
     FullColour,
     Fit,
     Fullscreen,
+    /// `Window::message`.
+    Message,
 }
 
 impl Note {
@@ -311,6 +317,7 @@ impl Note {
             Note::Fit => "Fit: whole multiples - original".into(),
             Note::Fullscreen if s.fullscreen => "Fullscreen (F11 for a window)".into(),
             Note::Fullscreen => "Window (F11 for fullscreen)".into(),
+            Note::Message => String::new(),
         }
     }
 }
@@ -437,6 +444,8 @@ impl Window {
             kept,
             settings_path,
             note: None,
+            message: String::new(),
+            pad_log: snapshot::PadLog::default(),
             note_buf: Vec::new(),
             pump,
             gamepad_sys,
@@ -509,6 +518,7 @@ impl Window {
                         }
                     }),
                     Scancode::F11 => self.toggle_fullscreen(),
+                    Scancode::F12 => self.bug_snapshot(),
                     Scancode::F if cmd_ctrl => self.toggle_fullscreen(),
                     _ => self.keys |= key_bit(k),
                 }
@@ -560,9 +570,16 @@ impl Window {
             Note::FullColour => k.full_colour = s.full_colour,
             Note::Fit => k.fit = s.fit,
             Note::Fullscreen => k.fullscreen = s.fullscreen,
+            Note::Message => {}
         }
         self.kept.save(self.settings_path.as_deref());
         self.note = Some((note, Instant::now() + NOTE_TIME));
+    }
+
+    /// Shows `text` in the corner for a while.
+    fn show_message(&mut self, text: String) {
+        self.message = text;
+        self.note = Some((Note::Message, Instant::now() + NOTE_TIME));
     }
 
     fn toggle_fullscreen(&mut self) {
@@ -647,7 +664,10 @@ impl Window {
         });
         let note = match self.note {
             Some((n, until)) if Instant::now() < until => {
-                let text = n.text(&self.settings, scale);
+                let text = match n {
+                    Note::Message => self.message.clone(),
+                    n => n.text(&self.settings, scale),
+                };
                 // Glyphs of 8 window pixels at 360 lines, smaller if the line wouldn't fit across;
                 // cut short if it doesn't at the smallest. A margin of one glyph.
                 let width_for = |k: u32| (text.len() as u32 + 3) * 8 * k;
@@ -751,7 +771,9 @@ impl psyq::libetc::Host for Window {
     fn pad(&mut self, _caller: usize) -> u32 {
         let held = self.held_pad();
         self.held_over &= held;
-        held & !self.held_over
+        let bits = held & !self.held_over;
+        self.pad_log.push(psyq::libetc::vblank_count(), bits);
+        bits
     }
 }
 

@@ -128,7 +128,7 @@ fn install_crash_trace() {
 
 /// Where the window build keeps the memory cards: `DW1_SAVE_DIR`, else
 /// [`default_save_dir`]; an empty `DW1_SAVE_DIR` keeps nothing.
-fn save_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn save_dir() -> Option<std::path::PathBuf> {
     match std::env::var_os("DW1_SAVE_DIR") {
         Some(d) if d.is_empty() => None,
         Some(d) => Some(d.into()),

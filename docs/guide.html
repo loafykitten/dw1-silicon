@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dw1-silicon guide</title>
+<meta name="description" content="How to build and play dw1-silicon, the native Apple Silicon port of Digimon World (PS1), from your own disc.">
+<style>
+:root {
+  --bg: #fbfaf7;
+  --text: #22252b;
+  --muted: #5d6470;
+  --line: #e4e1da;
+  --panel: #f2f0ea;
+  --code-bg: #eeebe3;
+  --accent: #2f7a52;
+  --accent-soft: #e2f1e8;
+  --warn: #8a5a12;
+  --warn-soft: #fbf1dd;
+  --kbd: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #13161b;
+    --text: #e6e8ec;
+    --muted: #a3aab6;
+    --line: #2a2f38;
+    --panel: #1a1e25;
+    --code-bg: #1f242c;
+    --accent: #7fd1a2;
+    --accent-soft: #1b2e24;
+    --warn: #f0c27a;
+    --warn-soft: #2e2618;
+    --kbd: #232831;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #13161b;
+  --text: #e6e8ec;
+  --muted: #a3aab6;
+  --line: #2a2f38;
+  --panel: #1a1e25;
+  --code-bg: #1f242c;
+  --accent: #7fd1a2;
+  --accent-soft: #1b2e24;
+  --warn: #f0c27a;
+  --warn-soft: #2e2618;
+  --kbd: #232831;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+}
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 48px 16px 96px;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 48px;
+}
+nav {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  font-size: 14px;
+}
+nav p { margin: 0 0 8px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; font-size: 12px; }
+nav ol { list-style: none; margin: 0; padding: 0; }
+nav li { margin: 0; }
+nav a { display: block; padding: 4px 0; color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--accent); }
+main { min-width: 0; max-width: 720px; }
+header h1 { font-size: 40px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -.01em; }
+header .sub { font-size: 19px; color: var(--muted); margin: 0 0 24px; }
+h2 { font-size: 26px; margin: 56px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }
+h3 { font-size: 19px; margin: 28px 0 8px; }
+p, ul, ol { margin: 0 0 14px; }
+li { margin: 4px 0; }
+a { color: var(--accent); }
+code {
+  font: 0.88em/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+}
+pre {
+  position: relative;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 40px 16px 14px;
+  margin: 0 0 16px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: 14.5px; overflow-wrap: normal; }
+.copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font: 600 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.copy:hover { color: var(--accent); }
+.note, .warn {
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin: 0 0 16px;
+}
+.note { background: var(--accent-soft); }
+.warn { background: var(--warn-soft); }
+.warn strong { color: var(--warn); }
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li { counter-increment: step; position: relative; padding-left: 40px; margin: 0 0 18px; }
+.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+  font-size: 15px;
+  display: grid;
+  place-items: center;
+}
+table { width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 15.5px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+kbd {
+  font: 600 13px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--kbd);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+.tag { font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 99px; white-space: nowrap; }
+.tag.orig { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+.tag.add { background: var(--accent-soft); color: var(--accent); }
+.checked li::marker { content: "✓  "; color: var(--accent); }
+.unchecked li::marker { content: "…  "; color: var(--muted); }
+footer { margin-top: 64px; color: var(--muted); font-size: 14px; }
+@media (max-width: 860px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 32px; }
+  nav { position: static; margin-bottom: 32px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+  nav ol { columns: 2; column-gap: 16px; }
+  header h1 { font-size: 32px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#what">What this is</a></li>
+    <li><a href="#need">What you need</a></li>
+    <li><a href="#tools">Install the build tools</a></li>
+    <li><a href="#build">Get the code and build</a></li>
+    <li><a href="#first">First start</a></li>
+    <li><a href="#controls">Controls</a></li>
+    <li><a href="#picture">Picture settings</a></li>
+    <li><a href="#saves">Saves</a></li>
+    <li><a href="#problems">When something goes wrong</a></li>
+    <li><a href="#status">What's checked so far</a></li>
+    <li><a href="#update">Updating</a></li>
+    <li><a href="#credits">Credits and license</a></li>
+  </ol>
+</nav>
+<main>
+<header>
+  <h1>Digimon World on Apple Silicon</h1>
+  <p class="sub">How to build and play dw1-silicon, a native Mac port of Digimon World (PlayStation, 1999, USA release), from your own copy of the game.</p>
+</header>
+
+<section>
+<h2 id="what">What this is</h2>
+<p>This isn't an emulator. The game's own code, recovered as C by the <a href="https://github.com/jype0/dw_decomp">dw_decomp</a> decompilation project, is compiled for Apple Silicon, and the PlayStation's libraries and hardware underneath it are replaced by a Mac layer written in Rust. The game's rules, randomness, scripts, text, music and saves behave as on the original; it's checked against the original running in an emulator.</p>
+<p>Extras like a sharper picture and steadier 3D are options, each labelled <span class="tag orig">original</span> or <span class="tag add">addition</span>, and the original picture is always one setting away.</p>
+<div class="warn"><strong>Unofficial fan project.</strong> Not affiliated with Bandai Namco. The repository holds no game data, and the app you build holds code and text made from the game, so it's for your own Mac: please don't share the app, the disc image or anything made from them.</div>
+</section>
+
+<section>
+<h2 id="need">What you need</h2>
+<ul>
+  <li>A Mac with Apple Silicon (M1 or later).</li>
+  <li><strong>Your own disc image of Digimon World (USA)</strong>, serial SLUS-01032, as a <code>.cue</code> and <code>.bin</code> pair: the usual layout for a dump of your disc (the same one DuckStation plays). The game checks the image when it starts and tells you if it's a different release, compressed or damaged.</li>
+  <li>About 1 GB free for the build, and an internet connection for the first build.</li>
+  <li>The build tools below. The finished app needs nothing but macOS.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="tools">Install the build tools</h2>
+<p>Open <strong>Terminal</strong> (in Applications &rsaquo; Utilities) and run these. You only need to do this once.</p>
+<ol class="steps">
+  <li>
+    <p><strong>Apple's command line tools</strong> (the compiler, Git and Python). A window asks you to install them; if they're already there, it says so.</p>
+    <pre><code>xcode-select --install</code></pre>
+  </li>
+  <li>
+    <p><strong>Rust.</strong> Press Enter at the prompt to accept the default install, then close and reopen Terminal.</p>
+    <pre><code>curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh</code></pre>
+  </li>
+</ol>
+<p>The other two tools the build needs, CMake and PyYAML, go inside the project folder in the next section, so there's nothing else to install system-wide (and no Homebrew needed).</p>
+</section>
+
+<section>
+<h2 id="build">Get the code and build</h2>
+<ol class="steps">
+  <li>
+    <p>Download the code, with the decompilation it builds on:</p>
+    <pre><code>git clone https://github.com/loafykitten/dw1-silicon.git
+cd dw1-silicon
+git submodule update --init decomp
+git -C decomp submodule update --init external/psyq_headers</code></pre>
+  </li>
+  <li>
+    <p>Give the project its own Python with <strong>PyYAML</strong> (the build uses it to turn the game's text into code) and <strong>CMake</strong> (it builds the window and sound library). The build finds both in the <code>.venv</code> folder by itself.</p>
+    <pre><code>python3 -m venv .venv
+.venv/bin/pip install pyyaml cmake</code></pre>
+  </li>
+  <li>
+    <p>Build the app and put it in your Applications folder. The first build takes a few minutes; later ones are quick.</p>
+    <pre><code>tools/make-app.sh --install</code></pre>
+    <p>This makes <code>Digimon World.app</code> in <code>~/Applications</code> (your home folder's Applications). Without <code>--install</code> it stays in the repo's <code>build</code> folder.</p>
+  </li>
+  <li>
+    <p>Open <strong>Digimon World</strong> from Finder or Launchpad.</p>
+  </li>
+</ol>
+<div class="note">Prefer the Terminal? <code>PATH="$PWD/.venv/bin:$PATH" cargo run --release -p dw1</code> runs the game straight from the repo, with its messages in the Terminal.</div>
+</section>
+
+<section>
+<h2 id="first">First start</h2>
+<p>The first time, the game asks for your disc image. Click the window (or press <kbd>Enter</kbd>) and choose the <code>.cue</code> file, or drag the <code>.cue</code> onto the window. It checks the whole image, which takes a second or so, then remembers where it is and starts. The image is only ever read: it isn't copied or changed.</p>
+<p>If you move the image later, the game says so and asks again. To choose a different image yourself, start it once like this:</p>
+<pre><code>DW1_ASK_DISC=1 ~/Applications/"Digimon World.app"/Contents/MacOS/dw1</code></pre>
+<p>If you play in DuckStation with its usual per-game memory cards, the first start also copies the saves from <code>~/Library/Application Support/DuckStation/memcards/Digimon World (USA)_1.mcd</code> into the game's save slots. It only reads the card, and only that first time. For a card anywhere else (a shared card, another folder), bring its saves in with <code>import-card</code> (<a href="#saves">Saves</a>).</p>
+</section>
+
+<section>
+<h2 id="controls">Controls</h2>
+<p>A keyboard works out of the box, and so does any game controller macOS knows (PlayStation, Xbox, Switch Pro and others). Buttons go by position, so on any controller the bottom face button is <strong>Cross</strong>.</p>
+<table>
+  <thead><tr><th>PlayStation</th><th>Keyboard</th><th>Controller</th></tr></thead>
+  <tbody>
+    <tr><td>D-pad</td><td>Arrow keys</td><td>D-pad or left stick</td></tr>
+    <tr><td>Cross</td><td><kbd>Z</kbd></td><td>Bottom face button</td></tr>
+    <tr><td>Circle</td><td><kbd>X</kbd></td><td>Right face button</td></tr>
+    <tr><td>Square</td><td><kbd>A</kbd></td><td>Left face button</td></tr>
+    <tr><td>Triangle</td><td><kbd>S</kbd></td><td>Top face button</td></tr>
+    <tr><td>Start</td><td><kbd>Enter</kbd></td><td>Start / Menu</td></tr>
+    <tr><td>Select</td><td>Right <kbd>Shift</kbd></td><td>Back / View / Share</td></tr>
+    <tr><td>L1 / R1</td><td><kbd>Q</kbd> / <kbd>W</kbd></td><td>Shoulder buttons</td></tr>
+    <tr><td>L2 / R2</td><td><kbd>1</kbd> / <kbd>2</kbd></td><td>Triggers</td></tr>
+  </tbody>
+</table>
+<p>Closing the window or <kbd>Cmd</kbd>&nbsp;<kbd>Q</kbd> quits. The game saves only where it always did (the save machines and the like), so save before you quit.</p>
+</section>
+
+<section>
+<h2 id="picture">Picture settings</h2>
+<p>Change these while you play; a note in the corner says what changed and whether it's the original or an addition. They're kept for next time.</p>
+<table>
+  <thead><tr><th>Key</th><th>Setting</th><th>Default</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>F2</kbd></td><td>Render scale: auto (from the window's size), 1 (the PlayStation's own picture, <span class="tag orig">original</span>), 2, 3, 4, 6 or 8 times sharper <span class="tag add">addition</span></td><td>Auto</td></tr>
+    <tr><td><kbd>F3</kbd></td><td>No wobble: 3D models at their exact positions, so they don't jitter <span class="tag add">addition</span>; needs a render scale of 2 or more</td><td>On</td></tr>
+    <tr><td><kbd>F4</kbd></td><td>Fit: whole multiples of the picture with black around it <span class="tag orig">original</span>, or as large as the window allows at 4:3 <span class="tag add">addition</span></td><td>Whole multiples</td></tr>
+    <tr><td><kbd>F5</kbd></td><td>Full colour: smooth shading without the PlayStation's 15-bit colour and dither pattern <span class="tag add">addition</span>; needs a render scale of 2 or more</td><td>On</td></tr>
+    <tr><td><kbd>F11</kbd></td><td>Fullscreen (or <kbd>Cmd</kbd>&nbsp;<kbd>Ctrl</kbd>&nbsp;<kbd>F</kbd>)</td><td>Window</td></tr>
+  </tbody>
+</table>
+<p>For exactly the PlayStation's picture: render scale 1 and whole-multiple fit. The settings live in <code>~/Library/Application Support/dw1-silicon/settings.txt</code>; delete it for the defaults.</p>
+</section>
+
+<section>
+<h2 id="saves">Saves</h2>
+<p>There are no memory cards to manage: the game has 15 save slots, one per game. New Game, Continue and the in-game saves use them directly; starting a New Game on a used slot asks first.</p>
+<ul>
+  <li>Slots are files in <code>~/Library/Application Support/dw1-silicon/saves/</code>. Each save that gets replaced is kept in <code>saves/backups/</code>.</li>
+  <li><strong>To play a save in DuckStation</strong>, write the slots to a memory card file, then load it there as a card:
+    <pre><code>~/Applications/"Digimon World.app"/Contents/MacOS/dw1 export-card ~/Desktop/dw1-saves.mcd</code></pre></li>
+  <li><strong>To bring saves in</strong> from a memory card file (they go into free slots; nothing is overwritten):
+    <pre><code>~/Applications/"Digimon World.app"/Contents/MacOS/dw1 import-card ~/Desktop/some-card.mcd</code></pre></li>
+</ul>
+<p>Close the game before using these two.</p>
+</section>
+
+<section>
+<h2 id="problems">When something goes wrong</h2>
+<ul>
+  <li><strong>Press <kbd>F12</kbd></strong> the moment something looks wrong. It saves a bug snapshot to <code>~/Library/Application Support/dw1-silicon/reports/</code>: pictures of the screen, the game's state, the last minute of what you pressed, your settings, copies of your saves and the log. Nothing is sent anywhere.</li>
+  <li>If the game meets something the port doesn't handle yet, it stops rather than guess, and a message says so. Your saves up to the last one are safe.</li>
+  <li>If it ever closes without a message (a crash), the next start tells you and points to that run's log.</li>
+  <li>Logs are in <code>~/Library/Logs/dw1-silicon/</code> (the last ten runs).</li>
+</ul>
+<p>To report a bug, open an issue on <a href="https://github.com/loafykitten/dw1-silicon/issues">GitHub</a> saying what happened and where, with <code>about.txt</code>, <code>state.txt</code> and <code>log.txt</code> from the snapshot. Please don't attach the disc image or files taken from it.</p>
+</section>
+
+<section>
+<h2 id="status">What's checked so far</h2>
+<p>Every part of the game is there and runs; parts are "checked" once a recorded playthrough on the original (in an emulator) and the port end in exactly the same game state, step by step.</p>
+<h3>Checked against the original</h3>
+<ul class="checked">
+  <li>Starting a new game, File City and Jijimon's house</li>
+  <li>Raising your partner from morning to early afternoon of a day (care menus and the clock; feeding isn't covered yet)</li>
+  <li>Battles, including losing one</li>
+  <li>Training at the gym, the slot bonus and all six kinds</li>
+  <li>The Item Keeper and saving at the save machines</li>
+  <li>Sound and music</li>
+</ul>
+<h3>Running, not yet checked</h3>
+<ul class="unchecked">
+  <li>Battle Mode, tournaments, fishing, digivolving, death and rebirth, curling, recruiting, and the other gyms</li>
+</ul>
+<p>These run the game's own code too, so they should play as they always did; they're simply where any port bug is most likely to hide.</p>
+<h3>Known differences</h3>
+<ul>
+  <li>Save slots instead of memory cards (they convert both ways, above).</li>
+  <li>Battle Mode's player 2 isn't playable yet: every keyboard and controller drives player 1.</li>
+  <li>The music's fade-outs and the movies' fine detail are close to the original but not yet measured exactly.</li>
+  <li>No save states, fast forward or widescreen.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="update">Updating</h2>
+<pre><code>cd dw1-silicon
+git pull
+git submodule update --init decomp
+tools/make-app.sh --install</code></pre>
+<p>Your saves, settings and the remembered disc stay where they are.</p>
+</section>
+
+<section>
+<h2 id="credits">Credits and license</h2>
+<ul>
+  <li><a href="https://github.com/jype0/dw_decomp">dw_decomp</a> by jype0 and contributors (MIT): the decompilation every line of the game's logic comes from.</li>
+  <li><a href="https://github.com/Wyrelade/DW2-PC">DW2-PC</a> (CC0): the PC port of Digimon World 2 whose design and HD renderer this port follows.</li>
+  <li><a href="https://github.com/SydMontague/DW1-Code">SydMontague</a>'s years of reverse-engineering, <a href="https://github.com/grumpycoders/pcsx-redux">PCSX-Redux</a> (the emulator the port is checked against) and <a href="https://psx-spx.consoledev.net/">psx-spx</a> (the PlayStation's documentation). The README has the full list.</li>
+  <li>The PlayStation libraries are written fresh from public documentation and from watching the original run in an emulator.</li>
+</ul>
+<p>dw1-silicon's own code is MIT or Apache-2.0, your choice. Digimon and Digimon World are trademarks of Bandai Namco and Toei Animation; this is an unofficial fan project, not affiliated with or endorsed by them, and contains none of the game.</p>
+</section>
+
+<footer>dw1-silicon &middot; <a href="https://github.com/loafykitten/dw1-silicon">github.com/loafykitten/dw1-silicon</a></footer>
+</main>
+</div>
+<script>
+// a Copy button on every command block
+for (const pre of document.querySelectorAll("pre")) {
+  const button = document.createElement("button");
+  button.className = "copy";
+  button.type = "button";
+  button.textContent = "Copy";
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(pre.querySelector("code").innerText);
+      button.textContent = "Copied";
+    } catch (e) {
+      button.textContent = "Select and copy";
+    }
+    setTimeout(() => (button.textContent = "Copy"), 1500);
+  });
+  pre.appendChild(button);
+}
+</script>
+</body>
+</html>

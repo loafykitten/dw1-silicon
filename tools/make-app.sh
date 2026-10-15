@@ -17,6 +17,11 @@ case "${1:-}" in
     *) echo "usage: tools/make-app.sh [--install]" >&2; exit 2 ;;
 esac
 
+# CMake (SDL's build): the one on PATH, else the repo's .venv (the guide's way without Homebrew).
+if ! command -v cmake > /dev/null 2>&1 && [ -x .venv/bin/cmake ]; then
+    CMAKE="$PWD/.venv/bin/cmake"
+    export CMAKE
+fi
 cargo build --release -p dw1
 bin=target/release/dw1
 

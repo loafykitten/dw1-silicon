@@ -120,3 +120,13 @@ written down as accepted. That is the first release.
   times (thirteen findings, mostly log-loss races and headless isolation), converged. Checked
   live: the app starts from `open`, logs, and its marker goes on quit. Not yet: booklab
   (unreachable), a crash report and the stop box seen by hand.
+- **9.3 done** (session 6): F12 writes a bug snapshot (`window/snapshot.rs`: screen at 1x and as
+  shown, the canonical state, the last minute of pad input as `DW1_PAD_SCRIPT` lines, settings,
+  save slot copies, the log, `about.txt`) to `Application Support/dw1-silicon/reports/<time>/`;
+  `docs/bugs.md` for the playthrough. Sol: two passes (three findings fixed).
+- **9.4 written** (session 6): `docs/guide.html` and the README's build section. The tools part
+  needs no Homebrew: PyYAML and CMake go in the repo's `.venv` (the build already prefers its
+  Python; `make-app.sh` uses its CMake when none is on PATH). Sol found five problems in the first
+  draft (Homebrew Python refusing `pip --user`, Battle Mode's player 2 described wrongly, the
+  DuckStation card's location, the care claim, the copy buttons), fixed. A fresh clone from
+  GitHub built and matched the new-game replay (19/19).

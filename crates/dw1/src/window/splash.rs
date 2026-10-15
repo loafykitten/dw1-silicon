@@ -177,21 +177,28 @@ pub(super) fn draw_lines(
 
 /// Writes `w x h` pixels of 0x00RRGGBB to a PNG; a failure is reported and otherwise ignored.
 fn save_png(path: &std::path::Path, pixels: &[u32], w: u32, h: u32) {
-    let result = (|| -> Result<(), String> {
-        let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
-        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
-        enc.set_color(png::ColorType::Rgb);
-        enc.set_depth(png::BitDepth::Eight);
-        let mut writer = enc.write_header().map_err(|e| e.to_string())?;
-        let rgb: Vec<u8> = pixels
-            .iter()
-            .flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8])
-            .collect();
-        writer.write_image_data(&rgb).map_err(|e| e.to_string())
-    })();
-    if let Err(e) = result {
+    if let Err(e) = write_png(path, pixels, w, h) {
         eprintln!("dw1: DW1_SPLASH_SHOT: {}: {e}", path.display());
     }
+}
+
+/// Writes `w x h` pixels of 0x00RRGGBB to a PNG.
+pub(super) fn write_png(
+    path: &std::path::Path,
+    pixels: &[u32],
+    w: u32,
+    h: u32,
+) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header().map_err(|e| e.to_string())?;
+    let rgb: Vec<u8> = pixels
+        .iter()
+        .flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8])
+        .collect();
+    writer.write_image_data(&rgb).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

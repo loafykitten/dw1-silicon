@@ -297,8 +297,13 @@ pub fn report_earlier_crash(log: &Path) {
     }
 }
 
+/// This run's log, if it has one (app runs).
+pub fn log_path() -> Option<&'static Path> {
+    LOG.get().map(PathBuf::as_path)
+}
+
 /// `YYYYMMDD-HHMMSS` in UTC.
-fn utc_stamp(t: std::time::SystemTime) -> String {
+pub fn utc_stamp(t: std::time::SystemTime) -> String {
     let secs = t
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs()) as i64;
