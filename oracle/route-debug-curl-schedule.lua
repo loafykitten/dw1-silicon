@@ -41,10 +41,15 @@ local MILESTONES = {
 -- turn), the power gauge (8) at 1900 or more; then, back outside, up to three more while his
 -- closing lines' script runs. Cross is pad bit 14.
 local FROM, CROSS = 8237, 14
--- The power at which each of our throws stops the gauge (DW1CURL_POWERS=a,b,... overrides it
--- for trying other matches; the recording used the default).
+-- The power at which each of our throws stops the gauge: 1900 each time, or the list in the global
+-- DW1CURL_POWERS_DEFAULT (set by route-debug-curl-win-schedule.lua) or the environment's
+-- DW1CURL_POWERS=a,b,... (for trying other matches). CLOSES: how many of Penguinmon's lines
+-- outside are closed afterwards.
 local POWERS = {}
-for p in (os.getenv('DW1CURL_POWERS') or '1900'):gmatch('%d+') do POWERS[#POWERS + 1] = tonumber(p) end
+for p in (os.getenv('DW1CURL_POWERS') or DW1CURL_POWERS_DEFAULT or '1900'):gmatch('%d+') do
+    POWERS[#POWERS + 1] = tonumber(p)
+end
+local CLOSES = DW1CURL_CLOSES or 3
 local throws = 0
 local releaseAt, nextTap, closes, wasInRink = nil, 0, 0, false
 local function controller(vblank, pad, ram)
@@ -63,7 +68,7 @@ local function controller(vblank, pad, ram)
         tap = state == 1 or state == 15 or state == 19 or (ours and (state == 5 or state == 6))
             or (ours and state == 8 and power >= want)
         if ours and state == 8 and tap then throws = throws + 1 end
-    elseif screen == 134 and wasInRink and closes < 3 and u8[0x134FF4] == 0 then
+    elseif screen == 134 and wasInRink and closes < CLOSES and u8[0x134FF4] == 0 then
         -- a map script is running (IS_SCRIPT_PAUSED 0): his lines are up
         closes = closes + 1
         tap = true
