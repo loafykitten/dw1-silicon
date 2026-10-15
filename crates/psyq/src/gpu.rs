@@ -7,7 +7,24 @@ use std::sync::{LazyLock, Mutex};
 
 use crate::memory::{LINK_END, ptr_of_link};
 
-static GPU: LazyLock<Mutex<Gpu>> = LazyLock::new(|| Mutex::new(Gpu::new()));
+/// The game's GPU. `DW1_SCALE=<1..8>` turns the HD surfaces on at that render scale (1, the
+/// default, is off: nothing but the 1x picture); `DW1_HD_THREADS=<n>` sets the drawing threads
+/// (default one per core, at most 8).
+static GPU: LazyLock<Mutex<Gpu>> = LazyLock::new(|| {
+    let mut gpu = Gpu::new();
+    let env = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+    };
+    if let Some(n) = env("DW1_HD_THREADS") {
+        gpu.set_hd_threads(n as usize);
+    }
+    if let Some(s) = env("DW1_SCALE") {
+        gpu.set_scale(s);
+    }
+    Mutex::new(gpu)
+});
 
 /// Runs `f` on the GPU. The game is single-threaded; the lock only keeps this sound.
 pub fn with<R>(f: impl FnOnce(&mut Gpu) -> R) -> R {

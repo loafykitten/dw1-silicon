@@ -2,6 +2,7 @@
 
 pub mod gpu;
 pub mod gte;
+pub mod hd;
 pub mod mdec;
 pub mod spu;
 pub mod xa;

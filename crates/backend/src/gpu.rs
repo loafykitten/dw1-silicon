@@ -1,9 +1,9 @@
 //! Model of the PS1 GPU: 1024x512 16-bit VRAM, GP0 drawing commands, display readout.
 //!
 //! Translated from DW2-PC (github.com/Wyrelade/DW2-PC, CC0), `backend/psxgpu.c` at commit
-//! 2d491b5. That is DW2-PC's original work. Only the 1x software path is ported: the HD
-//! renderer (`psxgpu_hd*`), the PGXP hooks and the SDL_GPU path are left out, and the places
-//! where the C calls into them are marked below.
+//! 2d491b5. That is DW2-PC's original work. Only the 1x software path is ported here; the HD
+//! surfaces (`psxgpu_hd.c`) are in `hd.rs` and hooked in below where the C calls `PsxHd_*`
+//! (set by `set_scale`, off at 1); the PGXP hooks and the SDL_GPU path are left out.
 //!
 //! Where the C and PCSX-Redux's software renderer (the oracle, `-softgpu`) differ, the model
 //! follows Redux, because Redux matches the game's picture. That is about how a polygon's colour
@@ -33,35 +33,37 @@
 //! textured ones only where the texel's bit 15 is set; modulation is texel * colour / 16 per
 //! channel (0x80 = unchanged), clamped. Pixel format: PS1 15-bit BGR plus the mask bit.
 
+use crate::hd::Hd;
+
 /// VRAM width in pixels.
 pub const VRAM_W: usize = 1024;
 /// VRAM height in pixels.
 pub const VRAM_H: usize = 512;
 
-const W_MASK: i32 = VRAM_W as i32 - 1;
-const H_MASK: i32 = VRAM_H as i32 - 1;
+pub(crate) const W_MASK: i32 = VRAM_W as i32 - 1;
+pub(crate) const H_MASK: i32 = VRAM_H as i32 - 1;
 
 /// Drawing state (E1-E6).
 #[derive(Clone, Copy, Default)]
-struct State {
+pub(crate) struct State {
     /// Draw area, inclusive.
-    clip_x0: i32,
-    clip_y0: i32,
-    clip_x1: i32,
-    clip_y1: i32,
-    ofs_x: i32,
-    ofs_y: i32,
+    pub(crate) clip_x0: i32,
+    pub(crate) clip_y0: i32,
+    pub(crate) clip_x1: i32,
+    pub(crate) clip_y1: i32,
+    pub(crate) ofs_x: i32,
+    pub(crate) ofs_y: i32,
     /// E1 bits 0-8 and 11.
-    tpage: u32,
-    dither: bool,
-    flip_x: bool,
-    flip_y: bool,
-    tw_mask_x: i32,
-    tw_mask_y: i32,
-    tw_off_x: i32,
-    tw_off_y: i32,
-    set_mask: bool,
-    check_mask: bool,
+    pub(crate) tpage: u32,
+    pub(crate) dither: bool,
+    pub(crate) flip_x: bool,
+    pub(crate) flip_y: bool,
+    pub(crate) tw_mask_x: i32,
+    pub(crate) tw_mask_y: i32,
+    pub(crate) tw_off_x: i32,
+    pub(crate) tw_off_y: i32,
+    pub(crate) set_mask: bool,
+    pub(crate) check_mask: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -77,29 +79,33 @@ struct Display {
 /// One polygon or line vertex in VRAM coordinates (drawing offset applied), 8 bits per colour
 /// channel. (The C also carries PGXP positions here; not ported.)
 #[derive(Clone, Copy, Default)]
-struct Vtx {
-    x: i32,
-    y: i32,
-    r: i32,
-    g: i32,
-    b: i32,
-    u: i32,
-    v: i32,
+pub(crate) struct Vtx {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) r: i32,
+    pub(crate) g: i32,
+    pub(crate) b: i32,
+    pub(crate) u: i32,
+    pub(crate) v: i32,
+    /// Precise position and depth for the HD surfaces (slice 8.3; unused while `precise` is off).
+    pub(crate) px: f32,
+    pub(crate) py: f32,
+    pub(crate) pz: f32,
 }
 
 /// Texture of a primitive: mode 0 = 4-bit, 1 = 8-bit, 2 = 15-bit; page tx/ty, CLUT cx/cy.
 #[derive(Clone, Copy, Default)]
-struct Tex {
-    mode: i32,
-    tx: i32,
-    ty: i32,
-    cx: i32,
-    cy: i32,
-    raw: bool,
+pub(crate) struct Tex {
+    pub(crate) mode: i32,
+    pub(crate) tx: i32,
+    pub(crate) ty: i32,
+    pub(crate) cx: i32,
+    pub(crate) cy: i32,
+    pub(crate) raw: bool,
 }
 
 /// PS1 dither offsets by (y & 3, x & 3), added to the 8-bit colour before the cut to 5 bits.
-const DITHER_TBL: [[i32; 4]; 4] = [
+pub(crate) const DITHER_TBL: [[i32; 4]; 4] = [
     [-4, 0, -3, 1],
     [2, -2, 3, -1],
     [-3, 1, -4, 0],
@@ -110,7 +116,7 @@ fn sign11(v: u32) -> i32 {
     (v << 21) as i32 >> 21
 }
 
-fn to5(c8: i32, d: i32) -> i32 {
+pub(crate) fn to5(c8: i32, d: i32) -> i32 {
     (c8 + d).clamp(0, 255) >> 3
 }
 
@@ -130,6 +136,9 @@ pub struct Gpu {
     /// at most once.
     pub log: Vec<(u8, &'static str)>,
     seen: [bool; 256],
+    /// The HD surfaces (`None` at scale 1), a side channel the game never reads.
+    hd: Option<Box<Hd>>,
+    hd_threads: usize,
 }
 
 impl Default for Gpu {
@@ -147,6 +156,8 @@ impl Gpu {
             disp: Display::default(),
             log: Vec::new(),
             seen: [false; 256],
+            hd: None,
+            hd_threads: 0,
         };
         g.reset(true);
         g
@@ -159,6 +170,10 @@ impl Gpu {
 
     /// The VRAM for direct writes (host setup; the C exposes `PsxGpu_Vram`).
     pub fn vram_mut(&mut self) -> &mut [u16] {
+        // the HD surfaces can't know what is written; they are rebuilt from VRAM at next use
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.invalidate();
+        }
         &mut self.vram
     }
 
@@ -670,8 +685,32 @@ impl Gpu {
             self.triangle(&v[1], &v[2], &v[3], gouraud, t, semi, abr);
         }
         self.triangle(&v[0], &v[1], &v[2], gouraud, t, semi, abr);
-        // The C then draws the same triangles again on the HD surfaces (PGXP lookup,
-        // PsxHd_Triangle) when HD is on. Not ported.
+        // The C then draws the same triangles again on the HD surfaces (PGXP lookup, PsxHd_Triangle).
+        // No precise positions yet (slice 8.3). The order is the 1x one.
+        if let Some(hd) = self.hd.as_deref_mut() {
+            if quad {
+                hd.triangle(
+                    &self.vram,
+                    &self.st,
+                    [&v[1], &v[2], &v[3]],
+                    gouraud,
+                    t,
+                    semi,
+                    abr,
+                    false,
+                );
+            }
+            hd.triangle(
+                &self.vram,
+                &self.st,
+                [&v[0], &v[1], &v[2]],
+                gouraud,
+                t,
+                semi,
+                abr,
+                false,
+            );
+        }
     }
 
     fn rectangle(&mut self, w: &[u32], op: u32) {
@@ -716,7 +755,18 @@ impl Gpu {
                 self.shade(px, py, t, u, v, r, g, b, semi, abr, false, None);
             }
         }
-        // HD: PsxHd_Rect on the HD surfaces. Not ported.
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.rect(
+                &self.vram,
+                &st,
+                (x0, y0, rw, rh),
+                t,
+                (u0, v0),
+                (r, g, b),
+                semi,
+                abr,
+            );
+        }
     }
 
     /// Line from a to b (psx-spx "Line Drawing"): both end points drawn, colour interpolated
@@ -833,7 +883,9 @@ impl Gpu {
             if k > 0 {
                 let (a, b) = (v[(k - 1) & 1], v[k & 1]);
                 self.line_seg(&a, &b, gouraud, semi, abr);
-                // HD: PsxHd_Line. Not ported.
+                if let Some(hd) = self.hd.as_deref_mut() {
+                    hd.line(&self.vram, &self.st, &a, &b, gouraud, semi, abr);
+                }
             }
             k += 1;
             if !polyline && k == 2 {
@@ -849,16 +901,27 @@ impl Gpu {
     pub fn fill(&mut self, x: i32, y: i32, w: i32, h: i32, rgb24: u32) {
         let c = (((rgb24 >> 3) & 31) | (((rgb24 >> 11) & 31) << 5) | (((rgb24 >> 19) & 31) << 10))
             as u16;
+        self.hd_sync();
         for j in 0..h {
             let yy = y.wrapping_add(j) & H_MASK;
             for i in 0..w {
                 self.vram[Self::idx(x.wrapping_add(i) & W_MASK, yy)] = c;
             }
         }
-        // HD: PsxHd_Sync before, PsxHd_Fill after. Not ported.
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.fill(x, y, w, h, c);
+        }
     }
 
     fn load_iter(&mut self, x: i32, y: i32, w: i32, h: i32, mut src: impl Iterator<Item = u16>) {
+        self.hd_sync();
+        self.load_rows(x, y, w, h, &mut src);
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.refresh(&self.vram, x, y, w, h);
+        }
+    }
+
+    fn load_rows(&mut self, x: i32, y: i32, w: i32, h: i32, src: &mut impl Iterator<Item = u16>) {
         for j in 0..h {
             let yy = y.wrapping_add(j) & H_MASK;
             for i in 0..w {
@@ -890,6 +953,7 @@ impl Gpu {
     /// VRAM to VRAM copy. Ignores the mask bit settings.
     pub fn move_image(&mut self, sx: i32, sy: i32, dx: i32, dy: i32, w: i32, h: i32) {
         let w = w.min(VRAM_W as i32);
+        self.hd_sync();
         let mut line = [0u16; VRAM_W];
         // Row order chosen so an overlapping copy reads each row before it is overwritten.
         for j in 0..h {
@@ -903,7 +967,9 @@ impl Gpu {
                 self.vram[Self::idx(dx.wrapping_add(i) & W_MASK, d as i32)] = line[i as usize];
             }
         }
-        // HD: PsxHd_Sync before, PsxHd_Refresh after. Not ported.
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.refresh(&self.vram, dx, dy, w, h);
+        }
     }
 
     // ---- GP0 ----
@@ -1011,6 +1077,9 @@ impl Gpu {
             0xE4 => {
                 self.st.clip_x1 = (c & 0x3FF) as i32;
                 self.st.clip_y1 = ((c >> 10) & 0x1FF) as i32;
+                // PutDrawEnv sends E3 then E4: the draw area is complete here (C: PsxHd_Register
+                // in libgpu's PutDrawEnv)
+                self.hd_register_draw_area();
             }
             0xE5 => {
                 self.st.ofs_x = sign11(c & 0x7FF);
@@ -1043,7 +1112,6 @@ impl Gpu {
 
     /// Display area (GP1 05 / 06 / 07 / 08 / 03 in one call): top-left in VRAM, size, 24-bit.
     pub fn set_display(&mut self, x: i32, y: i32, w: i32, h: i32, rgb24: bool) {
-        // (C: PsxHd_Register for the HD surfaces when not 24-bit. Not ported.)
         self.disp = Display {
             x,
             y,
@@ -1052,6 +1120,104 @@ impl Gpu {
             rgb24,
             on: self.disp.on,
         };
+        self.hd_register_display();
+    }
+
+    // ---- HD surfaces (hd.rs) ----
+
+    /// Sets the render scale, 1..=8. At 1 the HD surfaces are off and nothing in `hd.rs` runs;
+    /// above it every primitive is drawn a second time at S x S pixels per VRAM pixel. The 1x
+    /// VRAM is the same at every scale.
+    pub fn set_scale(&mut self, scale: u32) {
+        let scale = scale.clamp(1, 8);
+        if scale == self.scale() {
+            return;
+        }
+        self.hd_sync();
+        self.hd = (scale > 1).then(|| Box::new(Hd::new(scale, self.hd_threads)));
+        self.hd_register_draw_area();
+        self.hd_register_display();
+    }
+
+    /// The render scale (1 = HD off).
+    pub fn scale(&self) -> u32 {
+        self.hd.as_ref().map_or(1, |h| h.scale())
+    }
+
+    /// Nanoseconds the HD queue has taken to draw so far (0 at scale 1).
+    pub fn hd_flush_ns(&self) -> u64 {
+        self.hd.as_ref().map_or(0, |h| h.flush_ns)
+    }
+
+    /// Drawing threads for the HD surfaces (0 = one per logical core, at most 8).
+    pub fn set_hd_threads(&mut self, n: usize) {
+        self.hd_threads = n;
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.set_threads(n);
+        }
+    }
+
+    /// Draws everything the HD queue holds (before the 1x VRAM changes).
+    fn hd_sync(&mut self) {
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.flush(&self.vram);
+        }
+    }
+
+    fn hd_register_draw_area(&mut self) {
+        let (w, h) = self.draw_area_size();
+        // (a draw area bigger than any picture, like the reset one, is no buffer)
+        if w <= 0 || h <= 0 || w > 640 || h > 480 {
+            return;
+        }
+        let (x, y) = (self.st.clip_x0, self.st.clip_y0);
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.register(&self.vram, x, y, w, h);
+        }
+    }
+
+    fn hd_register_display(&mut self) {
+        let d = self.disp;
+        if d.rgb24 || d.w <= 0 || d.h <= 0 {
+            return;
+        }
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.register(&self.vram, d.x, d.y, d.w.min(640), d.h.min(480));
+        }
+    }
+
+    /// The visible picture at the render scale: `w * S x h * S` pixels of 0x00RRGGBB into `out`
+    /// (resized), from the HD surface holding the display area, or the 1x picture with every
+    /// pixel replicated S x S when none does (movies, 24-bit). At scale 1 it is `read_display`.
+    /// `None` when the display is off. (`&mut` because it draws the queue first.)
+    pub fn read_display_hd(&mut self, out: &mut Vec<u32>) -> Option<(usize, usize)> {
+        let d = self.disp;
+        let w = d.w.clamp(1, 640);
+        let h = d.h.clamp(1, 480);
+        if !d.on {
+            return None;
+        }
+        if !d.rgb24
+            && let Some(hd) = self.hd.as_deref_mut()
+            && let Some(r) = hd.read_display(&self.vram, d.x, d.y, w, h, out)
+        {
+            return Some(r);
+        }
+        let mut one = vec![0u32; (w * h) as usize];
+        let (w, h) = self.read_display(&mut one)?;
+        let s = self.scale() as usize;
+        out.clear();
+        out.reserve(w * h * s * s);
+        for row in one.chunks(w) {
+            let start = out.len();
+            for &p in row {
+                out.extend(std::iter::repeat_n(p, s));
+            }
+            for _ in 1..s {
+                out.extend_from_within(start..start + w * s);
+            }
+        }
+        Some((w * s, h * s))
     }
 
     /// Display on / off (GP1 03).
