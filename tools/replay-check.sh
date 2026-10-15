@@ -9,7 +9,8 @@
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
-# Native output goes to captures/native-runs/check-<name>/.
+# Native output goes to captures/native-runs/check-<name>/ (`DW1_CHECK_PREFIX` replaces `check-`,
+# so parallel worktrees sharing captures/ don't overwrite each other's runs).
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # The oracle dumps have the default checkpoints; a caller's interval would unpair them.
@@ -45,7 +46,7 @@ echo "$table" | while read -r name oracle card; do
     if [ -n "$want" ] && ! echo " $want " | grep -q " $name "; then continue; fi
     odir=captures/oracle-runs/$oracle
     if [ ! -d "$odir" ]; then echo "$name: SKIP (no oracle dumps in $odir)"; continue; fi
-    out=captures/native-runs/check-$name
+    out=captures/native-runs/${DW1_CHECK_PREFIX:-check-}$name
     rm -rf "$out" && mkdir -p "$out"
     if [ "$card" = - ]; then
         DW1_REPLAY=oracle/replays/$name.txt DW1_OUT=$out "$bin" > "$out/log.txt" 2>&1

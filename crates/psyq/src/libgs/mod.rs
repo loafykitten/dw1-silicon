@@ -6,19 +6,23 @@
 //! `p2-landing`, `p2-menu`, 2026-10-13). Rules are tagged `[doc]`, `[hdr]` or `[obs]`.
 
 mod coord;
+mod divide;
 mod light;
 mod model;
 mod sort2d;
 mod sort4j;
 mod tim;
+mod tmd;
 mod view;
 
 pub use coord::*;
+pub use divide::*;
 pub use light::*;
 pub use model::*;
 pub use sort2d::*;
 pub use sort4j::*;
 pub use tim::*;
+pub use tmd::*;
 pub use view::*;
 
 use std::sync::Mutex;
@@ -119,6 +123,12 @@ static mut CLEAR_PACKETS: [[u32; 4]; 2] = [[0; 4]; 2];
 
 fn display<R>(f: impl FnOnce(&mut Display) -> R) -> R {
     f(&mut DISPLAY.lock().unwrap())
+}
+
+/// The display's width and height (`GsInitGraph`), as libgs keeps them for the dividing
+/// handlers [obs: 320 and 240 in their work area for DW1's display].
+pub(crate) fn display_size() -> (u32, u32) {
+    display(|d| (d.width as u16 as u32, d.height as u16 as u32))
 }
 
 impl Display {
