@@ -8,7 +8,8 @@
 #                                                 register-save debug-evo debug-death
 #                                                 battle-mode arena-cup tour-panorama
 #                                                 tour-jungle tour-drill tour-savanna
-#                                                 tour-mansion tour-canyon
+#                                                 tour-mansion tour-canyon tour-dino
+#                                                 tour-dino-back tour-lava tour-freezeland
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
@@ -50,7 +51,11 @@ tour-jungle p9-tour-jungle-record debug-day2-gabumon
 tour-drill p9-tour-drill-record debug-day2-gabumon
 tour-savanna p9-tour-savanna-record debug-day2-gabumon
 tour-mansion p9-tour-mansion-record debug-day2-gabumon
-tour-canyon p9-tour-canyon-record debug-day2-gabumon'
+tour-canyon p9-tour-canyon-record debug-day2-gabumon
+tour-dino p9-tour-dino-record debug-day2-gabumon
+tour-dino-back p9-tour-dino-back-record debug-day2-gabumon
+tour-lava p9-tour-lava-record debug-day2-gabumon
+tour-freezeland p9-tour-freezeland-record debug-day2-gabumon'
 
 want="$*"
 echo "$table" | while read -r name oracle card card2; do

@@ -1,10 +1,11 @@
 -- Extra schedule for DW1ROUTE_PROFILE=tour-dino (Phase 9, stream tour, derived with
 -- oracle/explore.lua): after route-debug-room-schedule.lua: Mr. Warp, Very far away, the Ancient
 -- Dino Region's gate (screen 79, the camera turned: Up walks east), north to Tyrannomon ("I won't
--- let anyone mess up this place!"): the battle, lost; MURD and Jijimon's house (218), out into the
--- yard (204), Mr. Warp again, Very far away, the Dino Region's back (screen 86), the "meteorite"
--- (Golemon: "Do you know about the island's danger?"): the battle, lost; Jijimon's house again,
--- control back by ~22760.
+-- let anyone mess up this place!"): the battle, lost; MURD and Jijimon's house (218). The
+-- exploration then walked out to Mr. Warp again and on to the Dino Region's back; in the
+-- recording (oracle/replays/tour-dino.txt) the battle runs longer (the explorer's pauses change CD
+-- timing: docs/phase5-plan.md), so the rest of the presses land in the house and it ends there,
+-- control back, at 23000. The back is its own recording (tour-dino-back).
 local PRESSES = {
     { 6954, 6954, 1, 70, 'UP' },
     { 7024, 7024, 1, 40, 'LEFT' },
@@ -99,13 +100,13 @@ local MILESTONES = {
     { 8104, 'dino_79' },
     { 8639, 'tyrannomon' },
     { 10499, 'battle' },
-    { 12499, 'jijimon_house' },
-    { 14505, 'yard' },
-    { 15419, 'warp_menu_again' },
-    { 15979, 'dino_86' },
-    { 16171, 'meteorite' },
-    { 18811, 'battle2' },
-    { 22011, 'jijimon_house2' },
+    { 12499, 'house' },
+    { 14505, 'late_1' },
+    { 15419, 'late_2' },
+    { 15979, 'late_3' },
+    { 16171, 'late_4' },
+    { 18811, 'late_5' },
+    { 22011, 'late_6' },
     { 23000, 'dino_done' },
 }
 return PRESSES, MILESTONES
