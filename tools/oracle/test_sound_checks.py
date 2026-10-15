@@ -115,21 +115,23 @@ class Mdec(unittest.TestCase):
 
 class Xa(unittest.TestCase):
     """Four audio sectors of one read (LBAs 1000-1024), decoded at VBlanks 110-119 on both sides;
-    the emulator's read position goes through them 2-3 sectors a VBlank to VBlank 121; polls every
-    2 VBlanks from 100; each sector is 150 frames and the port's CD input plays 50 a VBlank, so
-    each is heard as it's decoded."""
+    the emulator's read position goes through them 2-3 sectors a VBlank from VBlank 109 to 121
+    (LBA 1031); the capture starts at VBlank 100; polls every 2 VBlanks from 100; each sector is
+    150 frames and the port's CD input plays 50 a VBlank, so each is heard as it's decoded."""
 
     LBAS = [1000, 1008, 1016, 1024]
     VBS = [110, 113, 116, 119]
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
-        self.pcm = [bytes((i * 31 + k) % 256 for k in range(16)) for i in range(4)]
+        self.pcm = [bytes((i * 31 + k) % 256 for k in range(16)) for i in range(6)]
 
     def tearDown(self):
         self.dir.cleanup()
 
-    def write(self, underrun_at=None, port_skips=None):
+    def write(self, underrun_at=None, port_skips=None, before_capture=False):
+        """before_capture: the port also played two reads before the capture began (LBA 9000 at
+        VBlank 90, LBA 5000 at 96), with the CD input running dry after each."""
         d = self.dir.name
         ora = os.path.join(d, 'ora')
         os.makedirs(ora, exist_ok=True)
@@ -137,12 +139,12 @@ class Xa(unittest.TestCase):
         put(replay, ''.join(f'{k} {100 + 2 * k} 00000000 800108d8\n' for k in range(30)))
         # The emulator logs a sector only when its samples change.
         shown, prev = {}, None
-        for i, pcm in enumerate(self.pcm):
+        for i, pcm in enumerate(self.pcm[:4]):
             if pcm != prev:
                 shown[self.VBS[i]] = i
             prev = pcm
         lines, offsets = ['100 pos 970\n'], []
-        for vb in range(101, 122):
+        for vb in range(109, 122):
             pos = 1002 + (vb - 110) * 8 // 3
             if vb in shown:
                 i = shown[vb]
@@ -152,18 +154,29 @@ class Xa(unittest.TestCase):
                 lines.append(f'{vb} pos {pos}\n')
         put(os.path.join(ora, 'xa-log.txt'), ''.join(lines))
         put(os.path.join(ora, 'xa-pcm.bin'), b''.join(self.pcm[i] for i in offsets))
-        nl, pushed = [], 0
-        for vb in range(100, 130):
-            polls = (vb - 100) // 2 + 1
-            since = (vb - 100) % 2
-            if since == 0:
+        # The port: (VBlank, LBA, samples index, frames queued before it).
+        port = [(vb, lba, i, 150 * i) for i, (vb, lba) in enumerate(zip(self.VBS, self.LBAS))
+                if lba != port_skips]
+        pops = {vb: ((vb - 109) * 50, 0) for vb in range(110, 130)}
+        if before_capture:
+            port = [(90, 9000, 4, 0), (96, 5000, 5, 150)] + [
+                (vb, lba, i, 300 + q) for vb, lba, i, q in port]
+            pops = {90: (50, 0), 91: (100, 0), 92: (150, 0), 96: (200, 5), 97: (250, 5),
+                    98: (300, 5)}
+            pops.update({vb: (300 + (vb - 109) * 50, 9) for vb in range(110, 130)})
+        if underrun_at is not None:
+            pops = {vb: (p, u + (7 if vb >= underrun_at else 0)) for vb, (p, u) in pops.items()}
+        nl = []
+        for vb in range(85, 130):
+            polls = (vb - 100) // 2 + 1 if vb >= 100 else 0
+            since = (vb - 100) % 2 if vb >= 100 else vb
+            if vb >= 100 and since == 0:
                 nl.append(f'poll {vb} {polls}\n')
-            if vb in self.VBS and self.LBAS[self.VBS.index(vb)] != port_skips:
-                i = self.VBS.index(vb)
-                nl.append(f'sector {vb} {polls} {since} {self.LBAS[i]} {vb} 4 {16 * i} {150 * i}\n')
-            if vb >= 110:
-                under = 7 if underrun_at is not None and vb >= underrun_at else 0
-                nl.append(f'pop {vb} {polls} {since} {(vb - 109) * 50} {under}\n')
+            for pvb, lba, i, queued in port:
+                if pvb == vb:
+                    nl.append(f'sector {vb} {polls} {since} {lba} {vb} 4 {16 * i} {queued}\n')
+            if vb in pops:
+                nl.append(f'pop {vb} {polls} {since} {pops[vb][0]} {pops[vb][1]}\n')
         put(os.path.join(d, 'nat.txt'), ''.join(nl))
         put(os.path.join(d, 'nat.bin'), b''.join(self.pcm))
         return run('compare_xa.py', ora, os.path.join(d, 'nat'), replay)
@@ -196,6 +209,20 @@ class Xa(unittest.TestCase):
         self.assertNotEqual(code, 0, out)
         self.assertIn('ran dry', out)
         self.assertIn('LBA 1016: read by the emulator, never decoded by the port', out)
+
+    def test_dropped_last_sector_fails(self):
+        # Sol's second case: 1024 repeats 1016, the port never decodes 1024 and stops with no
+        # gap after it. The emulator's read position reached 1031, so 1024 was read and played.
+        self.pcm[3] = self.pcm[2]
+        code, out = self.write(port_skips=1024)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn('LBA 1024: read by the emulator, never decoded by the port', out)
+
+    def test_gaps_before_the_capture_are_outside_it(self):
+        # Sol's third case: reads that ended before the capture began, with the gaps after them.
+        code, out = self.write(before_capture=True)
+        self.assertEqual(code, 0, out)
+        self.assertIn("'gaps outside the capture': 2", out)
 
 
 if __name__ == '__main__':

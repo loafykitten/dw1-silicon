@@ -321,12 +321,16 @@ and the continue movie). What "identical" means, and what was measured:
   resolution) on time. No gap remains within a movie, only at its end and at the credits' re-read
   that the emulator has too.
   `compare_xa.py` takes the reads from the emulator's side (its read position, VBlank by VBlank:
-  steps of 1-8 sectors are one read), not from what the port decoded: every audio sector the
-  emulator read through must have been decoded by the port, and the port's CD input may run dry
-  (its underrun count rising) only after the last sector of one of the emulator's reads. The logs
-  show 3 such gaps on new-game and 5 on ending (plus 2 from the boot, before the ending capture
-  starts), none inside a read. `tools/oracle/test_sound_checks.py` (run first by
+  steps of 1-8 sectors are one read), not from what the port decoded: every audio sector of a
+  movie read, up to where the emulator's read position ended, must have been decoded by the port
+  (and one the emulator never showed must hold the samples the emulator still held), and the
+  port's CD input may run dry (its underrun count rising) only after the last sector of one of
+  the emulator's reads. A gap after a sector decoded before or after the capture is only counted;
+  anything the captures can't decide fails as "unverified". The logs show 3 gaps at reads' ends
+  on new-game and 5 on ending (plus 2 after the boot's movie, before the ending capture starts),
+  none inside a read, nothing unverified. `tools/oracle/test_sound_checks.py` (run first by
   `tools/sound-check.sh`) feeds both movie checks synthetic logs and requires them to fail on
   each bad case: a picture leaning 0.25 in one channel, pixel data cut short, missing or of the
-  wrong size, a gap in the XA audio inside a read, and a sector the port skipped inside a read
-  where the emulator showed only its position (it repeated the one before).
+  wrong size, a gap in the XA audio inside a read, a sector the port skipped inside a read or at
+  its end where the emulator showed only its position (it repeated the one before), and gaps
+  before the capture that must count as outside it.
