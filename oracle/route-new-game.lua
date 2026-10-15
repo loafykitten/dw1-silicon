@@ -71,6 +71,14 @@ local EXTRA = {
                       file = { '/route-debug-room-schedule.lua', '/route-debug-evo-schedule.lua' } },
     ['debug-death'] = { base = 'continue',
                         file = { '/route-debug-room-schedule.lua', '/route-debug-death-schedule.lua' } },
+    -- Phase 9, stream tour: Mr. Warp's destinations from the debug room, and walks from the
+    -- downloaded saves.
+    ['tour-panorama'] = { base = 'continue',
+                          file = { '/route-debug-room-schedule.lua', '/route-tour-panorama-schedule.lua' } },
+    ['tour-jungle'] = { base = 'continue',
+                        file = { '/route-debug-room-schedule.lua', '/route-tour-jungle-schedule.lua' } },
+    ['tour-drill'] = { base = 'continue',
+                       file = { '/route-debug-room-schedule.lua', '/route-tour-drill-schedule.lua' } },
     ['battle-fixture'] = { base = 'continue-save2', file = '/route-battle-schedule.lua' },
     ['training-fixture'] = { base = 'continue-save2', file = '/route-training-schedule.lua' },
     ['training-bonus'] = { base = 'continue-save2',
