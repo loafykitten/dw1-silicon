@@ -11,7 +11,8 @@
 //!
 //! Picture settings (`settings.rs`, kept between runs; a note in the corner says what changed
 //! and whether it's original or an addition): F2 render scale (auto, 1, 2, 3, 4, 6, 8), F3 no
-//! wobble, F4 fit (integer, the original look, or fill at 4:3), F11 or Cmd-Ctrl-F fullscreen.
+//! wobble, F4 fit (integer, the original look, or fill at 4:3), F5 full colour, F11 or
+//! Cmd-Ctrl-F fullscreen.
 //!
 //! Before the game starts, `Window::splash` shows a short text screen (about 2.8 s; any key,
 //! button or click skips it) saying this is the native Mac build. `DW1_NO_SPLASH=1` skips it;
@@ -280,6 +281,7 @@ const NOTE_TIME: Duration = Duration::from_millis(2500);
 enum Note {
     Scale,
     Wobble,
+    FullColour,
     Fit,
     Fullscreen,
 }
@@ -301,6 +303,9 @@ impl Note {
             Note::Wobble if s.no_wobble && scale > 1 => "No wobble: on - addition".into(),
             Note::Wobble if s.no_wobble => "No wobble: on (needs render scale 2x+)".into(),
             Note::Wobble => "No wobble: off - original".into(),
+            Note::FullColour if s.full_colour && scale > 1 => "Full colour: on - addition".into(),
+            Note::FullColour if s.full_colour => "Full colour: on (needs render scale 2x+)".into(),
+            Note::FullColour => "Full colour: off - original".into(),
             Note::Fit if s.fit == Fit::Fill => "Fit: fill window - addition".into(),
             Note::Fit => "Fit: whole multiples - original".into(),
             Note::Fullscreen if s.fullscreen => "Fullscreen (F11 for a window)".into(),
@@ -491,6 +496,9 @@ impl Window {
                 match k {
                     Scancode::F2 => self.change(Note::Scale, |s| s.next_scale()),
                     Scancode::F3 => self.change(Note::Wobble, |s| s.no_wobble = !s.no_wobble),
+                    Scancode::F5 => {
+                        self.change(Note::FullColour, |s| s.full_colour = !s.full_colour)
+                    }
                     Scancode::F4 => self.change(Note::Fit, |s| {
                         s.fit = if s.fit == Fit::Fill {
                             Fit::Integer
@@ -547,6 +555,7 @@ impl Window {
         match note {
             Note::Scale => k.scale = s.scale,
             Note::Wobble => k.no_wobble = s.no_wobble,
+            Note::FullColour => k.full_colour = s.full_colour,
             Note::Fit => k.fit = s.fit,
             Note::Fullscreen => k.fullscreen = s.fullscreen,
         }
@@ -574,7 +583,7 @@ impl Window {
         self.refresh_ns = refresh_ns(&self.window);
     }
 
-    /// Sets the GPU's render scale (and no wobble) for a window `pw x ph` pixels: changes only
+    /// Sets the GPU's render scale (and no wobble, full colour) for a window `pw x ph` pixels: changes only
     /// when the settings or the window's size call for another scale.
     fn apply_scale(&self, pw: u32, ph: u32) -> u32 {
         let (_, _, _, shown_h) = render::place(self.settings.fit, 320, 240, pw, ph);
@@ -583,6 +592,9 @@ impl Window {
         psyq::gpu::with(|g| {
             if g.scale() != scale {
                 g.set_scale(scale);
+            }
+            if g.full_colour() != self.settings.full_colour {
+                g.set_full_colour(self.settings.full_colour);
             }
         });
         if backend::pgxp::enabled() != wobble_off {

@@ -5,7 +5,7 @@ same day after an adversarial review by GPT 6 Astra (high) (`docs/plan-review-1.
 whole before starting, and don't re-ask Ember anything answered here. Keep the
 "Where things stand" section current at the end of every session: it is the handoff.
 
-## Where things stand (2026-10-14, session 5): start here
+## Where things stand (2026-10-14, session 6): start here
 
 - **Phase 8 (renderer and extras) is mostly built** (`docs/phase8-plan.md`, its Progress section
   has the commits). The window now shows the picture through wgpu on Metal (`crates/render`),
@@ -18,9 +18,12 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   from the window size, F3 no wobble, F4 fit, F11 fullscreen) with a note in the corner; the
   defaults are auto, no wobble on, whole-multiple fit. Widescreen: a report only
   (`docs/phase8-widescreen.md`: selective, not now).
-- **Next session:** Ember has looked (defaults great, hotkeys and fit work; Answered), so close
-  Phase 8: "full colour" (8.4, not built),
-  anything Ember asks, the Phase 8 check-in. Then Phase 9. Fixture saves for Phase 5's remaining
+- **Full colour is built (session 6, 2026-10-14):** F5 / `full_colour` / `DW1_FULL_COLOUR=1`,
+  default off. HD shading and see-through effects on 8 bits a channel with no dither; off is
+  byte-identical to before, replays identical with it on, Astra's review converged
+  (`docs/phase8-plan.md` Progress). Side-by-sides in `captures/phase8-full-colour/`.
+- **Next session:** Ember looks at full colour (F5) and says whether it should be on by default;
+  anything else Ember asks; then the Phase 8 check-in and Phase 9. Fixture saves for Phase 5's remaining
   overlays still come from Ember over time.
 - **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
 - **macOS sometimes reports the window hidden** ("occluded") while Ember's screen is in use
@@ -685,8 +688,8 @@ replays. It is an addition, labelled as one like Phase 8's options.
 
 ### Phase 8: the Mac-native renderer and extras
 
-**Under way (2026-10-14, `docs/phase8-plan.md`):** 8.1-8.4 and 8.6 done, 8.5 (GPU renderer) not
-needed so far; Ember's look and "full colour" left.
+**Under way (2026-10-14, `docs/phase8-plan.md`):** 8.1-8.4 (full colour included) and 8.6 done,
+8.5 (GPU renderer) not needed so far; Ember's look at full colour and the check-in left.
 
 The `render` crate on wgpu/Metal: render scale, no wobble, Retina, window
 modes, gamepads through SDL. Each option labelled original or addition; 1x with extras off

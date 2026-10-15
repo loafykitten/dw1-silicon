@@ -4,8 +4,8 @@
 //! `fit = integer` the picture is the PS1's, pixel for pixel.
 //!
 //! The file is `key = value` lines (`#` starts a comment); unknown keys and bad values are
-//! reported and left at their defaults. `DW1_SCALE`, `DW1_PGXP` and `DW1_FIT` override it for one
-//! run. Headless runs never read it.
+//! reported and left at their defaults. `DW1_SCALE`, `DW1_PGXP`, `DW1_FULL_COLOUR` and `DW1_FIT`
+//! override it for one run. Headless runs never read it.
 
 use std::path::{Path, PathBuf};
 
@@ -24,6 +24,7 @@ pub enum Scale {
 pub struct Settings {
     pub scale: Scale,
     pub no_wobble: bool,
+    pub full_colour: bool,
     pub fit: Fit,
     pub fullscreen: bool,
 }
@@ -33,6 +34,7 @@ impl Default for Settings {
         Settings {
             scale: Scale::Auto,
             no_wobble: true,
+            full_colour: false,
             fit: Fit::Integer,
             fullscreen: false,
         }
@@ -105,6 +107,7 @@ impl Settings {
                 }
             }
             "no_wobble" => self.no_wobble = bool_of(value)?,
+            "full_colour" => self.full_colour = bool_of(value)?,
             "fullscreen" => self.fullscreen = bool_of(value)?,
             "fit" => {
                 self.fit = match value {
@@ -118,11 +121,13 @@ impl Settings {
         Ok(())
     }
 
-    /// `DW1_SCALE=<n>` (a fixed scale), `DW1_PGXP=0/1`, `DW1_FIT=integer/fill`.
+    /// `DW1_SCALE=<n>` (a fixed scale), `DW1_PGXP=0/1`, `DW1_FULL_COLOUR=0/1`,
+    /// `DW1_FIT=integer/fill`.
     fn apply_env(&mut self, var: impl Fn(&str) -> Option<String>) {
         for (env, key) in [
             ("DW1_SCALE", "render_scale"),
             ("DW1_PGXP", "no_wobble"),
+            ("DW1_FULL_COLOUR", "full_colour"),
             ("DW1_FIT", "fit"),
         ] {
             if let Some(v) = var(env).filter(|v| !v.is_empty())
@@ -144,7 +149,7 @@ impl Settings {
         };
         format!(
             "# dw1-silicon picture settings. Changed in the game: F2 render scale, F3 no wobble,\n\
-             # F4 fit, F11 fullscreen. Delete this file for the defaults.\n\
+             # F4 fit, F5 full colour, F11 fullscreen. Delete this file for the defaults.\n\
              \n\
              # The resolution the game is drawn at: 1 is the original PS1 picture; 2 to 8 draw it\n\
              # that many times sharper (an addition); auto picks from the window's size.\n\
@@ -154,12 +159,17 @@ impl Settings {
              # don't wobble (an addition; only with render_scale above 1).\n\
              no_wobble = {}\n\
              \n\
+             # Smooth colour: shading and see-through effects at full precision, without the\n\
+             # PS1's 15-bit colour and its dither pattern (an addition; only with render_scale\n\
+             # above 1).\n\
+             full_colour = {}\n\
+             \n\
              # integer: the largest whole multiple of the PS1's picture, black around it (the\n\
              # original look). fill: as large as the window allows at 4:3 (an addition).\n\
              fit = {fit}\n\
              \n\
              fullscreen = {}\n",
-            self.no_wobble, self.fullscreen
+            self.no_wobble, self.full_colour, self.fullscreen
         )
     }
 
@@ -211,6 +221,7 @@ mod tests {
         let s = Settings {
             scale: Scale::Fixed(3),
             no_wobble: false,
+            full_colour: true,
             fit: Fit::Fill,
             fullscreen: true,
         };

@@ -10,7 +10,8 @@ use crate::memory::{LINK_END, ptr_of_link};
 /// The game's GPU. `DW1_SCALE=<1..8>` turns the HD surfaces on at that render scale (1, the
 /// default, is off: nothing but the 1x picture); `DW1_HD_THREADS=<n>` sets the drawing threads
 /// (default one per core, at most 8); `DW1_PGXP=1` draws 3D polygons on the HD surfaces at
-/// their precise projected positions ("no wobble"; nothing changes at scale 1).
+/// their precise projected positions ("no wobble"; nothing changes at scale 1); `DW1_FULL_COLOUR=1`
+/// shades the HD surfaces on 8 bits a channel without the dither.
 static GPU: LazyLock<Mutex<Gpu>> = LazyLock::new(|| {
     let mut gpu = Gpu::new();
     let env = |name: &str| {
@@ -25,6 +26,7 @@ static GPU: LazyLock<Mutex<Gpu>> = LazyLock::new(|| {
         gpu.set_scale(s);
     }
     backend::pgxp::set_enabled(gpu.scale() > 1 && env("DW1_PGXP") == Some(1));
+    gpu.set_full_colour(env("DW1_FULL_COLOUR") == Some(1));
     Mutex::new(gpu)
 });
 

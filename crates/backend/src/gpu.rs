@@ -233,6 +233,7 @@ pub struct Gpu {
     /// The HD surfaces (`None` at scale 1), a side channel the game never reads.
     hd: Option<Box<Hd>>,
     hd_threads: usize,
+    hd_full: bool,
 }
 
 impl Default for Gpu {
@@ -252,6 +253,7 @@ impl Gpu {
             seen: [false; 256],
             hd: None,
             hd_threads: 0,
+            hd_full: false,
         };
         g.reset(true);
         g
@@ -1195,6 +1197,9 @@ impl Gpu {
         }
         self.hd_sync();
         self.hd = (scale > 1).then(|| Box::new(Hd::new(scale, self.hd_threads)));
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.set_full_colour(self.hd_full);
+        }
         self.hd_register_draw_area();
         self.hd_register_display();
     }
@@ -1207,6 +1212,20 @@ impl Gpu {
     /// Nanoseconds the HD queue has taken to draw so far (0 at scale 1).
     pub fn hd_flush_ns(&self) -> u64 {
         self.hd.as_ref().map_or(0, |h| h.flush_ns)
+    }
+
+    /// Full colour (an addition, HD surfaces only): shading and blending on 8 bits a channel,
+    /// without the PS1's cut to 15 bits and its dither. The 1x VRAM is the same either way.
+    pub fn set_full_colour(&mut self, on: bool) {
+        self.hd_sync();
+        self.hd_full = on;
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.set_full_colour(on);
+        }
+    }
+
+    pub fn full_colour(&self) -> bool {
+        self.hd_full
     }
 
     /// Drawing threads for the HD surfaces (0 = one per logical core, at most 8).

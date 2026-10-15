@@ -7,7 +7,10 @@
 //! (PR.34) and packets / layers are left out. Differences from the C are marked below.
 //!
 //! A surface is one draw / display buffer rect of VRAM (the game's two 320x240 buffers) kept at
-//! S x S pixels per VRAM pixel in the PS1 format (15-bit BGR + mask bit). Primitives are drawn
+//! S x S pixels per VRAM pixel, 8 bits a channel and a mask bit (`MASK`). With full colour off
+//! every pixel holds a 15-bit value expanded as the display does, and the PS1's rules run on the
+//! 15-bit value, so the picture is the same as in the PS1 format; with it on (an addition) they
+//! run on the 8-bit channels, without the cut to 5 bits and the dither. Primitives are drawn
 //! into it at that resolution with the PS1 rules applied per pixel of the surface; textures and
 //! CLUTs always come from the 1x VRAM. Pixel (X, Y) of a surface samples the VRAM point
 //! (x + X / S, y + Y / S), so a 1x pixel is the S x S block whose first pixel samples the same
@@ -38,13 +41,16 @@ const PARALLEL_WORK: u64 = 20_000;
 /// The queue is drawn when it reaches this many commands.
 const MAX_QUEUE: usize = 1 << 16;
 
+/// The mask bit of a surface pixel (the colour is 0x00RRGGBB).
+const MASK: u32 = 1 << 24;
+
 /// A surface: VRAM rect x, y, w, h; `px` is (w * S) x (h * S) pixels, empty until used.
 struct Surf {
     x: i32,
     y: i32,
     w: i32,
     h: i32,
-    px: Vec<u16>,
+    px: Vec<u32>,
     /// False when the pixels can't be trusted (the 1x VRAM was written behind our back, or a
     /// draw went elsewhere over this rect): the display falls back to the 1x picture, and the
     /// surface is rebuilt from the VRAM when it is registered again or at the next primitive.
@@ -153,6 +159,8 @@ pub struct Hd {
     surfs: Vec<Surf>,
     queue: Vec<Cmd>,
     threads: usize,
+    /// Full colour (an addition): shading and blending on 8-bit channels, no dither.
+    full: bool,
     missed: bool,
     /// Rough pixels the queued commands cover (1x), to decide whether threads pay.
     work: u64,
@@ -185,6 +193,7 @@ impl Hd {
             } else {
                 threads.clamp(1, 16)
             },
+            full: false,
             missed: false,
             flush_ns: 0,
             work: 0,
@@ -196,6 +205,11 @@ impl Hd {
 
     pub fn scale(&self) -> u32 {
         self.scale as u32
+    }
+
+    /// Full colour on or off for the primitives drawn from now on (call after `flush`).
+    pub fn set_full_colour(&mut self, on: bool) {
+        self.full = on;
     }
 
     pub fn set_threads(&mut self, n: usize) {
@@ -216,7 +230,7 @@ impl Hd {
             let src = &vram[(j as usize & H_MASK as usize) * VRAM_W..][..VRAM_W];
             let row0 = (j - s.y) as usize * sc * pitch;
             for i in x..x + w {
-                let c = src[i as usize & W_MASK as usize];
+                let c = from15(src[i as usize & W_MASK as usize]);
                 let at = row0 + (i - s.x) as usize * sc;
                 s.px[at..at + sc].fill(c);
             }
@@ -431,6 +445,7 @@ impl Hd {
                 part: part as i32,
                 parts: parts as i32,
                 scale,
+                full: self.full,
                 rows: (0..self.surfs.len()).map(|_| Vec::new()).collect(),
             })
             .collect();
@@ -639,7 +654,7 @@ impl Hd {
                 let k0 = (fx - s.x) as usize * sc;
                 let k1 = k0 + fw as usize * sc;
                 for j in (fy - s.y) as usize * sc..(fy + fh - s.y) as usize * sc {
-                    s.px[j * pitch + k0..j * pitch + k1].fill(c);
+                    s.px[j * pitch + k0..j * pitch + k1].fill(from15(c));
                 }
             }
         }
@@ -690,7 +705,7 @@ impl Hd {
         let x0 = (x - s.x) as usize * sc;
         for j in 0..oh {
             let row = &s.px[((y - s.y) as usize * sc + j) * pitch + x0..][..ow];
-            out.extend(row.iter().map(|&c| rgb15(c)));
+            out.extend(row.iter().map(|&c| c & !MASK));
         }
         Some((ow, oh))
     }
@@ -701,6 +716,29 @@ pub(crate) fn rgb15(c: u16) -> u32 {
     let c = c as u32;
     let e = |v: u32| (v << 3) | (v >> 2);
     (e(c & 31) << 16) | (e((c >> 5) & 31) << 8) | e((c >> 10) & 31)
+}
+
+/// A VRAM pixel as a surface pixel.
+fn from15(c: u16) -> u32 {
+    rgb15(c) | if c & 0x8000 != 0 { MASK } else { 0 }
+}
+
+/// A surface pixel as a VRAM pixel (each channel's top 5 bits: `from15`'s inverse).
+fn to15(p: u32) -> u16 {
+    let ch = |k: u32| (p >> (k + 3)) & 31;
+    let m = if p & MASK != 0 { 0x8000 } else { 0 };
+    (ch(16) | (ch(8) << 5) | (ch(0) << 10) | m) as u16
+}
+
+/// 8-bit channels r, g, b (clamped) as a surface pixel.
+fn pack8([r, g, b]: [i32; 3]) -> u32 {
+    let c = |v: i32| v.clamp(0, 255) as u32;
+    (c(r) << 16) | (c(g) << 8) | c(b)
+}
+
+/// Channel k (0 r, 1 g, 2 b) of a surface pixel.
+fn chan(p: u32, k: usize) -> i32 {
+    ((p >> (16 - 8 * k)) & 0xFF) as i32
 }
 
 /// PG.10 b2: the GPU drops triangles 1024 or more columns wide or 512 or more rows tall; an HD
@@ -724,12 +762,14 @@ struct Part<'a> {
     part: i32,
     parts: i32,
     scale: i32,
+    /// full colour (`Hd::full`)
+    full: bool,
     /// per surface, its rows part, part + parts, ... in order
-    rows: Vec<Vec<&'a mut [u16]>>,
+    rows: Vec<Vec<&'a mut [u32]>>,
 }
 
 impl Part<'_> {
-    fn row(&mut self, si: usize, y: i32) -> &mut [u16] {
+    fn row(&mut self, si: usize, y: i32) -> &mut [u32] {
         debug_assert!(y % self.parts == self.part);
         &mut *self.rows[si][(y / self.parts) as usize]
     }
@@ -974,6 +1014,145 @@ fn hshade(
         }
     }
     hput(st, p, tr, tg, tb, tsemi, abr, c & 0x8000 != 0);
+}
+
+// ---- full colour ----
+
+/// Texel `c` as 8-bit channels, modulated by the colour `m` (128 = unchanged) unless raw; up to
+/// 509, not saturated (a polygon blends first).
+fn modulate8(t: &Tex, c: i32, m: [i32; 3]) -> [i32; 3] {
+    let e = |v: i32| (v << 3) | (v >> 2);
+    let (r, g, b) = (e(c & 31), e((c >> 5) & 31), e((c >> 10) & 31));
+    if t.raw {
+        [r, g, b]
+    } else {
+        [(r * m[0]) >> 7, (g * m[1]) >> 7, (b * m[2]) >> 7]
+    }
+}
+
+/// Blend mode `abr` on one 8-bit channel: back `b`, front `f` (clamped by `pack8`).
+#[inline(always)]
+fn blend8(abr: i32, b: i32, f: i32) -> i32 {
+    match abr {
+        0 => (b + f) >> 1,
+        1 => b + f,
+        2 => b - f,
+        _ => b + (f >> 2),
+    }
+}
+
+/// `direct_value` in full colour.
+fn fdirect(
+    st: &State,
+    tc: Option<(&Tex, i32)>,
+    (r, g, b): (i32, i32, i32),
+    semi: bool,
+) -> Option<Option<u32>> {
+    if st.check_mask {
+        return None;
+    }
+    let set = if st.set_mask { MASK } else { 0 };
+    let Some((t, c)) = tc else {
+        return (!semi).then_some(Some(pack8([r, g, b]) | set));
+    };
+    if c == 0 {
+        return Some(None);
+    }
+    if semi && c & 0x8000 != 0 {
+        return None;
+    }
+    let m = if c & 0x8000 != 0 { MASK } else { set };
+    Some(Some(pack8(modulate8(t, c, [r, g, b])) | m))
+}
+
+/// `hshade` in full colour: the same rules (mask bits, transparent texels, which texels blend,
+/// the four blend modes, a rectangle's texel saturating before it blends and a polygon's
+/// after) on 8-bit channels, without the cut to 5 bits and the dither.
+fn fshade(
+    st: &State,
+    p: &mut u32,
+    tc: Option<(&Tex, i32)>,
+    (r, g, b): (i32, i32, i32),
+    semi: bool,
+    abr: i32,
+    poly: bool,
+) {
+    if st.check_mask && *p & MASK != 0 {
+        return;
+    }
+    let (src, blend, mask) = match tc {
+        None => ([r, g, b], semi, false),
+        Some((_, 0)) => return,
+        Some((t, c)) => {
+            let s = c & 0x8000 != 0;
+            let mut f = modulate8(t, c, [r, g, b]);
+            if !poly {
+                f = [f[0].min(255), f[1].min(255), f[2].min(255)];
+            }
+            (f, semi && s, s)
+        }
+    };
+    let out = if blend {
+        let old = *p;
+        [
+            blend8(abr, chan(old, 0), src[0]),
+            blend8(abr, chan(old, 1), src[1]),
+            blend8(abr, chan(old, 2), src[2]),
+        ]
+    } else {
+        src
+    };
+    let m = if mask || st.set_mask { MASK } else { 0 };
+    *p = pack8(out) | m;
+}
+
+/// The value a primitive's pixel gets when it doesn't depend on what is there already
+/// (`direct_value` or `fdirect`, as `full` says).
+fn direct(
+    full: bool,
+    st: &State,
+    tc: Option<(&Tex, i32)>,
+    rgb: (i32, i32, i32),
+    semi: bool,
+    dith: bool,
+    d: i32,
+) -> Option<Option<u32>> {
+    if full {
+        fdirect(st, tc, rgb, semi)
+    } else {
+        direct_value(st, tc, rgb, semi, dith, d).map(|v| v.map(from15))
+    }
+}
+
+/// One pixel of a primitive: `hshade` on the 15-bit value, or `fshade` in full colour.
+#[allow(clippy::too_many_arguments)]
+fn shade(
+    full: bool,
+    st: &State,
+    p: &mut u32,
+    tc: Option<(&Tex, i32)>,
+    rgb: (i32, i32, i32),
+    semi: bool,
+    abr: i32,
+    dith: bool,
+    d: i32,
+    poly: bool,
+    tail: bool,
+) {
+    if full {
+        fshade(st, p, tc, rgb, semi, abr, poly);
+    } else if !skipped(st, *p, tc) {
+        let mut v = to15(*p);
+        hshade(st, &mut v, tc, rgb, semi, abr, dith, d, poly, tail);
+        *p = from15(v);
+    }
+}
+
+/// The pixel `p` keeps what it has (a transparent texel, or a masked pixel with the mask
+/// checked): every early return of `hshade` and `hput`. Such a pixel is left alone, so it keeps
+/// any full-colour value it has.
+fn skipped(st: &State, p: u32, tc: Option<(&Tex, i32)>) -> bool {
+    matches!(tc, Some((_, 0))) || (st.check_mask && p & MASK != 0)
 }
 
 // ---- triangles ----
@@ -1232,6 +1411,7 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
     let g = c.geo;
     let scale = p.scale;
     let sc = scale as i64;
+    let full = p.full;
     let tex = t.tex.as_ref();
     let (gouraud, semi, abr) = (t.gouraud, t.semi, t.abr);
     // [obs] only Gouraud polygons are dithered (as in gpu.rs)
@@ -1430,12 +1610,13 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
                 };
                 let at = x as usize;
                 let tc = tex.map(|t| (t, texel_c));
-                match direct_value(st, tc, (r, gr, b), semi, dith, d) {
+                match direct(full, st, tc, (r, gr, b), semi, dith, d) {
                     Some(Some(val)) => row[at..at + run as usize].fill(val),
                     Some(None) => {}
                     None => {
                         for k in 0..run as usize {
-                            hshade(
+                            shade(
+                                full,
                                 st,
                                 &mut row[at + k],
                                 tc,
@@ -1456,7 +1637,8 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
                 bx += (adv / sc) as i32;
                 continue;
             }
-            hshade(
+            shade(
+                full,
                 st,
                 &mut row[x as usize],
                 tex.map(|t| (t, texel_c)),
@@ -1491,7 +1673,7 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
 fn draw_rect(p: &mut Part, vram: &[u16], c: &Cmd, r: &RectCmd) {
     let st = &c.st;
     let g = c.geo;
-    let scale = p.scale;
+    let (scale, full) = (p.scale, p.full);
     let (cx0, cy0, cx1, cy1) = hd_clip(st, &g, scale);
     let xs = ((r.x0 - g.x) * scale).max(cx0);
     let xe = ((r.x0 + r.w - g.x) * scale - 1).min(cx1);
@@ -1523,12 +1705,13 @@ fn draw_rect(p: &mut Part, vram: &[u16], c: &Cmd, r: &RectCmd) {
             }
             let tc = r.tex.as_ref().map(|t| (t, texel_c));
             let at = x as usize;
-            match direct_value(st, tc, (r.r, r.g, r.b), r.semi, false, 0) {
+            match direct(full, st, tc, (r.r, r.g, r.b), r.semi, false, 0) {
                 Some(Some(val)) => row[at..at + run as usize].fill(val),
                 Some(None) => {}
                 None => {
                     for k in 0..run as usize {
-                        hshade(
+                        shade(
+                            full,
                             st,
                             &mut row[at + k],
                             tc,
@@ -1555,7 +1738,7 @@ fn draw_rect(p: &mut Part, vram: &[u16], c: &Cmd, r: &RectCmd) {
 fn draw_line(p: &mut Part, c: &Cmd, l: &LineCmd) {
     let st = &c.st;
     let g = c.geo;
-    let scale = p.scale;
+    let (scale, full) = (p.scale, p.full);
     line_walk(st, &l.a, &l.b, l.gouraud, |x, y, r, gr, bl, d| {
         let (bx, by) = ((x - g.x) * scale, (y - g.y) * scale);
         for yy in by..by + scale {
@@ -1564,9 +1747,17 @@ fn draw_line(p: &mut Part, c: &Cmd, l: &LineCmd) {
             }
             let row = p.row(g.si, yy);
             for px in &mut row[bx as usize..(bx + scale) as usize] {
+                if full {
+                    fshade(st, px, None, (r, gr, bl), l.semi, l.abr, true);
+                    continue;
+                }
+                if skipped(st, *px, None) {
+                    continue;
+                }
+                let mut v = to15(*px);
                 hput(
                     st,
-                    px,
+                    &mut v,
                     to5(r, d),
                     to5(gr, d),
                     to5(bl, d),
@@ -1574,6 +1765,7 @@ fn draw_line(p: &mut Part, c: &Cmd, l: &LineCmd) {
                     l.abr,
                     false,
                 );
+                *px = from15(v);
             }
         }
     });
@@ -2033,5 +2225,113 @@ mod tests {
                 assert_eq!(p, 0x00ff_ffff, "scale {scale} at ({x}, {y})");
             }
         }
+    }
+
+    #[test]
+    fn full_colour_keeps_the_1x_vram_and_drops_the_cut_and_the_dither() {
+        let draw = |g: &mut Gpu| {
+            setup(g, 0x30_20_10);
+            g.gp0(&[0xE100_0200]); // dither on, blend mode 0 (average)
+            // a dithered Gouraud quad, black at the top to light grey at the bottom
+            g.gp0(&[
+                0x3800_0000,
+                20 << 16 | 20,
+                0x0000_0000,
+                20 << 16 | 120,
+                0x00F0_F0F0,
+                220 << 16 | 20,
+                0x00F0_F0F0,
+                220 << 16 | 120,
+            ]);
+            // a semi-transparent flat rectangle over the background
+            g.gp0(&[0x6200_4080, 10 << 16 | 150, 20 << 16 | 20]);
+        };
+        let (mut off, mut on) = (Gpu::new(), Gpu::new());
+        off.set_scale(S as u32);
+        on.set_scale(S as u32);
+        on.set_full_colour(true);
+        draw(&mut off);
+        draw(&mut on);
+        assert!(off.vram() == on.vram());
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        let (w, _) = off.read_display_hd(&mut a).unwrap();
+        on.read_display_hd(&mut b).unwrap();
+        let at = |x: usize, y: usize| y * S * w + x * S;
+        let red = |p: u32| (p >> 16) & 0xFF;
+        // the quad: dithered and on 32 levels when off; one colour a row and more levels when on
+        let levels = |pic: &[u32]| {
+            let mut v: Vec<u32> = (20..220).map(|y| red(pic[at(60, y)])).collect();
+            v.sort_unstable();
+            v.dedup();
+            v.len()
+        };
+        assert!(levels(&a) <= 32);
+        assert!(levels(&b) > 32, "{}", levels(&b));
+        let row = |pic: &[u32], y: usize| (20..120).map(|x| pic[at(x, y)]).collect::<Vec<_>>();
+        let flat = |pic: &[u32], y| row(pic, y).windows(2).all(|p| p[0] == p[1]);
+        assert!((140..160).any(|y| !flat(&a, y)));
+        assert!((20..220).all(|y| flat(&b, y)));
+        // the rectangle: the background and the colour averaged on 8 bits
+        let bg = b[at(300, 230)];
+        let p = b[at(155, 15)];
+        for (k, f) in [(16, 0x80), (8, 0x40), (0, 0)] {
+            assert_eq!(
+                (p >> k) & 0xFF,
+                (((bg >> k) & 0xFF) + f) >> 1,
+                "channel at bit {k}"
+            );
+        }
+        // and off again: drawn as the PS1 does
+        on.set_full_colour(false);
+        draw(&mut on);
+        on.read_display_hd(&mut b).unwrap();
+        assert!(a == b);
+    }
+
+    #[test]
+    fn full_colour_saturates_a_rectangles_texel_before_blending_and_a_polygons_after() {
+        let mut g = Gpu::new();
+        g.set_scale(S as u32);
+        g.set_full_colour(true);
+        setup(&mut g, 0);
+        // a white 15-bit texel (bit 15 set: semi-transparent) at (320, 0), page there
+        g.load_image(320, 0, 1, 1, &[0xFFFF]);
+        g.gp0(&[0xE100_0105]); // texture page x 320, 15-bit, blend mode 0 (average)
+        // a semi-transparent modulated sprite at colour 255: the texel saturates, then averages
+        g.gp0(&[0x66FF_FFFF, 10 << 16 | 10, 0, 1 << 16 | 1]);
+        // a semi-transparent modulated triangle at 255: averaged first (509 / 2), then saturated
+        g.gp0(&[
+            0x26FF_FFFF,
+            40 << 16 | 40,
+            0,
+            40 << 16 | 60,
+            0x0105_0000,
+            60 << 16 | 40,
+            0,
+        ]);
+        let mut b = Vec::new();
+        let (w, _) = g.read_display_hd(&mut b).unwrap();
+        assert_eq!(b[10 * S * w + 10 * S], 0x7F_7F7F);
+        assert_eq!(b[42 * S * w + 42 * S], 0xFE_FEFE);
+    }
+
+    #[test]
+    fn a_write_after_full_colour_is_turned_off_replaces_the_pixel() {
+        let mut g = Gpu::new();
+        g.set_scale(S as u32);
+        setup(&mut g, 0);
+        g.set_full_colour(true);
+        g.gp0(&[0x6000_000A, 10 << 16 | 10, 4 << 16 | 4]); // red 10 (not a 15-bit level)
+        g.set_full_colour(false);
+        // a red-8 line and a red-8 rectangle with the mask checked (the pixel has no mask bit)
+        g.gp0(&[0x4000_0008, 10 << 16 | 10, 10 << 16 | 13]);
+        g.gp0(&[0xE600_0002]);
+        g.gp0(&[0x6200_0008, 11 << 16 | 10, 1 << 16 | 4]);
+        let mut b = Vec::new();
+        let (w, _) = g.read_display_hd(&mut b).unwrap();
+        assert_eq!(b[10 * S * w + 10 * S], 0x08_0000);
+        assert_eq!(b[11 * S * w + 10 * S], 0x08_0000);
+        // untouched: keeps its full-colour value
+        assert_eq!(b[12 * S * w + 10 * S], 0x0A_0000);
     }
 }

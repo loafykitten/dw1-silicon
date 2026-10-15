@@ -181,3 +181,15 @@ Ember has looked at them; the widescreen report is written. Then Phase 9.
   applied to everything); now only untextured and sprite-like polygons keep it, other textured
   polygons interpolate smoothly (`smooth` in `hd.rs`). 2D frames still 0 differences from 1x;
   replays identical; Sol found nothing.
+- **8.4 full colour done:** `full_colour` in `settings.txt`, F5, `DW1_FULL_COLOUR=1` (default
+  off: Ember's look). HD surfaces now hold 8 bits a channel and a mask bit (`u32`); with full
+  colour off every pixel is the expanded 15-bit value and the 15-bit rules run on it, so the HD
+  picture is byte-identical to the previous build (426 new-game shots at 4x with no wobble); with
+  it on the same rules run on 8-bit channels without the cut and the dither (a rectangle's texel
+  saturates before it blends, a polygon's after, as at 1x). The 1x VRAM is the same either way;
+  all ten replays identical with `DW1_SCALE=4 DW1_PGXP=1 DW1_FULL_COLOUR=1`. The display read-out
+  is now a plain copy, so a field at 8x costs less than before (about 1.2 ms against 1.65 ms,
+  draw and read-out, new-game replay). Astra found two issues (a rectangle's texel blended
+  unsaturated; a pixel written after the option was turned off could keep its full-colour value),
+  both fixed with tests; second pass clean. Side-by-sides for Ember in the gitignored
+  `captures/phase8-full-colour/`.
