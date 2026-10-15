@@ -1,0 +1,50 @@
+-- Extra schedule for DW1ROUTE_PROFILE=tour-jungle, after route-debug-room-schedule.lua (Phase 9,
+-- stream tour, derived with oracle/explore.lua): Mr. Warp, Near, Tropical Jungle (screen 12), north
+-- into screen 13 (the jungle's toilet), north into screen 34, a Darkrizamon ("Since you've seen my
+-- face..."): the battle, finishers with Square, Gabumon loses; MURD and Jijimon's house (218),
+-- control back by ~18240.
+local PRESSES = {
+    { 6954, 6954, 1, 70, 'UP' },
+    { 7024, 7024, 1, 40, 'LEFT' },
+    { 7064, 7064, 1, 4, 'CROSS' },
+    { 7154, 7154, 1, 4, 'CROSS' },
+    { 7244, 7244, 1, 4, 'CROSS' },
+    { 7334, 7334, 1, 4, 'CROSS' },
+    { 7424, 7424, 1, 4, 'CROSS' },
+    { 7514, 7514, 1, 4, 'DOWN' },
+    { 7544, 7544, 1, 4, 'CROSS' },
+    { 8074, 8074, 1, 80, 'UP' },
+    { 8554, 8554, 1, 100, 'UP' },
+    { 8554, 8554, 1, 100, 'RIGHT' },
+    { 8654, 8654, 1, 150, 'UP' },
+    { 8804, 8804, 1, 40, 'RIGHT' },
+    { 8844, 8844, 1, 220, 'UP' },
+    { 9464, 9464, 1, 60, 'UP' },
+    { 9524, 9524, 1, 120, 'UP' },
+    { 9524, 9524, 1, 120, 'RIGHT' },
+    { 9644, 9644, 1, 200, 'UP' },
+    { 9844, 9844, 1, 60, 'UP' },
+    { 9904, 9904, 1, 4, 'CROSS' },
+    { 9994, 9994, 1, 4, 'CROSS' },
+    { 10084, 10084, 1, 4, 'CROSS' },
+    { 10474, 10474, 1, 4, 'CROSS' },
+    { 13204, 13204, 1, 4, 'SQUARE' },
+    { 14134, 14134, 1, 4, 'SQUARE' },
+    { 15064, 15064, 1, 4, 'SQUARE' },
+    { 17794, 17794, 1, 4, 'CROSS' },
+    { 17884, 17884, 1, 4, 'CROSS' },
+    { 17974, 17974, 1, 4, 'CROSS' },
+    { 18064, 18064, 1, 4, 'CROSS' },
+    { 18154, 18154, 1, 4, 'CROSS' },
+}
+local MILESTONES = {
+    { 7544, 'warp_menu_near' },
+    { 8074, 'jungle_12' },
+    { 8554, 'jungle_13' },
+    { 9464, 'jungle_34' },
+    { 9994, 'darkrizamon' },
+    { 13204, 'battle' },
+    { 17794, 'jijimon_house' },
+    { 18300, 'jungle_done' },          -- target: control back in Jijimon's house
+}
+return PRESSES, MILESTONES

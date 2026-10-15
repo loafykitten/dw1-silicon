@@ -220,3 +220,15 @@ written down as accepted. That is the first release.
   waits for a quiet CD before stopping (runs that stopped mid-read diverged), `waitne`,
   `autoreel`, `autocurl`; schedule files may return a RAM-driven controller
   (`route-new-game.lua`), used for the matches and fights whose turns don't come at fixed VBlanks. Twenty replays with the ending.
+- **Stream tour: the world's areas** (2026-10-15, `docs/phase9-routes.md`, "Certified areas"):
+  fifteen recordings, each certified by a fresh dense replay and natively identical at every
+  standard and every-50-polls checkpoint. Ten from Mr. Warp in the debug room (Mt. Panorama's
+  peak, Tropical Jungle, Drill Tunnel, Gear Savanna, Grey Lord's Mansion, Great Canyon, the
+  Ancient Dino Region's gate and back, the Lava Cave through to the Drill Tunnel, Freezeland
+  outside the Curling Cave), with battles against one, two and three enemies, a scripted battle,
+  won and lost fights, MURD and Jijimon's house; five walks from the downloaded saves through the
+  late-game File City (Jijimon's house and back room, the plaza, the restaurant with a meal, the
+  tool shop and Secret Item Shop, the Item Keeper with a full inventory, the item menu, the Native
+  Forest) with late-game partners (Piximon, MegaSeadramon, Digitamamon, MetalGreymon). One native
+  fix: the scripted-battle start read empty entity slots (`handleBattleStart`, the PS1 read 0 from
+  low RAM; also found by the ending stream). Thirty-five replays in `tools/replay-check.sh`.
