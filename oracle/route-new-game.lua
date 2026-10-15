@@ -83,6 +83,8 @@ local EXTRA = {
                                   '/route-training-all-schedule.lua', '/route-training-six-schedule.lua' } },
     ['battle-mode'] = { base = 'title', pad2 = true, file = '/route-battle-mode-schedule.lua' },
     ['arena-start'] = { base = 'title', file = '/route-arena-start-schedule.lua' },
+    ['arena-cup'] = { base = 'title',
+                      file = { '/route-arena-start-schedule.lua', '/route-arena-cup-schedule.lua' } },
     ['battle-twice'] = { base = 'continue-save2',
                          file = { '/route-battle-schedule.lua', '/route-battle-twice-schedule.lua' } },
 }
