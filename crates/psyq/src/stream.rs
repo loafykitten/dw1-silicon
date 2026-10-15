@@ -213,7 +213,17 @@ pub struct Stream {
     /// Whether XA audio sectors go to the SPU (Setmode bit 6), and those taken in since the
     /// caller last asked ([`Stream::take_audio`]).
     audio_enabled: bool,
-    audio: Vec<Vec<u8>>,
+    audio: Vec<XaSector>,
+}
+
+/// An XA audio sector the drive read with the XA bit on, for the SPU's CD input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct XaSector {
+    pub lba: i32,
+    /// The VBlank it arrived at (the stream's clock).
+    pub arrival: u32,
+    /// From its subheader: the 2,336 bytes `backend::xa::XaDecoder::decode_sector` takes.
+    pub body: Vec<u8>,
 }
 
 impl Stream {
@@ -245,9 +255,8 @@ impl Stream {
         self.audio_enabled = on;
     }
 
-    /// The XA audio sectors taken in since the last call, each from its subheader (the 2,336
-    /// bytes `backend::xa::XaDecoder::decode_sector` takes), in order.
-    pub fn take_audio(&mut self) -> Vec<Vec<u8>> {
+    /// The XA audio sectors taken in since the last call, in order.
+    pub fn take_audio(&mut self) -> Vec<XaSector> {
         std::mem::take(&mut self.audio)
     }
 
@@ -322,8 +331,11 @@ impl Stream {
             .flatten();
         let Some(h) = header else {
             if self.audio_enabled && submode & SUBMODE_AUDIO != 0 {
-                self.audio
-                    .push(self.raw[XA_BODY_OFFSET..XA_BODY_OFFSET + XA_BODY_BYTES].to_vec());
+                self.audio.push(XaSector {
+                    lba,
+                    arrival: when,
+                    body: self.raw[XA_BODY_OFFSET..XA_BODY_OFFSET + XA_BODY_BYTES].to_vec(),
+                });
             }
             self.skipped += 1;
             return Some((when, false));

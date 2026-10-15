@@ -8,7 +8,12 @@
 //! value cycle", the VBlank in the port's numbering, cycle 0), followed by the pad polls so far
 //! and the VBlanks since the latest, which is how a replay lines the two up. Sound RAM transfers (DMA) are
 //! not register traffic and aren't logged. `DW1_WAV=<file>` writes everything rendered to a
-//! 44.1 kHz stereo WAV file. Both are flushed when the program exits.
+//! 44.1 kHz stereo WAV file. `DW1_XA_LOG=<prefix>` logs the movies' XA audio: `<prefix>.txt`
+//! has a line per sector decoded ("sector vblank polls since lba arrival frames offset pushed":
+//! the decoder's 37.8 kHz frames at `offset` in `<prefix>.bin`, 16-bit L/R, and the FIFO's frame
+//! count before it), one per VBlank whose SPU took frames from the CD input ("pop vblank
+//! polls since popped underruns") and one per VBlank with a new pad poll ("poll vblank polls"); `tools/oracle/compare_xa.py` checks them against
+//! `oracle/capture-xa.lua`'s. All are flushed when the program exits.
 //!
 //! Time: the model runs on the virtual clock. [`frame`] (called by libsnd once per VBlank)
 //! renders the VBlank's samples, so the voices' envelopes, and with them `SpuGetKeyStatus`,
@@ -163,11 +168,22 @@ enum LogEntry {
 /// Where rendered samples go: 44.1 kHz stereo, L and R interleaved.
 pub type AudioSink = Box<dyn FnMut(&[i16]) + Send>;
 
+/// Silent frames the CD input plays before a sector that finds the XA FIFO empty: one VBlank's
+/// worth (44,100 Hz x 564,398 / 33,868,800 = 734.9). Sectors reach the decoder at the VBlank
+/// they arrive by, up to a VBlank after the moment they arrive, while their audio is played
+/// continuously, so starting a VBlank late is what keeps every later sector on time (without it
+/// the first seconds of each movie had two gaps, 13 and 7 ms, and the credits three more) [obs:
+/// DW1_XA_LOG's underruns, tools/oracle/compare_xa.py]. psx-spx gives no figure for the
+/// hardware's latency from a sector to its sound.
+const XA_LEAD_IN_FRAMES: u32 = 735;
+
 pub struct SpuState {
     pub hw: Spu,
     /// The CD input: XA audio sectors the drive plays (movies), decoded and resampled to
     /// 44.1 kHz; the SPU takes a frame per sample.
     pub xa: XaDecoder,
+    /// Silent frames the CD input still plays before the decoder's ([`XA_LEAD_IN_FRAMES`]).
+    xa_lead_in: u32,
     /// Keyed voices as libspu counts them: set by a key on, cleared by a key off.
     keyed: u32,
     pub reverb: Reverb,
@@ -181,6 +197,12 @@ pub struct SpuState {
     sample_carry: u64,
     sink: Option<AudioSink>,
     buf: Vec<i16>,
+    /// `DW1_XA_LOG`: the text log and the decoded frames, and the bytes written to the latter.
+    xa_log: Option<(BufWriter<File>, BufWriter<File>, u64)>,
+    /// The CD input's frames taken when the latest pop line was written, and the pad polls when
+    /// the latest poll line was.
+    xa_logged_pops: u64,
+    xa_logged_polls: u32,
 }
 
 impl SpuState {
@@ -188,6 +210,7 @@ impl SpuState {
         Self {
             hw: Spu::new(),
             xa: XaDecoder::new(),
+            xa_lead_in: 0,
             keyed: 0,
             reverb: Reverb::default(),
             log: None,
@@ -197,6 +220,72 @@ impl SpuState {
             sample_carry: 0,
             sink: None,
             buf: Vec::new(),
+            xa_log: None,
+            xa_logged_pops: 0,
+            xa_logged_polls: 0,
+        }
+    }
+
+    /// Logs the XA audio to `<prefix>.txt` and `<prefix>.bin` from now on (`DW1_XA_LOG`).
+    pub fn open_xa_log(&mut self, prefix: &str) -> std::io::Result<()> {
+        let text = BufWriter::new(File::create(format!("{prefix}.txt"))?);
+        let bin = BufWriter::new(File::create(format!("{prefix}.bin"))?);
+        self.xa_log = Some((text, bin, 0));
+        Ok(())
+    }
+
+    /// The drive hands the CD input an XA sector: decoded into its FIFO (and logged).
+    pub fn play_xa_sector(&mut self, sector: &crate::stream::XaSector) {
+        let pushed = self.xa.pushed();
+        if self.xa.queued() == 0 && self.xa_lead_in == 0 {
+            self.xa_lead_in = XA_LEAD_IN_FRAMES;
+        }
+        self.xa.decode_sector(&sector.body);
+        let Some((text, bin, offset)) = &mut self.xa_log else {
+            return;
+        };
+        let raw = self.xa.last_raw();
+        for [l, r] in raw {
+            let _ = bin.write_all(&l.to_le_bytes());
+            let _ = bin.write_all(&r.to_le_bytes());
+        }
+        let now = crate::libetc::vblank_count();
+        let _ = writeln!(
+            text,
+            "sector {now} {} {} {} {} {} {offset} {pushed}",
+            crate::libetc::polls(),
+            now.saturating_sub(crate::libetc::last_poll_vblank()),
+            sector.lba,
+            sector.arrival,
+            raw.len(),
+        );
+        *offset += 4 * raw.len() as u64;
+    }
+
+    /// Logs the CD input frames the SPU took this VBlank, if any, and the VBlank of the latest
+    /// pad poll when there was a new one (a movie's clock is tied to the replay's at the polls).
+    fn log_xa_pops(&mut self) {
+        let polls = crate::libetc::polls();
+        if polls != self.xa_logged_polls {
+            self.xa_logged_polls = polls;
+            if let Some((text, ..)) = &mut self.xa_log {
+                let _ = writeln!(text, "poll {} {polls}", crate::libetc::last_poll_vblank());
+            }
+        }
+        let popped = self.xa.popped();
+        if popped == self.xa_logged_pops {
+            return;
+        }
+        self.xa_logged_pops = popped;
+        let underruns = self.xa.underruns();
+        let vblank = self.log_vblank;
+        if let Some((text, ..)) = &mut self.xa_log {
+            let _ = writeln!(
+                text,
+                "pop {vblank} {} {} {popped} {underruns}",
+                crate::libetc::polls(),
+                vblank.saturating_sub(crate::libetc::last_poll_vblank()),
+            );
         }
     }
 
@@ -210,6 +299,10 @@ impl SpuState {
         self.write_log_pending();
         if let Some(log) = &mut self.log {
             let _ = log.flush();
+        }
+        if let Some((text, bin, _)) = &mut self.xa_log {
+            let _ = text.flush();
+            let _ = bin.flush();
         }
     }
 
@@ -564,8 +657,14 @@ impl SpuState {
             return;
         }
         self.buf.resize(samples * 2, 0);
-        let xa = &mut self.xa;
-        self.hw.render(&mut self.buf, &mut || xa.pop());
+        let (xa, lead_in) = (&mut self.xa, &mut self.xa_lead_in);
+        self.hw.render(&mut self.buf, &mut || {
+            if *lead_in > 0 {
+                *lead_in -= 1;
+                return (0, 0);
+            }
+            xa.pop()
+        });
         if let Some(sink) = &mut self.sink {
             sink(&self.buf);
         }
@@ -576,6 +675,9 @@ impl SpuState {
         self.render_to(CYCLES_PER_VBLANK);
         self.frame_cycles = 0;
         self.write_log_pending();
+        if self.xa_log.is_some() {
+            self.log_xa_pops();
+        }
     }
 }
 
@@ -595,6 +697,11 @@ static SPU: LazyLock<Mutex<SpuState>> = LazyLock::new(|| {
         && let Err(e) = spu.open_log(&path)
     {
         eprintln!("psyq: DW1_SPU_LOG {path}: {e}");
+    }
+    if let Ok(prefix) = std::env::var("DW1_XA_LOG")
+        && let Err(e) = spu.open_xa_log(&prefix)
+    {
+        eprintln!("psyq: DW1_XA_LOG {prefix}: {e}");
     }
     if let Ok(path) = std::env::var("DW1_WAV") {
         match Wav::create(&path) {
