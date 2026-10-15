@@ -510,6 +510,14 @@ pub fn scale_table() -> [i16; 64] {
     t
 }
 
+/// A colour sum as the MDEC outputs it: cut to signed 9 bits, saturated to signed 8 bits, then
+/// offset to 0-255 [doc: psx-spx MDEC, y_to_mono's `Y AND 1FFh`, then `MinMax(-128,127,Y)` and
+/// the unsigned `xor 80h`].
+fn sat9(v: i32) -> i32 {
+    let v9 = ((v & 0x1FF) ^ 0x100) - 0x100;
+    v9.clamp(-128, 127) + 128
+}
+
 fn signed10(v: u32) -> i32 {
     (v & 0x3FF) as i32 - ((v & 0x200) << 1) as i32
 }
@@ -640,9 +648,17 @@ impl Mdec {
                 let lum = y[(py >> 3) * 2 + (px >> 3)][(px & 7) + (py & 7) * 8];
                 let (mut r, mut g, mut b) = (0i32, 0i32, 0i32);
                 if ok {
-                    r = (lum + ((cr[c] * 1436) >> 10)).clamp(-128, 127) + 128;
-                    g = (lum - ((cb[c] * 352 + cr[c] * 731) >> 10)).clamp(-128, 127) + 128;
-                    b = (lum + ((cb[c] * 1815) >> 10)).clamp(-128, 127) + 128;
+                    // psx-spx's real factors (R = 1.402 Cr, G = -0.3437 Cb - 0.7143 Cr, B = 1.772
+                    // Cb) in 1024ths, each product rounded to the nearest: rounding down instead
+                    // made every channel lean half a level (R and B low, G high) against the
+                    // emulator's frames [obs: tools/oracle/compare_mdec.py, the new-game movie].
+                    // Each sum is cut to signed 9 bits before it saturates, psx-spx's "9bit
+                    // limit" (stated for y_to_mono, "probably" in yuv_to_rgb too): a blue of
+                    // -264 comes out 255, not 0 [obs: the credits movie, three pixels a frame
+                    // in its frames 1050-1125 on the emulator].
+                    r = sat9(lum + ((cr[c] * 1436 + 512) >> 10));
+                    g = sat9(lum - ((cb[c] * 352 + cr[c] * 731 + 512) >> 10));
+                    b = sat9(lum + ((cb[c] * 1815 + 512) >> 10));
                 }
                 if self.rgb24 {
                     let o = (py * 16 + px) * 3;
@@ -697,6 +713,17 @@ mod tests {
         0x30FB, 0x89BE, 0x7641, 0xCF04, 0xCF04, 0x7641, 0x89BE, 0x30FB, //
         0x18F8, 0xB8E3, 0x6A6D, 0x8275, 0x7D8A, 0x9592, 0x471C, 0xE707,
     ];
+
+    #[test]
+    fn colour_sums_wrap_to_9_bits_then_saturate() {
+        assert_eq!(sat9(-128), 0);
+        assert_eq!(sat9(127), 255);
+        assert_eq!(sat9(-129), 0);
+        assert_eq!(sat9(200), 255);
+        // [obs: the credits movie on the emulator: a blue sum of -264 shows as 255]
+        assert_eq!(sat9(-264), 255);
+        assert_eq!(sat9(300), 0, "300 is -212 in 9 bits");
+    }
 
     #[test]
     fn zigzag_matches_psx_spx() {

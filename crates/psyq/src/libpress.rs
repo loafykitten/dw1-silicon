@@ -17,6 +17,12 @@
 //! `MOV_waitForFlip` finds on the PS1 when it stops waiting. A game that polled
 //! `flipPending` before the outer call returned would see the end state at once; MOV doesn't.
 //!
+//! `DW1_MDEC_LOG=<prefix>` logs every frame's run-length codes and every slice decoded to
+//! `<prefix>.txt` ("frame k rle offset bytes mode", "slice k offset bytes fnv": the slice's
+//! 64-bit FNV-1a hash, its bytes only with `DW1_MDEC_LOG_PIXELS` (`1` for every frame, or a file
+//! of the code hashes of the frames wanted), else offset -1) and
+//! `<prefix>.bin`, for `tools/oracle/compare_mdec.py` against `oracle/capture-mdec.lua`.
+//!
 //! Rules are tagged `[doc]` (the Psy-Q library reference and `libpress.h`, psx-spx's MDEC
 //! chapter) or `[obs]` (what MOV's calls show).
 
@@ -40,6 +46,90 @@ struct State {
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
+
+/// `DW1_MDEC_LOG`, opened on first use: the text and binary files, the bytes written to the
+/// latter, the frames so far, which frames' slices are written (`DW1_MDEC_LOG_PIXELS`: `1` for
+/// all, or a file of the frames' code hashes, one hex FNV-1a per line), and whether the current
+/// frame's are.
+struct MdecLog {
+    text: std::io::BufWriter<std::fs::File>,
+    bin: std::io::BufWriter<std::fs::File>,
+    offset: u64,
+    frames: u64,
+    pixels: Option<std::collections::HashSet<u64>>,
+    all_pixels: bool,
+    keep_slices: bool,
+}
+
+/// 64-bit FNV-1a of the words' little-endian bytes (the logs' hash).
+fn fnv64(words: &[u32]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for b in words.iter().flat_map(|w| w.to_le_bytes()) {
+        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+static MDEC_LOG: std::sync::LazyLock<Mutex<Option<MdecLog>>> = std::sync::LazyLock::new(|| {
+    let log = std::env::var("DW1_MDEC_LOG").ok().and_then(|prefix| {
+        let open = |ext: &str| std::fs::File::create(format!("{prefix}.{ext}"));
+        match (open("txt"), open("bin")) {
+            (Ok(t), Ok(b)) => {
+                let spec = std::env::var("DW1_MDEC_LOG_PIXELS").unwrap_or_default();
+                let pixels = (!spec.is_empty() && spec != "1").then(|| {
+                    std::fs::read_to_string(&spec)
+                        .unwrap_or_else(|e| panic!("DW1_MDEC_LOG_PIXELS {spec}: {e}"))
+                        .lines()
+                        .filter_map(|l| u64::from_str_radix(l.trim(), 16).ok())
+                        .collect()
+                });
+                Some(MdecLog {
+                    text: std::io::BufWriter::new(t),
+                    bin: std::io::BufWriter::new(b),
+                    offset: 0,
+                    frames: 0,
+                    pixels,
+                    all_pixels: spec == "1",
+                    keep_slices: false,
+                })
+            }
+            _ => {
+                eprintln!("psyq: DW1_MDEC_LOG {prefix}: can't create the log");
+                None
+            }
+        }
+    });
+    Mutex::new(log)
+});
+
+/// Appends `words` to the MDEC log under `what` (a frame's codes or a slice's pixels).
+fn log_words(words: &[u32], frame: bool, mode: i32) {
+    use std::io::Write;
+    let mut guard = MDEC_LOG.lock().unwrap();
+    let Some(log) = guard.as_mut() else { return };
+    let hash = fnv64(words);
+    if frame {
+        log.frames += 1;
+        log.keep_slices =
+            log.all_pixels || log.pixels.as_ref().is_some_and(|set| set.contains(&hash));
+    }
+    let bytes = 4 * words.len() as u64;
+    let keep = frame || log.keep_slices;
+    let at = if keep { log.offset as i64 } else { -1 };
+    let _ = if frame {
+        writeln!(log.text, "frame {} rle {at} {bytes} {mode}", log.frames)
+    } else {
+        writeln!(log.text, "slice {} {at} {bytes} {hash:016x}", log.frames)
+    };
+    if keep {
+        for w in words {
+            let _ = log.bin.write_all(&w.to_le_bytes());
+        }
+        log.offset += bytes;
+    }
+    let _ = log.text.flush();
+    let _ = log.bin.flush();
+}
 
 fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     let mut guard = STATE.lock().unwrap();
@@ -117,6 +207,7 @@ pub unsafe extern "C" fn DecDCTvlc2(bs: *const u8, buf: *mut u32, _table: *const
 pub unsafe extern "C" fn DecDCTin(buf: *const u32, mode: i32) {
     let words = (unsafe { buf.read() } & 0xFFFF) as usize + 1;
     let input = unsafe { std::slice::from_raw_parts(buf, words) };
+    log_words(input, true, mode);
     with_state(|s| s.mdec.start(input, mode & 1 != 0, mode & 2 != 0));
 }
 
@@ -147,6 +238,7 @@ pub unsafe extern "C" fn DecDCTout(buf: *mut u32, size: i32) {
         let callback = with_state(|s| {
             let out = unsafe { std::slice::from_raw_parts_mut(addr as *mut u32, words) };
             s.mdec.out(out);
+            log_words(out, false, 0);
             s.callback
         });
         let Some(callback) = callback else {
