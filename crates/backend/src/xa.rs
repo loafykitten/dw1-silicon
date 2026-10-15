@@ -98,6 +98,9 @@ pub struct XaDecoder {
     sum_l: i32,
     sum_r: i32,
     summed: i32,
+    /// Frames put in the FIFO and taken out (and dropped from a full FIFO) since the start.
+    pushed: u64,
+    popped: u64,
 }
 
 impl Default for XaDecoder {
@@ -124,6 +127,8 @@ impl XaDecoder {
             sum_l: 0,
             sum_r: 0,
             summed: 0,
+            pushed: 0,
+            popped: 0,
         }
     }
 
@@ -133,6 +138,7 @@ impl XaDecoder {
         self.ring = [[0; 32]; 2];
         self.ring_pos = 0;
         self.sixstep = 6;
+        self.popped += self.fifo_count as u64;
         self.fifo_head = 0;
         self.fifo_count = 0;
         self.raw_frames = 0;
@@ -175,7 +181,9 @@ impl XaDecoder {
             // The consumer stalled: drop the oldest frame.
             self.fifo_head = (self.fifo_head + 1) % FIFO_FRAMES;
             self.fifo_count -= 1;
+            self.popped += 1;
         }
+        self.pushed += 1;
         let i = (self.fifo_head + self.fifo_count) % FIFO_FRAMES;
         self.fifo[i] = [l as i16, r as i16];
         self.fifo_count += 1;
@@ -284,12 +292,24 @@ impl XaDecoder {
         let [l, r] = self.fifo[self.fifo_head];
         self.fifo_head = (self.fifo_head + 1) % FIFO_FRAMES;
         self.fifo_count -= 1;
+        self.popped += 1;
         (l, r)
     }
 
     /// Frames waiting in the FIFO.
     pub fn queued(&self) -> usize {
         self.fifo_count
+    }
+
+    /// Frames that have entered the FIFO since the decoder was made (a count that `reset`
+    /// keeps: it numbers the frames for logs).
+    pub fn pushed(&self) -> u64 {
+        self.pushed
+    }
+
+    /// Frames that have left the FIFO (played, or dropped from a full one) since it was made.
+    pub fn popped(&self) -> u64 {
+        self.popped
     }
 
     /// Pops that found the FIFO empty since the first sector of the stream.
@@ -311,6 +331,26 @@ impl XaDecoder {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn frame_counts_number_the_fifo() {
+        let mut xa = XaDecoder::new();
+        // A silent mono 37.8 kHz sector: 18 groups x 8 units x 28 samples = 4,032 samples, 4,704
+        // frames after the 6-to-7 interpolation.
+        let body = [0u8; SECTOR_BODY_SIZE];
+        xa.decode_sector(&body);
+        assert_eq!((xa.pushed(), xa.popped()), (4704, 0));
+        for _ in 0..100 {
+            xa.pop();
+        }
+        assert_eq!((xa.pushed(), xa.popped(), xa.queued()), (4704, 100, 4604));
+        xa.reset();
+        assert_eq!(
+            (xa.pushed(), xa.popped()),
+            (4704, 4704),
+            "a reset drops what was queued"
+        );
+    }
 
     #[test]
     fn underrun_count_saturates() {

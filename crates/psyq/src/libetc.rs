@@ -80,7 +80,9 @@ fn run_until(target: u32) -> u32 {
             }
             c.vblank
         };
-        // The sound of the VBlank that's ending: libsnd's ticks, the SPU's samples.
+        // The sound of the VBlank that's ending: the CD's XA sectors that have arrived, libsnd's
+        // ticks, the SPU's samples.
+        crate::libcd::vblank(ending);
         crate::libsnd::frame(ending);
         let (vblank, host) = {
             let mut c = CLOCK.lock().unwrap();

@@ -249,3 +249,14 @@ written down as accepted. That is the first release.
   harmless 0xE5 and libgpu's timeout presumably recovers; not measurable on Redux), and a free
   native run continues into the lobby's "Victory Reward / Victory Prize". Recordings end before
   that frame. Thirty-seven replays in `tools/replay-check.sh`.
+- **Sound and movie leftovers** (sound stream, 2026-10-15; `docs/phase6-plan.md`, "The
+  leftovers, closed", and `docs/phase2-movie.md`, "Measured stage by stage"). `SsUtAutoVol` is now
+  exact (500 SDK probes: its own volume formula with pans in 64ths, and the latest `SsUtKeyOnV`'s
+  tone whichever voice it keyed), so the SPU comparison no longer excuses fade steps. The movies'
+  XA audio decodes bit for bit like Redux's (every sector of the new-game movie and the credits)
+  and plays within a VBlank or two of it, now without the gaps the port had at each movie's start
+  (sectors reach the CD input at their arrival, pumped every VBlank, after a VBlank's lead-in).
+  The movies' MDEC codes are identical; the colour conversion now rounds to the nearest and cuts
+  to 9 bits (psx-spx), leaving only the IDCT's rounding (Redux's AAN against psx-spx's matrix: at
+  most 5 levels, no lean). New checks in `tools/sound-check.sh` (`oracle/capture-xa.lua`,
+  `oracle/capture-mdec.lua`, `compare_xa.py`, `compare_mdec.py`); 37 replays identical.

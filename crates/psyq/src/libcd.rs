@@ -136,6 +136,9 @@ pub struct Drive {
     stream: Option<Stream>,
     /// Bytes the app changes in sectors as data reads deliver them ([`patch_file`]).
     patches: Vec<SectorPatch>,
+    /// XA audio sectors the stream took in ahead of their arrival (it reads up to a movie frame
+    /// ahead): the SPU's CD input gets each at its arrival ([`Drive::play_xa`]).
+    pending_xa: std::collections::VecDeque<crate::stream::XaSector>,
 }
 
 /// Bytes to put at `offset` (in the raw 2352-byte sector) of sector `lba`.
@@ -146,22 +149,50 @@ struct SectorPatch {
     bytes: Vec<u8>,
 }
 
-/// The XA audio sectors a stream call took in, decoded into the SPU's CD input. (Sectors are
-/// taken in lazily, up to a frame ahead of their arrival; the decoder's FIFO holds the slack.)
-/// Lock order: the drive, then libspu.
-fn play_xa(s: &mut Stream) {
-    let audio = s.take_audio();
-    if audio.is_empty() {
-        return;
-    }
-    crate::libspu::with_state(|spu| {
-        for body in &audio {
-            spu.xa.decode_sector(body);
-        }
-    });
-}
-
 impl Drive {
+    /// The XA audio sectors the stream has taken in go to the SPU's CD input as they arrive (at
+    /// VBlank `now` or before): the drive sends a sector to the SPU when it reads it, so one the
+    /// stream took in ahead of time isn't heard before its arrival, nor at all if the read stops
+    /// first. Lock order: the drive, then libspu.
+    fn play_xa(&mut self, now: u32) {
+        if let Some(s) = self.stream.as_mut() {
+            self.pending_xa.extend(s.take_audio());
+        }
+        if self.pending_xa.front().is_none_or(|x| x.arrival > now) {
+            return;
+        }
+        crate::libspu::with_state(|spu| {
+            while let Some(x) = self.pending_xa.front() {
+                if x.arrival > now {
+                    break;
+                }
+                spu.play_xa_sector(x);
+                self.pending_xa.pop_front();
+            }
+        });
+    }
+
+    /// The read stops: XA sectors that arrived are played, those taken in ahead never arrive.
+    fn stop_xa(&mut self) {
+        self.play_xa(crate::libetc::vblank_count());
+        self.pending_xa.clear();
+    }
+
+    /// The end of VBlank `now` (before its sound is rendered): the stream takes in the sectors
+    /// that have arrived, whether or not the game looks at it, and their audio is played. The
+    /// stream would take them in at the game's next call anyway, before anything that call does
+    /// (every stream call catches up to its time first), so the game sees no difference; the CD
+    /// input gets its sectors on time instead of when the game next asks.
+    pub fn vblank(&mut self, now: u32) {
+        let Drive { disc, stream, .. } = self;
+        if let Some(s) = stream.as_mut() {
+            s.sync(now, &mut |lba, out| {
+                u32::try_from(lba).is_ok_and(|lba| disc.read_raw(lba, out).is_ok())
+            });
+        }
+        self.play_xa(now);
+    }
+
     pub fn new(disc: Disc) -> Drive {
         Drive {
             disc,
@@ -169,6 +200,7 @@ impl Drive {
             pos: 0,
             stream: None,
             patches: Vec::new(),
+            pending_xa: std::collections::VecDeque::new(),
         }
     }
 
@@ -228,6 +260,7 @@ impl Drive {
         if let Some(s) = self.stream.as_mut() {
             s.stop();
         }
+        self.stop_xa();
     }
 
     /// The movie stream, or a stop with a message when the game never called `StSetRing`.
@@ -247,16 +280,17 @@ impl Drive {
         let freed = s.free_at(base, now, &mut |lba, out| {
             u32::try_from(lba).is_ok_and(|lba| disc.read_raw(lba, out).is_ok())
         });
-        play_xa(s);
         if let Some(lba) = s.next_lba() {
             self.pos = lba;
         }
+        self.play_xa(now);
         Ok(freed)
     }
 
     /// `CdRead2(mode)`: sets the mode and starts streaming from the `Setloc` position, at `now`
     /// VBlanks. [doc: libcd; obs: MOV passes Stream|Speed|RT|Size1 after Setloc and Setmode]
     pub fn start_stream(&mut self, mode: u8, now: u32) -> Result<(), DriveError> {
+        self.stop_xa();
         self.mode = mode;
         let (lba, double) = (self.pos, mode & CDL_MODE_SPEED != 0);
         let s = self.stream_mut("CdRead2")?;
@@ -278,10 +312,10 @@ impl Drive {
         let delivered = s.poll(now, &mut |lba, out| {
             u32::try_from(lba).is_ok_and(|lba| disc.read_raw(lba, out).is_ok())
         });
-        play_xa(s);
         if let Some(lba) = s.next_lba() {
             self.pos = lba;
         }
+        self.play_xa(now);
         Ok(delivered)
     }
 
@@ -318,6 +352,7 @@ impl Drive {
                 if let Some(s) = self.stream.as_mut() {
                     s.stop();
                 }
+                self.stop_xa();
             }
             CDL_NOP | CDL_STANDBY | CDL_MUTE | CDL_DEMUTE => {}
             other => return Err(DriveError::Unsupported(other)),
@@ -355,6 +390,7 @@ impl Drive {
         if let Some(s) = self.stream.as_mut() {
             s.stop(); // a data read replaces the stream
         }
+        self.stop_xa();
         let size = self.sector_size(0);
         let start = if size == WHOLE_SECTOR {
             SYNC_LEN
@@ -435,6 +471,13 @@ fn with_drive<T>(call: &str, f: impl FnOnce(&mut Drive) -> Result<T, DriveError>
         Err(e) => {
             crate::trap::stop(&format!("psyq: {call}: {e}"));
         }
+    }
+}
+
+/// The end of VBlank `now`, before its sound is rendered (libetc): see [`Drive::vblank`].
+pub fn vblank(now: u32) {
+    if let Some(d) = DRIVE.lock().unwrap().as_mut() {
+        d.vblank(now);
     }
 }
 
@@ -762,6 +805,7 @@ pub extern "C" fn StSetStream(
 #[unsafe(no_mangle)]
 pub extern "C" fn StUnSetRing() {
     with_drive("StUnSetRing", |d| {
+        d.stop_xa();
         d.stream = None;
         Ok(())
     });
