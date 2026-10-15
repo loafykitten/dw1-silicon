@@ -10,6 +10,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// `Vcount` lags the recording's VBlank numbering by one more than the poll pairing's
+/// `vblank_offset` (see [`Replay::ps1_vcount`]).
+const VCOUNT_EXTRA: i64 = 1;
+
 /// One recorded poll.
 pub struct Poll {
     pub vblank: u32,
@@ -256,6 +260,24 @@ impl Replay {
         self.next += 1;
         self.last_native = vblank;
         Ok(p.mask)
+    }
+
+    /// What `VSync(-1)` returned on the PS1 at native VBlank `native`: the recording's VBlank at
+    /// the last poll plus the native VBlanks since it, in libetc's count (`Vcount`, which
+    /// starts `vblank_offset` VBlanks into the recording [obs: Vcount = 8494 and 7255 in RAM
+    /// dumps taken inside the GPU::Vsync events of route VBlanks 9640 and 8401, 2026-10-15;
+    /// the VBlank's own interrupt has not counted yet there, so the game sees VBlank - 1145
+    /// after it, one more than the PadRead pairing's 1144, hence `VCOUNT_EXTRA`]. FISH's bite and
+    /// Seadramon timing read it (`VSync(-1) / 3 % 20`); debug-fish matches with it (and, its
+    /// frames being three VBlanks, also without the + 1).
+    /// None before the first poll. Native loading takes no time, so the native counter alone
+    /// runs ahead of the PS1's, which changed when fish bite.
+    pub fn ps1_vcount(&self, native: u32) -> Option<u32> {
+        let last = self.polls.get(self.next.checked_sub(1)?)?;
+        let v = i64::from(last.vblank) + i64::from(native) - i64::from(self.last_native)
+            - self.vblank_offset
+            - VCOUNT_EXTRA;
+        u32::try_from(v).ok()
     }
 
     /// The native VBlank at which the recording ends, once every poll has been consumed: the

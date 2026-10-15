@@ -17,6 +17,10 @@
 --                         state, the hooked fish's state and the tension): hold Cross unless the
 --                         tension is above HI (7500), or above RUN (5000) while the fish runs
 --                         (state 50); the line snaps at 10000 held for a while
+--   autocurl N            KAR only: play our side of a curling match for N VBlanks with no stops:
+--                         a 4-VBlank Cross (30 apart) whenever the match state (0x80135244)
+--                         wants one: Start Game (1), Penguinmon's lines (15, 19), our stone and
+--                         straight aim (5, 6), and the power gauge (8) once it reaches 1900
 --   shot NAME             screenshot NAME.raw/.txt now
 --   dump NAME             main RAM (2 MB) to NAME.bin
 --   waitne ADDR VALUE N   no input until the 32-bit word at ADDR (hex) is not VALUE (hex), at
@@ -89,6 +93,7 @@ local waitUntil = nil
 local waitWord = nil    -- { index into ram32, value, last vblank } for waitne
 local ram32 = ffi.cast('uint32_t*', PCSX.getMemPtr())
 local reel = nil        -- { start, last, pressed } for autoreel
+local curl = nil        -- { last, releaseAt, nextTap } for autocurl
 local function ramI32(addr)
     local v = ram32[bit.rshift(bit.band(addr, 0x1FFFFF), 2)]
     return v >= 0x80000000 and v - 0x100000000 or v
@@ -152,7 +157,29 @@ local function tick()
             reel.pressed = press
         end
     end
-    while not active and not waitUntil and not waitWord and not reel do
+    if curl then
+        if curl.releaseAt and vblank >= curl.releaseAt then
+            pad.clearOverride(B.CROSS); curl.releaseAt = nil
+        end
+        if vblank >= curl.last then
+            if curl.releaseAt then pad.clearOverride(B.CROSS) end
+            curl = nil
+        elseif not curl.releaseAt and vblank >= curl.nextTap then
+            local mem8 = ffi.cast('int8_t*', PCSX.getMemPtr())
+            local mem16 = ffi.cast('int16_t*', PCSX.getMemPtr())
+            local state, player = mem8[0x135244], mem8[0x13523C]
+            local power = mem16[0x13523E / 2]
+            local ours = player == 0
+            if state == 1 or state == 15 or state == 19 or (ours and (state == 5 or state == 6))
+                or (ours and state == 8 and power >= 1900) then
+                pad.setOverride(B.CROSS)
+                curl.releaseAt, curl.nextTap = vblank + 4, vblank + 30
+                log:write(string.format("    { %d, %d, 1, 4, 'CROSS' },\n", vblank, vblank))
+                log:flush()
+            end
+        end
+    end
+    while not active and not waitUntil and not waitWord and not reel and not curl do
         if #queue == 0 and vblank - lastCd < 60 then return end
         if #queue == 0 then
             if needState then
@@ -192,6 +219,8 @@ local function tick()
             local hi, run = line:match('^%S+%s+%S+%s+(%S+)%s*(%S*)')
             reel = { start = vblank, last = vblank + tonumber(a1), pressed = false,
                      hi = tonumber(hi) or 7500, run = tonumber(run) or 5000 }
+        elseif cmd == 'autocurl' then
+            curl = { last = vblank + tonumber(a1), nextTap = vblank }
         elseif cmd == 'shot' then
             shot(a1)
         elseif cmd == 'dump' then
