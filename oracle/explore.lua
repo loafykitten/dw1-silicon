@@ -108,18 +108,21 @@ KEEP_EXPLORE_COUNT = PCSX.Events.createEventListener('GPU::Vsync', function()
 end)
 local function cdTouch() lastCd = takenOver and vblank or preCount end
 -- A blocking CdReadSync(0) can outlast the 60 VBlanks, so a call counts as CD activity until it
--- returns: a one-shot breakpoint on its return address (the libcd calls don't nest). Spent
--- return breakpoints are removed from tick, outside their own callback.
-local cdSyncRet, cdSyncSpent = nil, {}
+-- returns. Return breakpoints are persistent, one per caller address (Redux makes an ffi callback
+-- per Lua breakpoint and LuaJIT allows only about 2000: oracle/replay.lua), and act only when
+-- their address is the pending call's (the libcd calls don't nest).
+local cdSyncRa, cdSyncRets = nil, {}
 local function cdSyncEnter()
     cdTouch()
-    if cdSyncRet then return end
-    cdSyncRet = PCSX.addBreakpoint(PCSX.getRegisters().GPR.n.ra, 'Exec', 4, 'explore CdReadSync return',
-        function()
-            cdTouch()
-            cdSyncSpent[#cdSyncSpent + 1], cdSyncRet = cdSyncRet, nil
-            return false
-        end)
+    local ra = PCSX.getRegisters().GPR.n.ra
+    cdSyncRa = ra
+    if not cdSyncRets[ra] then
+        cdSyncRets[ra] = PCSX.addBreakpoint(ra, 'Exec', 4, string.format('explore CdReadSync return %08x', ra),
+            function()
+                if cdSyncRa == ra then cdTouch(); cdSyncRa = nil end
+                return true
+            end)
+    end
 end
 PCSX.settings.emulator.Debug.Debug = true
 KEEP_EXPLORE_CD = {
@@ -197,8 +200,7 @@ local function tick()
         end
     end
     while not active and not waitUntil and not waitWord and not reel and not curl do
-        for i = #cdSyncSpent, 1, -1 do cdSyncSpent[i]:remove(); cdSyncSpent[i] = nil end
-        if #queue == 0 and (cdSyncRet or vblank - lastCd < 60) then return end
+        if #queue == 0 and (cdSyncRa or vblank - lastCd < 60) then return end
         if #queue == 0 then
             if needState then
                 print(string.format('EXPLORE state vblank=%d %s', vblank, status()))

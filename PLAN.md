@@ -37,6 +37,19 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   playable (every pad drives player 1): separate routing when Ember wants it. booklab is still
   unreachable for the another-Mac test. Fixture saves for Phase 5's remaining
   overlays still come from Ember over time.
+- **Phase 9 coverage (session 6, parallel streams in worktrees under `../dw1-silicon-wt/`,
+  merged into phase0 by the coordinator):** the overlays no recording reached are now reached
+  without Ember's saves: the game's debug room (`tools/oracle/debug_fixture.py`), downloaded
+  GameFAQs saves (`captures/downloaded-saves/`) and saves moved to any spot
+  (`tools/oracle/place_fixture.py`) (`docs/phase9-routes.md`). **Twenty certified replays** in
+  `tools/replay-check.sh`, all identical: besides Phase 5's, Mr. Digivolution and death of old age
+  (debug-evo, debug-death), Battle Mode and a tournament's first match (battle-mode, arena-cup),
+  Machinedramon, the ending, the credits and the clear save (ending), fishing and Seadramon
+  (debug-fish, debug-seadramon), curling lost and won with Penguinmon's recruit (debug-curl,
+  debug-curl-win), the Beetle Land gym (debug-gym). Every TMD kind sorts natively (render stream),
+  sanitizer runs found and fixed the native-layout bugs (`docs/phase9-sanitizers.md`). Still
+  running at the time of writing: a map tour (Mr. Warp destinations), sound/movie leftovers
+  (SsUtAutoVol, XA, MDEC) and a whole tournament.
 - **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
 - **macOS sometimes reports the window hidden** ("occluded") while Ember's screen is in use
   elsewhere: wgpu then gives no frame and the app is throttled. Not a bug in the port.

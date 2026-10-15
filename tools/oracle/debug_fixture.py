@@ -58,7 +58,7 @@ def valid(save):
 def give_item(save, item, src):
     """One of `item`, as the game's giveItem (decomp/src/main/item.c) adds it: within the saved
     Inventory.size, onto the item's slot if it has one (up to 99), else the first empty slot, which
-    also takes the lowest name-texture index (Inventory.names) no slot uses."""
+    also takes the lowest name-texture index (Inventory.names) no slot uses, if there is one."""
     types, amounts, names = INVENTORY_AT, INVENTORY_AT + 30, INVENTORY_AT + 60
     size = save[INVENTORY_AT + 90]
     if size > 30:
@@ -71,7 +71,9 @@ def give_item(save, item, src):
         if save[types + i] == 0xFF:
             save[types + i], save[amounts + i] = item, 1
             used = {save[names + j] for j in range(size)}
-            save[names + i] = next(j for j in range(size) if j not in used)
+            # No unused index (initializeInventory numbers every slot, the empty ones too): the
+            # slot keeps the one it has, as giveItem leaves it.
+            save[names + i] = next((j for j in range(size) if j not in used), save[names + i])
             return
     sys.exit(f"{src}: the inventory ({size} slots) is full; no room for item {item}")
 
