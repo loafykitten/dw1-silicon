@@ -114,6 +114,13 @@ if MODE == 'replay' then
     if fmt == 2 and tonumber(header.cd_reads) ~= #rec.cd then fail('replay file: header says ' .. tostring(header.cd_reads) .. ' CD reads, found ' .. #rec.cd) return end
     if tonumber(header.polls) ~= #rec.value then fail('replay file: header says ' .. tostring(header.polls) .. ' polls, found ' .. #rec.value) return end
     if tonumber(header.final_vblank) == nil then fail('replay file: no final_vblank') return end
+    -- A two-player recording (Battle Mode) had pad 2 plugged in: so must the replay, or the SIO
+    -- traffic (and with it the CPU's timing) differs. Recordings without the line had it out.
+    if header.pad2 == 'connected' then
+        PCSX.settings.pads[2].Connected = true
+    elseif header.pad2 ~= nil then
+        fail('replay file: unknown pad2 ' .. tostring(header.pad2)) return
+    end
 end
 
 -- The cards the run starts with: Redux reads memcard1.mcd and memcard2.mcd from its cwd, so
@@ -360,6 +367,8 @@ local function finish(v)
             'polls ' .. #log,
             'cd_reads ' .. #cdReads,
         }
+        -- Only written when pad 2 was plugged in, so one-player recordings stay as they were.
+        if PCSX.settings.pads[2].Connected then table.insert(hdr, 'pad2 connected') end
         write(OUT, table.concat(hdr, '\n') .. '\n' .. table.concat(cdLines) .. table.concat(log))
         print(string.format('DW1REPLAY recorded polls=%d cd_reads=%d final_vblank=%d checkpoints=%d out=%s', #log, #cdReads, v, ckpt, OUT))
     else

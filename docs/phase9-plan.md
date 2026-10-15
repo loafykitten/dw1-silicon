@@ -173,4 +173,22 @@ written down as accepted. That is the first release.
   natively without a stop. Found on the way: the SDK drops polygons whose projection has a FLAG
   error (the old TG handlers didn't), writes some packet words before its tests, and subtracts
   `GsOT.offset`.
-
+- **Tournaments and Battle Mode certified** (arena stream, 2026-10-15). `battle-mode` (two cards:
+  BeelzemontZero's and Bob's saves, `p9-arena-vs-p1`/`-p2`; 1 vs 1, the fight on Auto to "1P WIN"
+  and back to the title; 4,375 polls, 15 checkpoints, 95 of 95 at every 50 polls) and `arena-cup`
+  (Master99's save, `p9-arena-master99`: the Arena Lobby, today's Grade C cup, the first match won
+  with a finisher, the second round's intro; 14,639 polls, 36 checkpoints, 304 of 304 at every 50)
+  are certified on Redux (fresh replays byte-identical) and identical natively; fourteen replays in
+  `tools/replay-check.sh`. Player 2's dead card prompt was Redux's pad 2 being unplugged by default,
+  not the card (`docs/phase9-routes.md`, Battle Mode); two-player profiles plug it in and replays
+  record `pad2 connected`. Native fixes: `VS__loadTextures` stored through the title menu's NULL
+  `ENTITY_TABLE[0]` (the PS1 wrote a 0 to low RAM that already held 0: measured), and the EFE
+  scratch areas from word 34 overlapped the native `EfeScratch` (the radial waves' ring counter
+  overwrote its `scale` pointer; BTL/STD/VS share the header). Judgement calls: VS__runIntro's first
+  `prev` is the caller's `$s1`, measured as 1 (only bit 0x40 is tested, so 0 and 1 behave alike;
+  now 1); the STD/VS camera-curve and opcode-table fixes are confirmed by both replays matching;
+  the finisher's uninitialised `tech` (STD_startQueuedMove / VS_startFighterMove) was not reached
+  by either recording (no measurement, no native stop; the player's finisher in STD takes another
+  path). From the disassembly the PS1's value is the caller's `$s3`: `VS__tickDigimonAttackRanged`'s
+  `move` argument or `VS__tickDigimonOther`'s fighter index (STD's callers likewise), to confirm on
+  the emulator when an AI finisher is recorded.
