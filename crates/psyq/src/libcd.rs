@@ -406,6 +406,11 @@ pub fn insert_disc(disc: Disc) {
     *DRIVE.lock().unwrap() = Some(Drive::new(disc));
 }
 
+/// Whether a disc is in the drive.
+pub fn disc_inserted() -> bool {
+    DRIVE.lock().unwrap().is_some()
+}
+
 /// Changes file `path` on the inserted disc as the game reads it (see [`Drive::patch_file`]):
 /// the app's text changes. Movie streams aren't patched.
 pub fn patch_file(

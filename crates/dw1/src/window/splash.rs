@@ -21,9 +21,9 @@ const HOLD: Duration = Duration::from_millis(1800);
 /// The picture is laid out on a 320x240 grid (the game's own width) and scaled like the game.
 const GRID: (u32, u32) = (320, 240);
 
-type Rgb = (u8, u8, u8);
+pub(super) type Rgb = (u8, u8, u8);
 
-const BACKGROUND: Rgb = (14, 16, 24);
+pub(super) const BACKGROUND: Rgb = (14, 16, 24);
 
 /// (text, size in debug-font cells of 8 px, y on the grid, colour).
 const LINES: [(&str, f32, f32, Rgb); 5] = [
@@ -132,6 +132,18 @@ impl Window {
 
 /// Draws the splash at `brightness` on a `w x h` software canvas into `out` (0x00RRGGBB).
 fn draw_splash(w: u32, h: u32, brightness: f32, out: &mut Vec<u32>) -> Result<(), String> {
+    draw_lines(w, h, &LINES, brightness, out)
+}
+
+/// Draws centred lines of text (text, size in 8 px font cells, y on the 320x240 grid, colour)
+/// at `brightness` on a `w x h` software canvas into `out` (0x00RRGGBB).
+pub(super) fn draw_lines(
+    w: u32,
+    h: u32,
+    lines: &[(&str, f32, f32, Rgb)],
+    brightness: f32,
+    out: &mut Vec<u32>,
+) -> Result<(), String> {
     let surface = Surface::new(w, h, PixelFormat::XRGB8888).map_err(|e| e.to_string())?;
     let mut canvas: Canvas<Surface> = surface.into_canvas().map_err(|e| e.to_string())?;
     canvas.set_draw_color(BACKGROUND);
@@ -139,8 +151,8 @@ fn draw_splash(w: u32, h: u32, brightness: f32, out: &mut Vec<u32>) -> Result<()
     let (x, y, gw, _) = letterbox(GRID.0, GRID.1, w, h);
     // Output pixels per grid unit.
     let unit = gw / GRID.0 as f32;
-    for (text, size, gy, colour) in LINES {
-        let (glyph, (px, py)) = place(text.len(), size, gy, x, y, unit);
+    for &(text, size, gy, colour) in lines {
+        let (glyph, (px, py)) = place(text.chars().count(), size, gy, x, y, unit);
         canvas.set_draw_color(mix(BACKGROUND, colour, brightness));
         canvas.set_scale(glyph, glyph).ok();
         let _ = canvas.draw_debug_text(text, (px / glyph, py / glyph));

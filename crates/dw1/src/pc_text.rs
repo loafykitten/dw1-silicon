@@ -96,6 +96,11 @@ fn edits(data: &[u8]) -> (Vec<(usize, Vec<u8>)>, usize) {
 /// Rewords the lines on the inserted disc. A disc without them (another release) keeps its text,
 /// with a warning.
 pub fn apply() {
+    // The app inserts the disc first; patching nothing would keep the card wording silently.
+    assert!(
+        psyq::libcd::disc_inserted(),
+        "the save machine's text is patched before the disc is inserted (start-up order)"
+    );
     let mut missing = 0;
     let result = psyq::libcd::patch_file("\\SCN\\DG.SCN", |data| {
         let (edits, m) = edits(data);

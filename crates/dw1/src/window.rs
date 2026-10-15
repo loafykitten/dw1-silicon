@@ -33,6 +33,7 @@ use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
 use sdl3::keyboard::{Mod, Scancode};
 
+mod disc_picker;
 mod splash;
 
 /// The PS1's NTSC non-interlaced field rate: 53.693175 MHz / (3413 x 263) = 59.817 Hz

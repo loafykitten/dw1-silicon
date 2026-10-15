@@ -331,7 +331,29 @@ impl Disc {
             None => Ok(None),
         }
     }
+
+    /// The executable the disc boots, as `SYSTEM.CNF` names it (`SLUS_010.32` on the USA
+    /// release), to say which release an image is. None when there is no such file or line.
+    pub fn boot_name(&self) -> Option<String> {
+        let cnf = self.read_file("SYSTEM.CNF").ok()??;
+        parse_boot(&String::from_utf8_lossy(&cnf))
+    }
 }
+
+/// The executable named by a `SYSTEM.CNF`'s `BOOT = cdrom:\SLUS_010.32;1` line: its file name
+/// without the device, directories and `;version`.
+pub fn parse_boot(cnf: &str) -> Option<String> {
+    let line = cnf
+        .lines()
+        .find(|l| l.trim_start().get(..4).is_some_and(|k| k.eq_ignore_ascii_case("BOOT")))?;
+    let value = line.split_once('=')?.1.trim();
+    let name = value.rsplit(['\\', ':', '/']).next()?;
+    let name = name.split(';').next()?.trim();
+    (!name.is_empty()).then(|| name.to_ascii_uppercase())
+}
+
+/// The executable the USA release boots ([`Disc::boot_name`]).
+pub const USA_BOOT: &str = "SLUS_010.32";
 
 /// A name without its `;version` and the trailing `.` of an extensionless file.
 fn strip_version(name: &str) -> &str {
@@ -442,6 +464,20 @@ pub mod testing {
 mod tests {
     use super::*;
     use crate::testing::synthetic_image as synthetic;
+
+    #[test]
+    fn the_boot_line_names_the_release() {
+        let usa = "BOOT = cdrom:\\SLUS_010.32;1\r\nTCB = 4\r\nEVENT = 10\r\n";
+        assert_eq!(parse_boot(usa).as_deref(), Some(USA_BOOT));
+        assert_eq!(
+            parse_boot("boot=cdrom:\\DIR\\sles_012.34;1").as_deref(),
+            Some("SLES_012.34")
+        );
+        assert_eq!(parse_boot("TCB = 4\n"), None);
+        assert_eq!(parse_boot("BOOT = cdrom:\\\n"), None);
+        // the synthetic image has no SYSTEM.CNF
+        assert_eq!(Disc::from_memory(synthetic()).unwrap().boot_name(), None);
+    }
 
     #[test]
     fn finds_files_in_either_path_style() {

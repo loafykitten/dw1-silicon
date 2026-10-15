@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 mod canon;
+mod disc;
 mod headless;
 mod pc_text;
 mod replay;
@@ -13,29 +14,20 @@ mod saves;
 mod settings;
 mod window;
 
-/// The disc's `.cue`: `DW1_DISC`, else `<workspace>/disc/Digimon World (USA).cue`.
-fn disc_path() -> PathBuf {
-    std::env::var_os("DW1_DISC")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../disc/Digimon World (USA).cue")
-        })
-}
-
+/// The disc for headless runs and the card commands: `DW1_DISC`, else
+/// `<workspace>/disc/Digimon World (USA).cue`. (The window build finds it with `disc`.)
 fn open_disc() -> Result<pack::Disc, String> {
-    let path = disc_path();
+    let path = std::env::var_os("DW1_DISC")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(disc::repo_image);
     if !path.exists() {
         return Err(format!(
             "no disc at {}: set DW1_DISC to the .cue of your Digimon World (USA) image",
             path.display()
         ));
     }
-    let disc = pack::Disc::open(&path).map_err(|e| e.to_string())?;
-    // Reads the whole image once (about a second), so a wrong or damaged dump is caught here
-    // and not as garbage in the game.
-    disc.verify()
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(disc)
+    disc::open_checked(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// `DW1_CRASH_TRACE=1`: on SIGSEGV/SIGBUS print the call stack (symbols) to stderr. lldb can't
@@ -392,13 +384,6 @@ fn main() {
     if std::env::var_os("DW1_CRASH_TRACE").is_some() {
         install_crash_trace();
     }
-    match open_disc() {
-        Ok(disc) => psyq::libcd::insert_disc(disc),
-        Err(e) => {
-            eprintln!("dw1: {e}");
-            std::process::exit(1);
-        }
-    }
     // Headless for the emulator-comparison runs (and `DW1_HEADLESS=1`); the window otherwise.
     let headless = [
         "DW1_HEADLESS",
@@ -411,6 +396,30 @@ fn main() {
     .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"))
         // A movie number, where 0 (the intro) is a value, not "off".
         || std::env::var_os("DW1_MOVIE").is_some_and(|x| !x.is_empty());
+    // The disc before the saves: the slots' text patches (`pc_text`) read it. The window build
+    // opens its window first, so the first-run screen can ask for the image.
+    let mut window = None;
+    if headless {
+        match open_disc() {
+            Ok(disc) => psyq::libcd::insert_disc(disc),
+            Err(e) => {
+                eprintln!("dw1: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        match window::Window::new() {
+            Ok(mut w) => {
+                let disc = w.find_disc(disc::at_startup());
+                psyq::libcd::insert_disc(disc);
+                window = Some(w);
+            }
+            Err(e) => {
+                eprintln!("dw1: cannot open the window: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
     // Headless runs keep saves only when asked to (`DW1_SAVE_DIR` set): the replays write
     // nothing. The window build has save slots; headless runs have the memory cards the
     // emulator comparisons need (`DW1_SAVES=slots` or `cards` to choose).
@@ -425,20 +434,13 @@ fn main() {
         _ if headless => insert_cards(keep),
         _ => insert_slots(keep),
     }
-    if headless {
-        psyq::libetc::set_host(Box::new(headless::Headless::from_env()));
-    } else {
-        match window::Window::new() {
-            Ok(mut w) => {
-                if !std::env::var_os("DW1_NO_SPLASH").is_some_and(|x| !x.is_empty() && x != "0") {
-                    w.splash();
-                }
-                psyq::libetc::set_host(Box::new(w));
+    match window {
+        None => psyq::libetc::set_host(Box::new(headless::Headless::from_env())),
+        Some(mut w) => {
+            if !std::env::var_os("DW1_NO_SPLASH").is_some_and(|x| !x.is_empty() && x != "0") {
+                w.splash();
             }
-            Err(e) => {
-                eprintln!("dw1: cannot open the window: {e}");
-                std::process::exit(1);
-            }
+            psyq::libetc::set_host(Box::new(w));
         }
     }
     // DW1_MOVIE=<id> plays one movie on its own (0 = the intro) and stops: the game's movie
