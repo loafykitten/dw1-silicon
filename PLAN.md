@@ -5,7 +5,28 @@ same day after an adversarial review by GPT 6 Astra (high) (`docs/plan-review-1.
 whole before starting, and don't re-ask Ember anything answered here. Keep the
 "Where things stand" section current at the end of every session: it is the handoff.
 
-## Where things stand (2026-10-14, session 4): start here
+## Where things stand (2026-10-14, session 5): start here
+
+- **Phase 8 (renderer and extras) is mostly built** (`docs/phase8-plan.md`, its Progress section
+  has the commits). The window now shows the picture through wgpu on Metal (`crates/render`),
+  pixel for pixel at whole-number scales. The game's frames are drawn a second time at 2-8x
+  (`backend::hd`, from DW2-PC's HD renderer) beside the exact 1x VRAM the game and the oracle
+  see, and with no wobble on, 3D polygons go there at their float GTE positions
+  (`backend::pgxp`). All ten replays are identical with `DW1_SCALE=4 DW1_PGXP=1`, and at scale 4
+  every HD frame's first pixel per block equals the 1x picture (0 differences over 267 new-game
+  shots). `settings.txt` in Application Support holds the options (F2 render scale with auto
+  from the window size, F3 no wobble, F4 fit, F11 fullscreen) with a note in the corner; the
+  defaults are auto, no wobble on, whole-multiple fit. Widescreen: a report only
+  (`docs/phase8-widescreen.md`: selective, not now).
+- **Next session:** Ember looks at the window (scale, no wobble, fit, fullscreen, the notes;
+  whether F-keys need fn on their keyboard), then close Phase 8: "full colour" (8.4, not built),
+  anything Ember asks, the Phase 8 check-in. Then Phase 9. Fixture saves for Phase 5's remaining
+  overlays still come from Ember over time.
+- **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
+- **macOS sometimes reports the window hidden** ("occluded") while Ember's screen is in use
+  elsewhere: wgpu then gives no frame and the app is throttled. Not a bug in the port.
+
+## Session 4 (2026-10-14)
 
 - **Phase 7 (saving) is done, with save slots** (`docs/phase7-plan.md`). Ember asked for a PC
   save system: the window build now has 15 save slots in the app's own format
@@ -664,6 +685,9 @@ replays. It is an addition, labelled as one like Phase 8's options.
 
 ### Phase 8: the Mac-native renderer and extras
 
+**Under way (2026-10-14, `docs/phase8-plan.md`):** 8.1-8.4 and 8.6 done, 8.5 (GPU renderer) not
+needed so far; Ember's look and "full colour" left.
+
 The `render` crate on wgpu/Metal: render scale, no wobble, Retina, window
 modes, gamepads through SDL. Each option labelled original or addition; 1x with extras off
 still matches the emulator's picture. **Widescreen is a feasibility milestone, not a
@@ -789,3 +813,8 @@ is what the Rust is checked against.
   the loading/saving to our own optimized format", with conversion kept so the saves stay
   useful for the oracle (the `.dw1save` format, `export-card`/`import-card`).
 - 2026-10-14: the port looks good from a walk around in `dw1-mac`.
+- 2026-10-14: Ember asked whether to steer to Bevy now so the rendering wouldn't be replaced
+  later. Answer kept: no. The renderer takes the PS1 draw commands, which the Rust game (Phase 10)
+  still makes, so it survives the migration; Bevy's renderer would need the same custom wgpu code,
+  and its scheduling and breaking releases fight the deterministic oracle-checked loop. A
+  remaster on an engine could come after the Rust game, as its own project.

@@ -985,6 +985,14 @@ fn cdiv(a: i64, b: i64) -> i64 {
     -fdiv(-a, b)
 }
 
+/// `numerator / area` in 8.16 fixed point plus a half (the start of an interpolated attribute),
+/// in 128 bits: a huge precise triangle's numerator shifted by 16 is past 64.
+fn attr_start(num: i64, area: i64) -> i64 {
+    let (a, b) = ((num as i128) << 16, area as i128);
+    let q = a.div_euclid(b) - i128::from(b < 0 && a.rem_euclid(b) != 0);
+    ((q as i64) << 8) + 0x80
+}
+
 #[derive(Clone, Copy, Default)]
 struct Edge {
     ax: i64,
@@ -1336,7 +1344,7 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
         let mut c24 = [0i64; 3];
         let mut d24 = [0i64; 3];
         for k in 0..natt {
-            c24[k] = (fdiv(num(k) << 16, area) << 8) + 0x80;
+            c24[k] = attr_start(num(k), area);
             d24[k] = fdiv(dn[k] << 24, area);
         }
         let (mut u24, mut v24, mut du24, mut dv24) = (0i64, 0i64, 0i64, 0i64);
@@ -1355,8 +1363,8 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
             dqu = (puw[0] * s[0] + puw[1] * s[1] + puw[2] * s[2]) / a;
             dqv = (pvw[0] * s[0] + pvw[1] * s[1] + pvw[2] * s[2]) / a;
         } else if tex.is_some() && tri1x.is_none() {
-            u24 = (fdiv(num(3) << 16, area) << 8) + 0x80;
-            v24 = (fdiv(num(4) << 16, area) << 8) + 0x80;
+            u24 = attr_start(num(3), area);
+            v24 = attr_start(num(4), area);
             du24 = fdiv(dn[3] << 24, area);
             dv24 = fdiv(dn[4] << 24, area);
         }
@@ -1983,5 +1991,40 @@ mod tests {
         let mut out = Vec::new();
         hd.read_display(&vram, 0, 0, 320, 240, &mut out).unwrap();
         assert_ne!(out[48 * 1280 + 1279], 0);
+    }
+
+    #[test]
+    fn a_huge_precise_gouraud_triangle_keeps_its_colour() {
+        use crate::gpu::{State, Vtx};
+        let vram = vec![0u16; VRAM_W * 512];
+        for scale in [4, 8] {
+            let mut hd = super::Hd::new(scale, 1);
+            hd.register(&vram, 0, 0, 320, 240);
+            let st = State {
+                clip_x1: 319,
+                clip_y1: 239,
+                ..State::default()
+            };
+            let v = |x: i32, y: i32| Vtx {
+                x,
+                y,
+                r: 255,
+                g: 255,
+                b: 255,
+                px: x as f32,
+                py: y as f32,
+                pz: 100.0,
+                ..Vtx::default()
+            };
+            // Covers the screen; its edge numerators shifted by 16 pass 64 bits.
+            let (a, b, c) = (v(-4000, -4000), v(8000, -4000), v(-4000, 8000));
+            hd.triangle(&vram, &st, [&a, &b, &c], true, None, false, 0, true);
+            let mut out = Vec::new();
+            let (w, _) = hd.read_display(&vram, 0, 0, 320, 240, &mut out).unwrap();
+            for (x, y) in [(0, 0), (160, 120), (319, 239)] {
+                let p = out[(y * scale as usize) * w + x * scale as usize];
+                assert_eq!(p, 0x00ff_ffff, "scale {scale} at ({x}, {y})");
+            }
+        }
     }
 }

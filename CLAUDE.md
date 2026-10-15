@@ -6,15 +6,15 @@ written in Rust (DW2-PC is the reference). **Read `PLAN.md` before doing anythin
 it's the handoff, with the goal, ground rules, sources, architecture, oracle, phases
 and open questions.
 
-- **Current status (2026-10-14, end of session 4):** Phases 1-4 done; Phase 5 (overlays) has
-  battles, training and the Item Keeper certified (`tools/replay-check.sh`, ten replays with Phase 7's), the
-  rest waits on fixture saves from Ember; Phase 6 (sound) done (matched against the emulator,
-  `tools/sound-check.sh`; Ember says it sounds right); Phase 7 (saving) done: the window build has
-  15 save slots in the app's own `.dw1save` format with the memory card screens gone, converting
-  to and from emulator cards, an in-game save certified against the emulator byte for byte
-  (`docs/phase7-plan.md`). Next: Phase 8 (renderer). Public repo `loafykitten/dw1-silicon`
-  (branch `phase0`); decomp fork branch `dw1-native` pushed. Direction: hybrid (decomp C game +
-  Rust for everything new), full Rust as the endgame. Sony's SDK is reimplemented clean (never
+- **Current status (2026-10-14, end of session 5):** Phases 1-4, 6 and 7 done; Phase 5
+  (overlays) has battles, training and the Item Keeper certified (`tools/replay-check.sh`, ten
+  replays), the rest waits on fixture saves from Ember. Phase 8 (renderer) mostly built: wgpu
+  window (`crates/render`), HD surfaces at 2-8x (`backend::hd`) and no wobble (`backend::pgxp`)
+  beside the exact 1x VRAM, settings with hotkeys; every replay identical with them on
+  (`docs/phase8-plan.md`). Next: Ember looks at it, "full colour", close Phase 8, then Phase 9.
+  Public repo `loafykitten/dw1-silicon` (branch `phase0`); decomp fork branch `dw1-native`
+  pushed. Direction: hybrid (decomp C game + Rust for everything new), full Rust as the
+  endgame (not Bevy: asked again 2026-10-14, kept). Sony's SDK is reimplemented clean (never
   translated from disassembly). PLAN.md's "Where things stand" is the handoff, including how to
   work with the oracle; keep it and this line current at the end of every session.
 - **Never commit disc data** (image, extracted files, assets, dumps, captures). They live

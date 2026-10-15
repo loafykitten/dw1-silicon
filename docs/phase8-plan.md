@@ -158,7 +158,13 @@ Ember has looked at them; the widescreen report is written. Then Phase 9.
   at scale 4. Timing (release, new-game replay): 9.6 s at 1x, 14.8 s at 4x, 21.9 s at 8x; per
   field at 4x a 0.25 ms mean, 6.2 ms worst. Astra found eight issues (UVs on 2D quads such as map
   tiles floored instead of the 1x rounding, lines, odd-row tails, wrapped transfers, overflow,
-  `vram_mut`, overlapping surfaces); being fixed.
+  `vram_mut`, overlapping surfaces), all fixed in 9f08b6c: non-precise polygons and lines now
+  take colour, texture coordinates and coverage from the 1x rasterizer per 1x pixel, so at scale
+  4 the first pixel of every block equals the 1x picture on all 267 new-game shots (3D frames
+  included; before: up to 18,000 differing). HD detail comes from edges and, with no wobble, from
+  precise polygons. Astra's second pass: one overflow on huge precise triangles, fixed (128-bit
+  attribute start). Timing after the fixes: 15.6 s at 4x (worst field 3.6 ms), 22.6 s at 8x
+  (one field 19 ms).
 - **8.3 done** (cfada45, c5afad7, 5b920a3): `backend::pgxp` and the GTE's report. Each corner is
   precise on its own (shared edges stay closed) and sprite-like mappings keep integer corners.
   The table is cleared after each drawn ordering table (DW1 projects everything, then draws once
