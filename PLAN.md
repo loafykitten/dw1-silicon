@@ -5,7 +5,7 @@ same day after an adversarial review by GPT 6 Astra (high) (`docs/plan-review-1.
 whole before starting, and don't re-ask Ember anything answered here. Keep the
 "Where things stand" section current at the end of every session: it is the handoff.
 
-## Where things stand (2026-10-14, session 6): start here
+## Where things stand (2026-10-15, session 6): start here
 
 - **Phase 8 (renderer and extras) is done** (Ember: "Looks good to me!", 2026-10-14;
   `docs/phase8-plan.md`, its Progress section
@@ -25,9 +25,13 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   (`docs/phase8-plan.md` Progress). Side-by-sides in `captures/phase8-full-colour/`.
 - **No wobble no longer cracks models** (Ember saw lines through Koromon's head): fixed the same
   session (`docs/phase8-plan.md` Progress); Ember checked it in play.
-- **Next: Phase 9** (below): Ember's playthrough with bugs in `docs/bugs.md`, packaging (a `.app`
-  that runs without Homebrew, first-run pack build), and `docs/guide.html`. Start with
-  `docs/phase9-plan.md`. Fixture saves for Phase 5's remaining
+- **Phase 9 is under way** (`docs/phase9-plan.md`, its Progress has the details): 9.1 the window
+  build finds the disc (remembered in `disc.txt`, or a first-run screen with the macOS file
+  dialog; `DW1_ASK_DISC=1` to see it), 9.2 `tools/make-app.sh [--install]` builds
+  `Digimon World.app` (logs in `~/Library/Logs/dw1-silicon/`, stops shown in message boxes,
+  crashes reported at the next start). Both reviewed by Sol until clean. **Next:** Ember tries the
+  app and the first-run screen by hand; then 9.3 (F12 bug snapshot, `docs/bugs.md`), 9.4
+  (`docs/guide.html`, README), and Ember's playthrough (9.5). Fixture saves for Phase 5's remaining
   overlays still come from Ember over time.
 - **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
 - **macOS sometimes reports the window hidden** ("occluded") while Ember's screen is in use

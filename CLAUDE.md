@@ -6,13 +6,15 @@ written in Rust (DW2-PC is the reference). **Read `PLAN.md` before doing anythin
 it's the handoff, with the goal, ground rules, sources, architecture, oracle, phases
 and open questions.
 
-- **Current status (2026-10-14, end of session 6):** Phases 1-4, 6 and 7 done; Phase 5
+- **Current status (2026-10-15, session 6):** Phases 1-4, 6 and 7 done; Phase 5
   (overlays) has battles, training and the Item Keeper certified (`tools/replay-check.sh`, ten
   replays), the rest waits on fixture saves from Ember. Phase 8 (renderer) done: wgpu
   window (`crates/render`), HD surfaces at 2-8x (`backend::hd`) and no wobble (`backend::pgxp`)
   beside the exact 1x VRAM, settings with hotkeys, "full colour" (F5, session 6); every replay
   identical with them all on (`docs/phase8-plan.md`). Full colour on by default (Ember).
-  No wobble no longer cracks models. Ember approved; next: Phase 9 (playthrough, packaging, guide).
+  No wobble no longer cracks models. Phase 9 under way (`docs/phase9-plan.md`): 9.1 first-run
+  disc screen and 9.2 the `.app` (`tools/make-app.sh`) done; next 9.3 bug snapshots, 9.4 the
+  guide, 9.5 Ember's playthrough.
   Public repo `loafykitten/dw1-silicon` (branch `phase0`); decomp fork branch `dw1-native`
   pushed. Direction: hybrid (decomp C game + Rust for everything new), full Rust as the
   endgame (not Bevy: asked again 2026-10-14, kept). Sony's SDK is reimplemented clean (never
