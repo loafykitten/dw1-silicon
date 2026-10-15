@@ -8,7 +8,7 @@ and open questions.
 
 - **Current status (2026-10-15, session 6):** Phases 1-4, 6 and 7 done; Phase 5
   (overlays) has battles, training and the Item Keeper certified; Phase 9's streams reached the
-  rest without Ember's saves (debug room, downloaded saves, moved saves): thirty-five replays
+  rest without Ember's saves (debug room, downloaded saves, moved saves): thirty-seven replays
   in `tools/replay-check.sh`, all identical. Phase 8 (renderer) done: wgpu
   window (`crates/render`), HD surfaces at 2-8x (`backend::hd`) and no wobble (`backend::pgxp`)
   beside the exact 1x VRAM, settings with hotkeys, "full colour" (F5, session 6); every replay

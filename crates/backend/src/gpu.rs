@@ -923,17 +923,19 @@ impl Gpu {
         let mut v = [Vtx::default(); 2];
         let (mut i, mut k) = (1usize, 0usize);
         loop {
+            // A polyline's terminator comes where a vertex would start, after the first two: in
+            // a shaded line the colour slot, never a coordinate (as `command_len`).
             if k > 0 && gouraud {
                 // The C reads past the packet on a malformed polyline; stop instead.
                 let Some(&x) = w.get(i) else { return };
-                if is_end(x) && polyline {
+                if polyline && k >= 2 && is_end(x) {
                     break;
                 }
                 col = x;
                 i += 1;
             }
             let Some(&x) = w.get(i) else { return };
-            if k > 0 && polyline && is_end(x) {
+            if polyline && !gouraud && k >= 2 && is_end(x) {
                 break;
             }
             let p = &mut v[k & 1];
@@ -1053,8 +1055,13 @@ impl Gpu {
                 if op & 0x08 == 0 {
                     return if op & 0x10 != 0 { 4 } else { 3 };
                 }
-                // polyline: up to the 0x5xxx5xxx terminator
-                (3..n)
+                // Polyline: up to the 0x5xxx5xxx terminator, which comes where the next vertex
+                // would start: after the first two vertices, and in a shaded line in a colour
+                // slot (colour, vertex pairs), never a coordinate [doc: psx-spx "GPU Render
+                // Line Commands"].
+                let (first, step) = if op & 0x10 != 0 { (4, 2) } else { (3, 1) };
+                (first..n)
+                    .step_by(step)
                     .find(|&i| w[i] & 0xF000_F000 == 0x5000_5000)
                     .map_or(0, |i| i + 1)
             }
@@ -1373,6 +1380,19 @@ mod tests {
 
     /// A modulated, subtractive, semi-transparent textured triangle with E6 mask checking on must
     /// leave masked pixels alone, including the last pixel of its odd rows (found in review).
+    /// A polyline's terminator is only looked for where a vertex would start: a shaded line's
+    /// coordinate that happens to look like one doesn't end it (found in review).
+    #[test]
+    fn polyline_terminator_only_where_a_vertex_starts() {
+        let shaded = 0x5A00_00FF;
+        assert_eq!(Gpu::command_len(&[shaded, 0, 0xFF, 0x5000_5010]), 0);
+        assert_eq!(Gpu::command_len(&[shaded, 0, 0xFF, 0x5000_5010, 0x5555_5555]), 5);
+        assert_eq!(Gpu::command_len(&[shaded, 0, 0xFF, 0x10, 0xFF, 0x20, 0x5555_5555]), 7);
+        let flat = 0x4800_00FF;
+        assert_eq!(Gpu::command_len(&[flat, 0, 0x10, 0x5555_5555]), 4);
+        assert_eq!(Gpu::command_len(&[flat, 0x5555_5555, 0x10, 0x20]), 0);
+    }
+
     /// `gp0` says whether its words ended on a command boundary (draw_chain's self-link rule
     /// relies on it).
     #[test]
