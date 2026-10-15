@@ -202,8 +202,8 @@ standard / dense counts.
 | `tour-beelzemontzero` | late-game Jijimon's house (205), File City top (179), plaza (192), restaurant (215) | BeelzemontZero's save (Piximon, prosperity 100): Jijimon, Yuramon, Tyrannomon's menu, Dragon Noodle eaten | 17 / 103 |
 | `tour-bob` | late-game house (205) and back room (206) | Bob's save (MegaSeadramon, night): Monzaemon's box | 17 / 124 |
 | `tour-master99-2001` | house (205), city top (179), plaza (192), Native Forest (109) | Master99's 2001 save (Digitamamon): a forest battle, won | 24 / 139 |
-| `tour-master99-2002` | house (205), city top (179), plaza (192), tool shop (216), Secret Item Shop (217) | Master99's 2002 save (MetalGreymon) | 18 / DENSE2002 |
-| `tour-winolivas` | house (205), city top (179), Item Keeper's (211) | winolivas's save (year 17): the game menu's items, Sirloin eaten, Poyomon's tip, the storage window with a full inventory | 14 / DENSEWINO |
+| `tour-master99-2002` | house (205), city top (179), plaza (192), tool shop (216), Secret Item Shop (217) | Master99's 2002 save (MetalGreymon) | 18 / 92 |
+| `tour-winolivas` | house (205), city top (179), Item Keeper's (211) | winolivas's save (year 17): the game menu's items, Sirloin eaten, Poyomon's tip, the storage window with a full inventory | 14 / 89 |
 
 All five US downloaded saves load and were walked (each is its card's only save; Master99's two
 sit in the third slot, `continue-save3`); the European save is for another release and was not
