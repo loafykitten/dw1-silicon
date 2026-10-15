@@ -149,3 +149,16 @@ written down as accepted. That is the first release.
   buildup and the ending; three judgement calls to check against the emulator when reached (the
   native stops on a finisher's uninitialised `tech`, VS intro's `prev = 0`, ENDI's stale stack
   word).
+- **Sanitizer runs** (session 6, 2026-10-15, `docs/phase9-sanitizers.md`): UBSan and ASan builds
+  of the game C over the twelve replays found PS1-layout dependencies the replays happened not to
+  expose: the item menu box allocated at the PS1's 0x20 bytes (natively 40: six rows overwrote
+  the next allocation's header), maps with 4-5 CLUTs storing into CAMERA_TARGET past MAP_CLUTS,
+  seven stray buff-trail stores (one of which corrupted the battle command layouts natively), the
+  tamer model / scratch / collision grid and the maphead / script offset tables being single PS1
+  spans that natively held together only by declaration order, plus out-of-range reads made
+  explicit. All fixed (decomp f5decbe), Astra twice. Build-wide: one macOS deployment target
+  (11.0) in `.cargo/config.toml` (SDL had been built for the build machine's macOS).
+- **Parallel streams** (2026-10-15): three Opus 5.5 subagents in worktrees under
+  `/Users/fenn/Developer/dw1-silicon-wt/` (render: the missing GsTMDfast handlers; fishcurl:
+  fishing, curling, recruiting, the other gyms; arena: tournaments and Battle Mode). Three
+  emulators run concurrently and deterministically (measured).
