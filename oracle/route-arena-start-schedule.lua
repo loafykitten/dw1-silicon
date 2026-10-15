@@ -1,8 +1,7 @@
 -- The start shared by the tournament profiles (Phase 9, arena stream), after the 'title' base:
--- CONTINUE GAME with the fixture p9-arena-debug-master99 in the cwd's memcard1.mcd (Master99's
--- 2002 GameFAQs save, "completed everything", MetalGreymon, day 11 08:08 in Jijimon's house,
--- with tools/oracle/debug_fixture.py's four flags zeroed so the yard holds the debug room). Its
--- one save is the card's third (file DMR2): Down twice on the save list.
+-- CONTINUE GAME with the fixture p9-arena-master99 in the cwd's memcard1.mcd (Master99's 2002
+-- GameFAQs save, unchanged: "completed everything", MetalGreymon, day 11 08:08 in Jijimon's
+-- house). Its one save is the card's third (file DMR2): Down twice on the save list.
 local PRESSES = {
     { 2380, 2380, 1, 4, 'DOWN' },     -- title menu: NEW GAME -> CONTINUE GAME
     { 2430, 2430, 1, 4, 'CROSS' },    -- CONTINUE GAME
