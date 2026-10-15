@@ -14,6 +14,8 @@
 --   tap BTN               hold BTN for 4 VBlanks, then wait 26 more (the route's usual tap)
 --   shot NAME             screenshot NAME.raw/.txt now
 --   dump NAME             main RAM (2 MB) to NAME.bin
+--   waitne ADDR VALUE N   no input until the 32-bit word at ADDR (hex) is not VALUE (hex), at
+--                         most N VBlanks (for waiting on game state, e.g. a fish biting)
 --   state                 print the state line again
 --   quit                  end the run
 -- After each batch it prints "EXPLORE state ..." and takes a screenshot s_<vblank>. Every
@@ -75,6 +77,8 @@ local vblank = 0
 local queue = {}
 local active = nil      -- { buttons = {bits}, last = vblank at which to release }
 local waitUntil = nil
+local waitWord = nil    -- { index into ram32, value, last vblank } for waitne
+local ram32 = ffi.cast('uint32_t*', PCSX.getMemPtr())
 local needState = true
 local log = assert(io.open('inputs.log', 'ab'))
 
@@ -98,7 +102,10 @@ local function tick()
         active = nil
     end
     if waitUntil and vblank >= waitUntil then waitUntil = nil end
-    while not active and not waitUntil do
+    if waitWord and (ram32[waitWord[1]] ~= waitWord[2] or vblank >= waitWord[3]) then
+        waitWord = nil
+    end
+    while not active and not waitUntil and not waitWord do
         if #queue == 0 then
             if needState then
                 print(string.format('EXPLORE state vblank=%d %s', vblank, status()))
@@ -129,6 +136,10 @@ local function tick()
             log:flush()
         elseif cmd == 'wait' then
             waitUntil = vblank + tonumber(a1)
+        elseif cmd == 'waitne' then
+            local addr, value = tonumber(a1, 16), tonumber(a2, 16)
+            local n = tonumber(line:match('%S+%s+%S+%s+%S+%s+(%S+)'))
+            waitWord = { bit.rshift(bit.band(addr, 0x1FFFFF), 2), value, vblank + n }
         elseif cmd == 'shot' then
             shot(a1)
         elseif cmd == 'dump' then

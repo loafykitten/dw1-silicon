@@ -83,6 +83,11 @@ local EXTRA = {
                                   '/route-training-all-schedule.lua', '/route-training-six-schedule.lua' } },
     ['battle-twice'] = { base = 'continue-save2',
                          file = { '/route-battle-schedule.lua', '/route-battle-twice-schedule.lua' } },
+    -- Phase 9, stream fishcurl: Master99's save (debug fixture with the rods kept), Mr. Warp
+    ['master99-warp'] = { base = 'continue-save3',
+                          file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua' } },
+    ['debug-fish'] = { base = 'continue-save3',
+                       file = { '/route-master99-yard-schedule.lua', '/route-debug-fish-schedule.lua' } },
 }
 local base = PROFILE
 if EXTRA[PROFILE] then base = EXTRA[PROFILE].base end
@@ -90,6 +95,8 @@ if base == 'continue' then
     PRESSES, MILESTONES = dofile(CONTINUE_SCHEDULE_FILE or (HERE .. '/route-continue-schedule.lua'))
 elseif base == 'continue-save2' then
     PRESSES, MILESTONES = dofile(HERE .. '/route-continue-save2-schedule.lua')
+elseif base == 'continue-save3' then
+    PRESSES, MILESTONES = dofile(HERE .. '/route-continue-save3-schedule.lua')
 elseif base ~= 'new-game' then
     error('unknown DW1ROUTE_PROFILE ' .. tostring(PROFILE))
 end
