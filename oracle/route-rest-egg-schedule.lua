@@ -5,9 +5,10 @@
 -- species) and prosperity + 3. The fixture captures/fixtures/p9-rest-egg.mcd is BeelzemontZero's
 -- save (p9-arena-vs-p1: Piximon, all stats 999, flag 50 set; the card's only save: the continue
 -- base) moved to the last corridor like the ending's (tools/oracle/place_fixture.py ... 222 254 0
--- -400 -4100 326=1 256=0). Master99's MetalGreymon lost this fight in three recordings out of
--- four (captures/oracle-runs/p9-rest-egg-record, -r300, -r900); Piximon won the exploration
--- (captures/oracle-runs/p9-rest-eggpix-x1) without losing any HP after the first exchanges. The
+-- -400 -4100 326=1 256=0). Master99's MetalGreymon (2002 save, flag 256 cleared) won one
+-- exploration narrowly but lost all three recordings (two kept: captures/oracle-runs/
+-- p9-rest-egg-r300, -r900); Piximon won the exploration (captures/oracle-runs/p9-rest-eggpix-x1)
+-- and the recording, losing little HP. The
 -- battle is played by the controller below, so it doesn't depend on the fight lasting as long as
 -- it did in the exploration.
 local PRESSES = {
