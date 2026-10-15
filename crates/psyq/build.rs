@@ -14,6 +14,12 @@ fn main() {
     libgpu_capture();
     sprite_capture();
     sortot_capture();
+    tmd_capture();
+    request_run(
+        "have_libgpu_drawload_capture",
+        "DW1_LIBGPU_DRAWLOAD_CAPTURE",
+        "p9-render-drawload",
+    );
     println!("cargo::rerun-if-changed=build.rs");
 }
 
@@ -83,6 +89,7 @@ fn sort_capture() {
 
 fn disc() {
     println!("cargo::rustc-check-cfg=cfg(have_disc)");
+    println!("cargo::rustc-check-cfg=cfg(have_disc_image)");
     println!("cargo::rerun-if-env-changed=DW1_DISC");
     println!("cargo::rerun-if-env-changed=DW1_DISC_FILES");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -94,6 +101,11 @@ fn disc() {
         .unwrap_or_else(|| root.join("decomp/disks/us"));
     println!("cargo::rerun-if-changed={}", cue.display());
     println!("cargo::rerun-if-changed={}", files.display());
+    // The image alone (tests/libgs_disc_models.rs reads its files through `pack`).
+    if cue.exists() {
+        println!("cargo::rustc-cfg=have_disc_image");
+        println!("cargo::rustc-env=DW1_TEST_DISC_IMAGE={}", cue.display());
+    }
     if cue.exists() && files.is_dir() {
         println!("cargo::rustc-cfg=have_disc");
         println!("cargo::rustc-env=DW1_TEST_DISC={}", cue.display());
@@ -181,12 +193,45 @@ fn libgpu_capture() {
 /// `cfg(have_libgs_sprite_btl_capture)` for its `--set battle` run (`DW1_LIBGS_SPRITE_BTL_CAPTURE`,
 /// default `libgs-sprite-btl`). Without them `tests/libgs_sprite_oracle.rs`'s tests are ignored.
 fn sprite_capture() {
-    request_run("have_libgs_sprite_capture", "DW1_LIBGS_SPRITE_CAPTURE", "libgs-sprite");
+    request_run(
+        "have_libgs_sprite_capture",
+        "DW1_LIBGS_SPRITE_CAPTURE",
+        "libgs-sprite",
+    );
     request_run(
         "have_libgs_sprite_btl_capture",
         "DW1_LIBGS_SPRITE_BTL_CAPTURE",
         "libgs-sprite-btl",
     );
+}
+
+/// The `GsSortObject4J` request runs of `tools/oracle/tmd_requests.py` (Phase 9), for
+/// `tests/libgs_tmd_oracle.rs`.
+/// `DW1_LIBGS_TMD_CAPTURES` names the root holding the runs (default
+/// `<workspace>/captures/oracle-runs`).
+fn tmd_capture() {
+    println!("cargo::rerun-if-env-changed=DW1_LIBGS_TMD_CAPTURES");
+    let root = match std::env::var_os("DW1_LIBGS_TMD_CAPTURES") {
+        Some(d) => PathBuf::from(d),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../captures/oracle-runs"),
+    };
+    for set in ["fast", "div", "attr", "bits", "bounds"] {
+        let cfg = format!("have_libgs_tmd_{set}_capture");
+        println!("cargo::rustc-check-cfg=cfg({cfg})");
+        let dir = root.join(format!("p9-render-s4j-{set}"));
+        println!(
+            "cargo::rerun-if-changed={}",
+            dir.join("results.txt").display()
+        );
+        if dir.join("req.txt").exists() && dir.join("results.txt").exists() {
+            println!("cargo::rustc-cfg={cfg}");
+        } else {
+            println!(
+                "cargo::warning=libgs TMD oracle run not found ({}): its test in tests/libgs_tmd_oracle.rs will be ignored",
+                dir.display()
+            );
+        }
+    }
 }
 
 /// Sets `cfg(<cfg>)` when an `oracle/call-sdk.lua` run's `req.txt` and `results.txt` exist in

@@ -104,3 +104,11 @@ The spike's model became the native `GsSortObject4J` (`crates/psyq/src/libgs/sor
 the lit Gouraud textured handlers split out as `GsTMDfastTG3L`/`TG4L` behind the `GsFCALL4`
 table, and `tests/libgs_capture.rs` runs these 48 calls and 180 more (new-game scene to name
 entry) on native memory. See `docs/phase2-plan.md`, slice 6e.
+
+## Update (2026-10-15): coverage
+
+The "not covered yet" list above is done (`docs/phase9-render.md`): every primitive kind the
+disc's models use, attribute `GsDIV1` and display off, `GsOT.offset`; OTZ past the table still
+stops (the SDK writes outside it). Near-plane and overflowing vertices: the non-dividing handlers
+drop a polygon whose projection has a FLAG error, the dividing ones test the screen and H/2.
+

@@ -324,6 +324,33 @@ impl Disc {
         Ok(None)
     }
 
+    /// Every file on the disc, with its path (`/DIR/FILE.EXT`, versions stripped), depth first in
+    /// directory order.
+    pub fn files(&self) -> Result<Vec<(String, FileEntry)>, DiscError> {
+        let mut out = Vec::new();
+        let root = self
+            .find("/")?
+            .ok_or_else(|| DiscError::Iso("no root directory".into()))?;
+        let mut stack = vec![(String::new(), root)];
+        while let Some((path, dir)) = stack.pop() {
+            let data = self.read_extent(dir.lba, dir.size)?;
+            let mut subdirs = Vec::new();
+            for rec in records(&data) {
+                if rec.special {
+                    continue;
+                }
+                let full = format!("{path}/{}", strip_version(&rec.entry.name));
+                if rec.is_dir {
+                    subdirs.push((full, rec.entry));
+                } else {
+                    out.push((full, rec.entry));
+                }
+            }
+            stack.extend(subdirs.into_iter().rev());
+        }
+        Ok(out)
+    }
+
     /// Reads a whole file by path. `Ok(None)` when it doesn't exist.
     pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>, DiscError> {
         match self.find(path)? {
