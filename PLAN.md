@@ -7,7 +7,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-14, session 6): start here
 
-- **Phase 8 (renderer and extras) is mostly built** (`docs/phase8-plan.md`, its Progress section
+- **Phase 8 (renderer and extras) is done** (Ember: "Looks good to me!", 2026-10-14;
+  `docs/phase8-plan.md`, its Progress section
   has the commits). The window now shows the picture through wgpu on Metal (`crates/render`),
   pixel for pixel at whole-number scales. The game's frames are drawn a second time at 2-8x
   (`backend::hd`, from DW2-PC's HD renderer) beside the exact 1x VRAM the game and the oracle
@@ -23,9 +24,10 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   byte-identical to before, replays identical with it on, Astra's review converged
   (`docs/phase8-plan.md` Progress). Side-by-sides in `captures/phase8-full-colour/`.
 - **No wobble no longer cracks models** (Ember saw lines through Koromon's head): fixed the same
-  session (`docs/phase8-plan.md` Progress). Ember should check it in play.
-- **Next session:** close Phase 8 (the check-in: anything else Ember asks about the picture),
-  then Phase 9. Fixture saves for Phase 5's remaining
+  session (`docs/phase8-plan.md` Progress); Ember checked it in play.
+- **Next: Phase 9** (below): Ember's playthrough with bugs in `docs/bugs.md`, packaging (a `.app`
+  that runs without Homebrew, first-run pack build), and `docs/guide.html`. Start with
+  `docs/phase9-plan.md`. Fixture saves for Phase 5's remaining
   overlays still come from Ember over time.
 - **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
 - **macOS sometimes reports the window hidden** ("occluded") while Ember's screen is in use
@@ -690,8 +692,8 @@ replays. It is an addition, labelled as one like Phase 8's options.
 
 ### Phase 8: the Mac-native renderer and extras
 
-**Under way (2026-10-14, `docs/phase8-plan.md`):** 8.1-8.4 (full colour included) and 8.6 done,
-8.5 (GPU renderer) not needed so far; Ember's look at full colour and the check-in left.
+**Done (2026-10-14, `docs/phase8-plan.md`):** 8.1-8.4 (full colour included) and 8.6; 8.5 (GPU
+renderer) not needed. Ember looked and approved.
 
 The `render` crate on wgpu/Metal: render scale, no wobble, Retina, window
 modes, gamepads through SDL. Each option labelled original or addition; 1x with extras off
@@ -829,3 +831,4 @@ is what the Rust is checked against.
   remaster on an engine could come after the Rust game, as its own project.
 - 2026-10-14 (session 6): full colour on by default ("I can barely tell the difference in color
   so let's leave it on"); Ember plays with no wobble on and a high render scale.
+- 2026-10-14 (session 6): the crack fix "looks good"; Phase 8 closed.

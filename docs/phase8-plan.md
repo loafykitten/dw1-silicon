@@ -205,4 +205,5 @@ Ember has looked at them; the widescreen report is written. Then Phase 9.
   libgs's scaled and rotated sprites (`pgxp::without`) and the battle start text in btl, std and
   vs (`dw1_pgxp_2d` in the decomp fork, found by a Sol survey of every game-C projection site).
   Replays identical with every extra on; Astra reviewed three times (two real findings, both the
-  2D cases above), converged. Before/after in `captures/phase8-cracks/`.
+  2D cases above), converged. Before/after in `captures/phase8-cracks/`. Ember: "Looks good".
+- **Phase 8 closed (2026-10-14).**
