@@ -29,9 +29,13 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   build finds the disc (remembered in `disc.txt`, or a first-run screen with the macOS file
   dialog; `DW1_ASK_DISC=1` to see it), 9.2 `tools/make-app.sh [--install]` builds
   `Digimon World.app` (logs in `~/Library/Logs/dw1-silicon/`, stops shown in message boxes,
-  crashes reported at the next start). Both reviewed by Sol until clean. **Next:** Ember tries the
-  app and the first-run screen by hand; then 9.3 (F12 bug snapshot, `docs/bugs.md`), 9.4
-  (`docs/guide.html`, README), and Ember's playthrough (9.5). Fixture saves for Phase 5's remaining
+  crashes reported at the next start), 9.3 F12 bug snapshots (`reports/` in Application Support,
+  `docs/bugs.md`), 9.4 `docs/guide.html` and the README (no Homebrew needed: PyYAML and CMake in
+  the repo's `.venv`; a fresh clone built by the guide's steps). All reviewed by Sol until clean;
+  Ember tried the app and the first-run screen. **Next:** Ember reads the guide and plays through
+  (9.5), pressing F12 at anything odd; bugs go to `docs/bugs.md`. Battle Mode's player 2 isn't
+  playable (every pad drives player 1): separate routing when Ember wants it. booklab is still
+  unreachable for the another-Mac test. Fixture saves for Phase 5's remaining
   overlays still come from Ember over time.
 - **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
 - **macOS sometimes reports the window hidden** ("occluded") while Ember's screen is in use

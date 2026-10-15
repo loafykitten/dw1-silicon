@@ -13,8 +13,8 @@ and open questions.
   beside the exact 1x VRAM, settings with hotkeys, "full colour" (F5, session 6); every replay
   identical with them all on (`docs/phase8-plan.md`). Full colour on by default (Ember).
   No wobble no longer cracks models. Phase 9 under way (`docs/phase9-plan.md`): 9.1 first-run
-  disc screen and 9.2 the `.app` (`tools/make-app.sh`) done; next 9.3 bug snapshots, 9.4 the
-  guide, 9.5 Ember's playthrough.
+  disc screen, 9.2 the `.app` (`tools/make-app.sh`), 9.3 F12 bug snapshots and 9.4 the guide
+  (`docs/guide.html`) done; next 9.5, Ember's playthrough (bugs in `docs/bugs.md`).
   Public repo `loafykitten/dw1-silicon` (branch `phase0`); decomp fork branch `dw1-native`
   pushed. Direction: hybrid (decomp C game + Rust for everything new), full Rust as the
   endgame (not Bevy: asked again 2026-10-14, kept). Sony's SDK is reimplemented clean (never
