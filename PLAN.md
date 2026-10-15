@@ -18,8 +18,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   from the window size, F3 no wobble, F4 fit, F11 fullscreen) with a note in the corner; the
   defaults are auto, no wobble on, whole-multiple fit. Widescreen: a report only
   (`docs/phase8-widescreen.md`: selective, not now).
-- **Next session:** Ember looks at the window (scale, no wobble, fit, fullscreen, the notes;
-  whether F-keys need fn on their keyboard), then close Phase 8: "full colour" (8.4, not built),
+- **Next session:** Ember has looked (defaults great, hotkeys and fit work; Answered), so close
+  Phase 8: "full colour" (8.4, not built),
   anything Ember asks, the Phase 8 check-in. Then Phase 9. Fixture saves for Phase 5's remaining
   overlays still come from Ember over time.
 - **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
@@ -813,6 +813,10 @@ is what the Rust is checked against.
   the loading/saving to our own optimized format", with conversion kept so the saves stay
   useful for the oracle (the `.dw1save` format, `export-card`/`import-card`).
 - 2026-10-14: the port looks good from a walk around in `dw1-mac`.
+- 2026-10-14 (Phase 8 look): "The picture looks great with the defaults"; the F hotkeys work;
+  fitting to the window works; best with a high render scale and no wobble on. No wobble off
+  at a high scale looked awful: 3D models were textured block by block at 1x. Fixed the same day
+  (only 2D mappings keep that; 3D models interpolate smoothly).
 - 2026-10-14: Ember asked whether to steer to Bevy now so the rendering wouldn't be replaced
   later. Answer kept: no. The renderer takes the PS1 draw commands, which the Rust game (Phase 10)
   still makes, so it survives the migration; Bevy's renderer would need the same custom wgpu code,

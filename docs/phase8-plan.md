@@ -176,3 +176,8 @@ Ember has looked at them; the widescreen report is written. Then Phase 9.
   fit. "Full colour" is not built yet.
 - **8.5 not needed** so far: software HD holds the field rate at 4x and mostly at 8x.
 - **8.6 done:** `docs/phase8-widescreen.md` (selective, not now).
+- **Ember's look (2026-10-14):** the defaults look great, the hotkeys and fit work. No wobble off
+  at a high scale looked awful (3D models textured block by block at 1x, the 2D-exact rule
+  applied to everything); now only untextured and sprite-like polygons keep it, other textured
+  polygons interpolate smoothly (`smooth` in `hd.rs`). 2D frames still 0 differences from 1x;
+  replays identical; Sol found nothing.

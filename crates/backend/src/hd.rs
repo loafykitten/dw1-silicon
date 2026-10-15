@@ -106,6 +106,9 @@ struct TriCmd {
     semi: bool,
     abr: i32,
     precise: bool,
+    /// Interpolated smoothly across the surface pixels though not precise (a 3D polygon with no
+    /// wobble off); otherwise a polygon that isn't precise is drawn as the 1x one, block by block.
+    smooth: bool,
 }
 
 struct RectCmd {
@@ -461,7 +464,8 @@ impl Hd {
     // ---- primitives ----
 
     /// A triangle the 1x path just drew (it takes the same early rejections). `precise`: use
-    /// px / py / pz (decided per polygon by the caller, so both triangles of a quad agree).
+    /// px / py / pz; `smooth`: interpolate across the surface pixels even so (both decided per
+    /// polygon by the caller, so both triangles of a quad agree).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn triangle(
         &mut self,
@@ -473,6 +477,7 @@ impl Hd {
         semi: bool,
         abr: i32,
         precise: bool,
+        smooth: bool,
     ) {
         let minx = v.iter().map(|p| p.x).min().unwrap();
         let maxx = v.iter().map(|p| p.x).max().unwrap();
@@ -531,6 +536,7 @@ impl Hd {
                 semi,
                 abr,
                 precise,
+                smooth,
             }),
         );
     }
@@ -1231,10 +1237,11 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
     // [obs] only Gouraud polygons are dithered (as in gpu.rs)
     let dith = st.dither && gouraud;
     let mut v = [&t.v[0], &t.v[1], &t.v[2]];
-    // A polygon that is not precise takes colours and texture coordinates from the 1x
-    // rasterizer's arithmetic at the 1x pixel (constant over its S x S block, as the dither
-    // is); a precise one interpolates across the surface pixels (smooth, perspective-correct).
-    let tri1x = if t.precise {
+    // A 2D polygon takes colours and texture coordinates from the 1x rasterizer's arithmetic at
+    // the 1x pixel (constant over its S x S block, as the dither is); a precise one interpolates
+    // across the surface pixels (smooth, perspective-correct), and a 3D one with no wobble off
+    // the same way, affine.
+    let tri1x = if t.precise || t.smooth {
         None
     } else {
         match Tri1x::new([&t.v[0], &t.v[1], &t.v[2]], st, gouraud, tex, semi, abr) {
@@ -1987,7 +1994,7 @@ mod tests {
         };
         // integer corners are all outside x 0..319; the precise ones are half a pixel left
         let (a, b, c) = (v(320, 10, 319.5), v(321, 10, 320.5), v(320, 20, 319.5));
-        hd.triangle(&vram, &st, [&a, &b, &c], false, None, false, 0, true);
+        hd.triangle(&vram, &st, [&a, &b, &c], false, None, false, 0, true, false);
         let mut out = Vec::new();
         hd.read_display(&vram, 0, 0, 320, 240, &mut out).unwrap();
         assert_ne!(out[48 * 1280 + 1279], 0);
@@ -2018,7 +2025,7 @@ mod tests {
             };
             // Covers the screen; its edge numerators shifted by 16 pass 64 bits.
             let (a, b, c) = (v(-4000, -4000), v(8000, -4000), v(-4000, 8000));
-            hd.triangle(&vram, &st, [&a, &b, &c], true, None, false, 0, true);
+            hd.triangle(&vram, &st, [&a, &b, &c], true, None, false, 0, true, false);
             let mut out = Vec::new();
             let (w, _) = hd.read_display(&vram, 0, 0, 320, 240, &mut out).unwrap();
             for (x, y) in [(0, 0), (160, 120), (319, 239)] {

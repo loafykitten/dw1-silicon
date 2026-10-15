@@ -799,16 +799,18 @@ impl Gpu {
                         None => (p.px, p.py, p.pz) = (p.x as f32, p.y as f32, 0.0),
                     }
                 }
-                // A sprite-like mapping keeps its integer corners; decided for the whole quad,
-                // so a floor tile with one sprite-like half doesn't open a gap on its diagonal.
-                if precise
-                    && textured
-                    && sprite_like(&v[0], &v[1], &v[2])
-                    && (!quad || sprite_like(&v[1], &v[2], &v[3]))
-                {
-                    precise = false;
-                }
             }
+            // A sprite-like mapping (a map tile, a 2D picture) keeps its integer corners and is
+            // drawn as at 1x, block by block; decided for the whole quad, so a floor tile with one
+            // sprite-like half doesn't open a gap on its diagonal. Other textured polygons (3D
+            // models) without precise corners interpolate smoothly at the render scale.
+            let flat_2d = textured
+                && sprite_like(&v[0], &v[1], &v[2])
+                && (!quad || sprite_like(&v[1], &v[2], &v[3]));
+            if flat_2d {
+                precise = false;
+            }
+            let smooth = textured && !flat_2d && !precise;
             if quad {
                 hd.triangle(
                     &self.vram,
@@ -819,6 +821,7 @@ impl Gpu {
                     semi,
                     abr,
                     precise,
+                    smooth,
                 );
             }
             hd.triangle(
@@ -830,6 +833,7 @@ impl Gpu {
                 semi,
                 abr,
                 precise,
+                smooth,
             );
         }
     }
