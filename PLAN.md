@@ -840,3 +840,5 @@ is what the Rust is checked against.
 - 2026-10-14 (session 6): full colour on by default ("I can barely tell the difference in color
   so let's leave it on"); Ember plays with no wobble on and a high render scale.
 - 2026-10-14 (session 6): the crack fix "looks good"; Phase 8 closed.
+- 2026-10-15 (session 6): the app and the first-run disc screen work by hand; the guide "looks
+  great". Next is Ember's playthrough.

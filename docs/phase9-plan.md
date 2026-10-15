@@ -129,4 +129,5 @@ written down as accepted. That is the first release.
   Python; `make-app.sh` uses its CMake when none is on PATH). Sol found five problems in the first
   draft (Homebrew Python refusing `pip --user`, Battle Mode's player 2 described wrongly, the
   DuckStation card's location, the care claim, the copy buttons), fixed. A fresh clone from
-  GitHub built and matched the new-game replay (19/19).
+  GitHub built and matched the new-game replay (19/19). Ember read it: "looks great"
+  (2026-10-15).
