@@ -30,6 +30,7 @@ PREFIX = b"BASLUS-01032DMR"
 # SavegamePayload (decomp/src/main/main_menu.c) offsets.
 TAMER_POS, PARTNER_POS = 0x04, 0x14
 SCRIPT_STATE, TRIGGERS = 0x290, 0xF5
+TRIGGER_COUNT = 100 * 8  # SCRIPT_STATE.triggers is 100 bytes
 CURRENT_SCREEN, PREVIOUS_SCREEN, CURRENT_EXIT = 0x49A, 0x49B, 0x49C
 WAYPOINT_X, WAYPOINT_Y = 0x49E, 0x4BC
 PREV_TILE_X, PREV_TILE_Y, WAYPOINT_CURRENT, WAYPOINT_COUNT = 0x4DA, 0x4DB, 0x4DC, 0x4DD
@@ -67,7 +68,10 @@ def main():
     flags = []
     for arg in sys.argv[8:]:
         n, v = arg.split('=')
-        flags.append((int(n, 0), int(v)))
+        n, v = int(n, 0), int(v)
+        if not 0 <= n < TRIGGER_COUNT or v not in (0, 1):
+            sys.exit(f"{arg}: a trigger is 0..{TRIGGER_COUNT - 1}=0|1")
+        flags.append((n, v))
     if os.path.exists(dst):
         sys.exit(f"{dst} exists; not overwriting it")
     card = bytearray(open(src, "rb").read())
