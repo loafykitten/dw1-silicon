@@ -4,7 +4,9 @@
 //! from power-on, about 1144 more for DW1's boot), so native frames and emulator frames can be
 //! put side by side.
 //!
-//! Env: `DW1_SHOTS=first:last:step` (screenshots `shot_<vblank>.png`), `DW1_STOP_AT=<vblank>`
+//! Env: `DW1_SHOTS=first:last:step` (screenshots `shot_<vblank>.png`; with `DW1_SCALE` above 1 the
+//! HD picture, and `DW1_SHOTS_1X=1` also writes the 1x one as `shot_<vblank>_1x.png`; `DW1_HD_STATS=1` prints
+//! `hdstat <vblank> <ns>`, the HD drawing time of each field), `DW1_STOP_AT=<vblank>`
 //! (exit 0 there; `DW1_VRAM_DUMP=<file>` writes the VRAM there, and `DW1_GP0_DUMP=1` prints every
 //! polygon packet with its draw state and a `V <n>` line per VBlank, for
 //! `tools/oracle/gpu_frame_requests.py`), `DW1_OUT=<dir>` (default `captures/native-runs/latest`), `DW1_REPLAY=<file>`
@@ -44,6 +46,8 @@ pub struct Headless {
     /// DW1_REPLAY_LOG: print each poll with its recorded and native VBlank.
     replay_log: bool,
     checkpoints: Option<Checkpoints>,
+    /// DW1_HD_STATS: the HD drawing time counted so far.
+    hd_ns_seen: u64,
 }
 
 /// Checkpoint bookkeeping, mirroring `oracle/replay.lua`'s `pollCheckpoints`.
@@ -312,20 +316,38 @@ impl Headless {
             replay_log: std::env::var("DW1_REPLAY_LOG").is_ok_and(|v| !v.is_empty() && v != "0"),
             out,
             replay,
+            hd_ns_seen: 0,
         }
     }
 
     fn shot(&self, vblank: u32) {
+        let scale = psyq::gpu::with(|g| g.scale());
         let mut rgb = vec![0u32; 640 * 480];
-        let Some((w, h)) = psyq::gpu::with(|g| g.read_display(&mut rgb)) else {
+        let one = psyq::gpu::with(|g| g.read_display(&mut rgb));
+        let Some((w, h)) = one else {
             eprintln!("dw1: vblank {vblank}: display off, no screenshot");
             return;
         };
+        if scale == 1 {
+            self.write_png(&format!("shot_{vblank:05}.png"), w, h, &rgb);
+            return;
+        }
+        // the HD picture; DW1_SHOTS_1X=1 also writes the 1x one next to it
+        let mut hd = Vec::new();
+        if let Some((hw, hh)) = psyq::gpu::with(|g| g.read_display_hd(&mut hd)) {
+            self.write_png(&format!("shot_{vblank:05}.png"), hw, hh, &hd);
+        }
+        if std::env::var_os("DW1_SHOTS_1X").is_some_and(|v| !v.is_empty() && v != "0") {
+            self.write_png(&format!("shot_{vblank:05}_1x.png"), w, h, &rgb);
+        }
+    }
+
+    fn write_png(&self, name: &str, w: usize, h: usize, rgb: &[u32]) {
         let bytes: Vec<u8> = rgb[..w * h]
             .iter()
             .flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8])
             .collect();
-        let path = self.out.join(format!("shot_{vblank:05}.png"));
+        let path = self.out.join(name);
         let file = std::fs::File::create(&path).unwrap_or_else(|e| {
             eprintln!("dw1: {}: {e}", path.display());
             std::process::exit(2);
@@ -343,6 +365,19 @@ impl psyq::libetc::Host for Headless {
     fn vblank(&mut self, vblank: u32) {
         if backend::gpu::dump_polygons() {
             eprintln!("V {vblank}");
+        }
+        if std::env::var_os("DW1_HD_STATS").is_some() {
+            // the HD drawing time of this field (a display read-out included, as the window does it)
+            let mut out = Vec::new();
+            let (ns, read_ns) = psyq::gpu::with(|g| {
+                g.read_display_hd(&mut out);
+                let flushed = g.hd_flush_ns();
+                let t = std::time::Instant::now();
+                g.read_display_hd(&mut out); // the queue is empty now: the read-out alone
+                (flushed, t.elapsed().as_nanos())
+            });
+            eprintln!("hdstat {vblank} {} {read_ns}", ns - self.hd_ns_seen);
+            self.hd_ns_seen = ns;
         }
         if let Some(path) = std::env::var_os("DW1_VRAM_DUMP")
             && self.stop_at == Some(vblank)
