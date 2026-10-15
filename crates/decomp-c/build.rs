@@ -143,6 +143,9 @@ fn main() {
     if let Some(list) = env::var("DW1_SANITIZE").ok().filter(|s| !s.is_empty()) {
         build
             .flag(format!("-fsanitize={list}"))
+            // report and go on (ASan stops at the first error otherwise; with
+            // ASAN_OPTIONS=halt_on_error=0)
+            .flag("-fsanitize-recover=all")
             .flag("-fno-omit-frame-pointer");
     }
     // Overlay files whose initialised data the PS1 reloads with the overlay are compiled
