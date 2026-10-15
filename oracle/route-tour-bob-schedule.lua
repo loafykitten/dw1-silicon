@@ -1,9 +1,10 @@
 -- Extra schedule for DW1ROUTE_PROFILE=tour-bob (Phase 9, stream tour, derived with
--- oracle/explore.lua): after the continue route, with Bob's GameFAQs save (fixture p9-arena-vs-p2:
--- MegaSeadramon, day 11, 20:02) in the late-game Jijimon's house (205): the back room (206,
--- Monzaemon, "It's empty."), back through the house and out at night to the top of File City
--- (179), west to the Green Gym (112), south into the Native Forest (109), Dokunemon ("What do you
--- want?!"): a battle with the late-game partner (its command menu up), over by ~11120.
+-- oracle/explore.lua): after the continue route, with Bob's GameFAQs save (fixture
+-- p9-arena-vs-p2: MegaSeadramon, day 11, 20:02) in the late-game Jijimon's house (205): the back
+-- room (206: Monzaemon, "It's empty."), back into the house. The exploration went on out at night
+-- through File City (179) and the Green Gym (112) into the Native Forest (109) and a battle with
+-- Dokunemon; in the recording (oracle/replays/tour-bob.txt) the walk back from 206 takes longer
+-- and the later presses land in the house, where it ends at 11400.
 local PRESSES = {
     { 5002, 5002, 1, 80, 'UP' },
     { 5002, 5002, 1, 80, 'LEFT' },
@@ -36,12 +37,12 @@ local MILESTONES = {
     { 5482, 'back_room_206' },
     { 5646, 'box' },
     { 6416, 'house_again' },
-    { 6896, 'city_179' },
-    { 7411, 'gym_112' },
-    { 8461, 'forest_109' },
-    { 8606, 'dokunemon' },
-    { 9326, 'battle' },
-    { 10826, 'battle_menu' },
+    { 6896, 'late_city_179' },
+    { 7411, 'late_gym_112' },
+    { 8461, 'late_forest_109' },
+    { 8606, 'late_dokunemon' },
+    { 9326, 'late_battle' },
+    { 10826, 'late_battle_menu' },
     { 11400, 'bob_done' },
 }
 return PRESSES, MILESTONES

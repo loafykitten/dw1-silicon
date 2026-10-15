@@ -178,6 +178,51 @@ loads in Jijimon's house (screen 205), so the routes use a `continue-save3` base
   (Redux's CD timing follows the host clock), so the explorer now never stops within 60 VBlanks
   of a libcd call.
 
+## Certified areas (stream tour, 2026-10-15)
+
+Before Ember's playthrough, a tour of the world: Mr. Warp's destinations from the debug room
+(fixture `debug-day2-gabumon`, Ember's day-2 Gabumon) and short walks from the downloaded saves.
+Each is a recording certified by a fresh dense replay (a checkpoint every 50 polls) and run
+natively with every checkpoint identical (`tools/replay-check.sh`, profiles `tour-*` in
+`oracle/route-new-game.lua`, schedules `oracle/route-tour-*-schedule.lua`). Checkpoints are the
+standard / dense counts.
+
+| Replay | Areas (screens) | What happens | Checkpoints |
+|---|---|---|---|
+| `tour-panorama` | Mt. Panorama's peak (18), Jijimon's house (218) | Mr. Warp's script; two Goburimon, a two-enemy battle with the finisher, lost; MURD | 25 / 144 |
+| `tour-jungle` | Tropical Jungle (12, 13, 34) | Darkrizamon, lost | 29 / 171 |
+| `tour-drill` | Drill Tunnel (24, 25, 27) | Drimogemon's scripted battle ("It's hot!"), won, results, his lines | 32 / 218 |
+| `tour-savanna` | Gear Savanna (69, 70, 71, 72) | Elecmon's line; Patamon, lost | 35 / 225 |
+| `tour-mansion` | Grey Lord's Mansion (52, 53, 56, 57) | the entry cutscene, locked doors upstairs and down, three Soulmon (a three-enemy battle), lost | 31 / 174 |
+| `tour-canyon` | Great Canyon (44) | Gotsumon, won (the recording; the exploration lost) | 26 / 176 |
+| `tour-dino` | Ancient Dino Region gate (79), Jijimon's house | Tyrannomon at the gate, lost; MURD | 33 / 240 |
+| `tour-dino-back` | Ancient Dino Region back (86, 87) | the "meteorite", the bone arch, Saberdramon, lost | 26 / 142 |
+| `tour-lava` | Lava Cave (31, 30, 29, 28), Drill Tunnel hub (25) | two Drimogemon scenes ("We hit a big rock!"), through to the Drill Tunnel | 22 / 121 |
+| `tour-freezeland` | Freezeland (134, 132, 134's lower part) | in front of the Curling Cave (Penguinmon left alone: talking starts the match), the hub, a Mojyamon | 22 / 143 |
+| `tour-beelzemontzero` | late-game Jijimon's house (205), File City top (179), plaza (192), restaurant (215) | BeelzemontZero's save (Piximon, prosperity 100): Jijimon, Yuramon, Tyrannomon's menu, Dragon Noodle eaten | 17 / 103 |
+| `tour-bob` | late-game house (205) and back room (206) | Bob's save (MegaSeadramon, night): Monzaemon's box | 17 / 124 |
+| `tour-master99-2001` | house (205), city top (179), plaza (192), Native Forest (109) | Master99's 2001 save (Digitamamon): a forest battle, won | 24 / 139 |
+| `tour-master99-2002` | house (205), city top (179), plaza (192), tool shop (216), Secret Item Shop (217) | Master99's 2002 save (MetalGreymon) | 18 / DENSE2002 |
+| `tour-winolivas` | house (205), city top (179), Item Keeper's (211) | winolivas's save (year 17): the game menu's items, Sirloin eaten, Poyomon's tip, the storage window with a full inventory | 14 / DENSEWINO |
+
+All five US downloaded saves load and were walked (each is its card's only save; Master99's two
+sit in the third slot, `continue-save3`); the European save is for another release and was not
+used.
+
+One native fix came out of it: a scripted battle (Drimogemon's) starts with
+`handleBattleStart`'s predefined-battle loop reading `ENTITY_TABLE[i]->isOnScreen` for empty
+slots, which the PS1 read from low RAM (0) and wrote a 0 back to; natively it was a NULL read
+(decomp `src/main/btl.c`, the same fix the ending stream made for Machinedramon). Everything else
+matched with no change.
+
+**Exploring vs recording.** Battles make an exploration and its recording drift apart (Redux's CD
+timing follows the host clock even with the explorer's 60-VBlank margin around libcd calls), so a
+battle may run longer in the recording and the presses after it land elsewhere. Six recordings
+end differently from their exploration (canyon, dino, freezeland, bob, master99-2001 and -2002); each
+schedule's header says what the recording does. Walks without battles reproduced exactly
+(winolivas, lava). In-game directions are camera-relative: many screens turn the camera 45 or 90
+degrees, so probe a direction with a short hold before walking blind.
+
 ## Still to reach
 
 Other recruits, the Ice Sanctuary and Trash Mountain gyms (TRN2 on screens 99 and 165; Beetle

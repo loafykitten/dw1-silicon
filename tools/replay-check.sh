@@ -12,6 +12,9 @@
 #                                                 tour-drill tour-savanna tour-mansion
 #                                                 tour-canyon tour-dino tour-dino-back
 #                                                 tour-lava tour-freezeland
+#                                                 tour-beelzemontzero tour-bob
+#                                                 tour-master99-2001 tour-master99-2002
+#                                                 tour-winolivas
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
@@ -63,7 +66,12 @@ tour-canyon p9-tour-canyon-record debug-day2-gabumon
 tour-dino p9-tour-dino-record debug-day2-gabumon
 tour-dino-back p9-tour-dino-back-record debug-day2-gabumon
 tour-lava p9-tour-lava-record debug-day2-gabumon
-tour-freezeland p9-tour-freezeland-record debug-day2-gabumon'
+tour-freezeland p9-tour-freezeland-record debug-day2-gabumon
+tour-beelzemontzero p9-tour-beel-record p9-arena-vs-p1
+tour-bob p9-tour-bob-record p9-arena-vs-p2
+tour-master99-2001 p9-tour-m2001-record p9-tour-master99-2001
+tour-master99-2002 p9-tour-m2002-record p9-arena-master99
+tour-winolivas p9-tour-wino-record p9-tour-winolivas'
 
 want="$*"
 echo "$table" | while read -r name oracle card card2; do
