@@ -115,8 +115,9 @@ class Mdec(unittest.TestCase):
 
 class Xa(unittest.TestCase):
     """Four audio sectors of one read (LBAs 1000-1024), decoded at VBlanks 110-119 on both sides;
-    polls every 2 VBlanks from 100; each sector is 150 frames and the port's CD input plays 50 a
-    VBlank, so each is heard as it's decoded."""
+    the emulator's read position goes through them 2-3 sectors a VBlank to VBlank 121; polls every
+    2 VBlanks from 100; each sector is 150 frames and the port's CD input plays 50 a VBlank, so
+    each is heard as it's decoded."""
 
     LBAS = [1000, 1008, 1016, 1024]
     VBS = [110, 113, 116, 119]
@@ -128,30 +129,40 @@ class Xa(unittest.TestCase):
     def tearDown(self):
         self.dir.cleanup()
 
-    def write(self, underrun_at=None):
+    def write(self, underrun_at=None, port_skips=None):
         d = self.dir.name
         ora = os.path.join(d, 'ora')
         os.makedirs(ora, exist_ok=True)
         replay = os.path.join(d, 'replay.txt')
         put(replay, ''.join(f'{k} {100 + 2 * k} 00000000 800108d8\n' for k in range(30)))
-        lines = ['100 pos 990\n']
-        for i, (lba, vb) in enumerate(zip(self.LBAS, self.VBS)):
-            lines.append(f'{vb} xa {lba + 2} 128 0 128 0 0 0 224 37800 1 4 {16 * i}\n')
+        # The emulator logs a sector only when its samples change.
+        shown, prev = {}, None
+        for i, pcm in enumerate(self.pcm):
+            if pcm != prev:
+                shown[self.VBS[i]] = i
+            prev = pcm
+        lines, offsets = ['100 pos 970\n'], []
+        for vb in range(101, 122):
+            pos = 1002 + (vb - 110) * 8 // 3
+            if vb in shown:
+                i = shown[vb]
+                lines.append(f'{vb} xa {pos} 128 0 128 0 0 0 224 37800 1 4 {16 * len(offsets)}\n')
+                offsets.append(i)
+            else:
+                lines.append(f'{vb} pos {pos}\n')
         put(os.path.join(ora, 'xa-log.txt'), ''.join(lines))
-        put(os.path.join(ora, 'xa-pcm.bin'), b''.join(self.pcm))
-        nl = []
+        put(os.path.join(ora, 'xa-pcm.bin'), b''.join(self.pcm[i] for i in offsets))
+        nl, pushed = [], 0
         for vb in range(100, 130):
             polls = (vb - 100) // 2 + 1
             since = (vb - 100) % 2
             if since == 0:
                 nl.append(f'poll {vb} {polls}\n')
-            if vb in self.VBS:
+            if vb in self.VBS and self.LBAS[self.VBS.index(vb)] != port_skips:
                 i = self.VBS.index(vb)
                 nl.append(f'sector {vb} {polls} {since} {self.LBAS[i]} {vb} 4 {16 * i} {150 * i}\n')
             if vb >= 110:
-                under = 0
-                if underrun_at is not None and vb >= underrun_at:
-                    under = 7
+                under = 7 if underrun_at is not None and vb >= underrun_at else 0
                 nl.append(f'pop {vb} {polls} {since} {(vb - 109) * 50} {under}\n')
         put(os.path.join(d, 'nat.txt'), ''.join(nl))
         put(os.path.join(d, 'nat.bin'), b''.join(self.pcm))
@@ -169,6 +180,22 @@ class Xa(unittest.TestCase):
         code, out = self.write(underrun_at=115)
         self.assertNotEqual(code, 0, out)
         self.assertIn('ran dry', out)
+
+    def test_silent_repeat_passes(self):
+        # LBA 1016 repeats 1008: the emulator logs only its position there.
+        self.pcm[2] = self.pcm[1]
+        code, out = self.write()
+        self.assertEqual(code, 0, out)
+
+    def test_dropped_sector_inside_a_read_fails(self):
+        # Sol's case: 1016 repeats 1008 (the emulator shows only its position), the port never
+        # decodes 1016 and runs dry before 1024. Its decoded LBAs jump 1008 -> 1024, which must
+        # not pass for the end of a read: the emulator's read went on through 1016.
+        self.pcm[2] = self.pcm[1]
+        code, out = self.write(underrun_at=117, port_skips=1016)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn('ran dry', out)
+        self.assertIn('LBA 1016: read by the emulator, never decoded by the port', out)
 
 
 if __name__ == '__main__':
