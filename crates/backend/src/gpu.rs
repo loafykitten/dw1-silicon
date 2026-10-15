@@ -131,6 +131,89 @@ pub(crate) fn to5(c8: i32, d: i32) -> i32 {
     (c8 + d).clamp(0, 255) >> 3
 }
 
+/// The pixels of a line from `a` to `b` as the 1x GPU draws them (`Gpu::line_seg`; the HD
+/// surfaces scale exactly these): for each one inside the draw area, `f(x, y, r, g, b, dither)`
+/// with the colour at 8 bits per channel and the dither offset (0 unless Gouraud and E1 bit 9).
+pub(crate) fn line_walk(
+    st: &State,
+    a: &Vtx,
+    b: &Vtx,
+    gouraud: bool,
+    mut f: impl FnMut(i32, i32, i32, i32, i32, i32),
+) {
+    // [obs] A line that is longer in x than in y is drawn from its left end to its right end,
+    // whichever way round it was given, with the colours staying in the order given (the
+    // first colour at the left end); any other line is drawn from the first point to the
+    // second.
+    let major_x = (b.x - a.x).abs() > (b.y - a.y).abs();
+    let (a, b) = if major_x && a.x > b.x {
+        (
+            &Vtx {
+                x: b.x,
+                y: b.y,
+                ..*a
+            },
+            &Vtx {
+                x: a.x,
+                y: a.y,
+                ..*b
+            },
+        )
+    } else {
+        (a, b)
+    };
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let adx = dx.abs();
+    let ady = dy.abs();
+    let n = adx.max(ady);
+    let dith = st.dither && gouraud;
+    if adx >= 1024 || ady >= 512 {
+        return;
+    }
+    // [obs] Along the longer axis one pixel per step; the other coordinate is the line's
+    // 16.16 slope (truncated toward zero) times the step, plus a half for rounding; along x
+    // the half step is added too (the sample is taken in the middle of the pixel).
+    let (min0, dmin) = if major_x { (a.y, dy) } else { (a.x, dx) };
+    let slope = if n == 0 {
+        0
+    } else {
+        ((dmin as i64) << 16) / n as i64
+    };
+    for i in 0..=n {
+        let mut v = ((min0 as i64) << 16) + 0x8000 + slope * i as i64;
+        if major_x {
+            v += slope >> 1;
+        }
+        let minor = (v >> 16) as i32;
+        let step = if !major_x && b.y < a.y { -i } else { i };
+        let (x, y) = if major_x {
+            (a.x + i, minor)
+        } else {
+            (minor, a.y + step)
+        };
+        if x < st.clip_x0 || x > st.clip_x1 || y < st.clip_y0 || y > st.clip_y1 {
+            continue;
+        }
+        let (mut r, mut g, mut bl) = (a.r, a.g, a.b);
+        if gouraud && n != 0 {
+            // [obs] the colour steps round down (toward minus infinity), not toward zero
+            let f = |c0: i32, c1: i32| -> i32 {
+                c0 + ((c1 - c0) as i64 * i as i64).div_euclid(n as i64) as i32
+            };
+            r = f(a.r, b.r);
+            g = f(a.g, b.g);
+            bl = f(a.b, b.b);
+        }
+        let d = if dith {
+            DITHER_TBL[(y & 3) as usize][(x & 3) as usize]
+        } else {
+            0
+        };
+        f(x, y, r, g, bl, d);
+    }
+}
+
 /// Whether `DW1_GP0_DUMP` is set: polygon packets are then printed with their draw state (a local
 /// debugging aid, see `tools/oracle/gpu_frame_requests.py`).
 pub fn dump_polygons() -> bool {
@@ -181,8 +264,10 @@ impl Gpu {
 
     /// The VRAM for direct writes (host setup; the C exposes `PsxGpu_Vram`).
     pub fn vram_mut(&mut self) -> &mut [u16] {
-        // the HD surfaces can't know what is written; they are rebuilt from VRAM at next use
+        // The HD surfaces can't know what is written: draw what is queued (it saw the VRAM as it
+        // was), then rebuild them from the VRAM before the next primitive changes it.
         if let Some(hd) = self.hd.as_deref_mut() {
+            hd.flush(&self.vram);
             hd.invalidate();
         }
         &mut self.vram
@@ -809,78 +894,10 @@ impl Gpu {
     /// along the longer axis, dithered when Gouraud (E1 bit 9), clipped to the draw area per
     /// pixel. A segment of 1024 or more columns or 512 or more rows is not drawn.
     fn line_seg(&mut self, a: &Vtx, b: &Vtx, gouraud: bool, semi: bool, abr: i32) {
-        // [obs] A line that is longer in x than in y is drawn from its left end to its right end,
-        // whichever way round it was given, with the colours staying in the order given (the
-        // first colour at the left end); any other line is drawn from the first point to the
-        // second.
-        let major_x = (b.x - a.x).abs() > (b.y - a.y).abs();
-        let (a, b) = if major_x && a.x > b.x {
-            (
-                &Vtx {
-                    x: b.x,
-                    y: b.y,
-                    ..*a
-                },
-                &Vtx {
-                    x: a.x,
-                    y: a.y,
-                    ..*b
-                },
-            )
-        } else {
-            (a, b)
-        };
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        let adx = dx.abs();
-        let ady = dy.abs();
-        let n = adx.max(ady);
-        let dith = self.st.dither && gouraud;
-        if adx >= 1024 || ady >= 512 {
-            return;
-        }
         let st = self.st;
-        // [obs] Along the longer axis one pixel per step; the other coordinate is the line's
-        // 16.16 slope (truncated toward zero) times the step, plus a half for rounding; along x
-        // the half step is added too (the sample is taken in the middle of the pixel).
-        let (min0, dmin) = if major_x { (a.y, dy) } else { (a.x, dx) };
-        let slope = if n == 0 {
-            0
-        } else {
-            ((dmin as i64) << 16) / n as i64
-        };
-        for i in 0..=n {
-            let mut v = ((min0 as i64) << 16) + 0x8000 + slope * i as i64;
-            if major_x {
-                v += slope >> 1;
-            }
-            let minor = (v >> 16) as i32;
-            let step = if !major_x && b.y < a.y { -i } else { i };
-            let (x, y) = if major_x {
-                (a.x + i, minor)
-            } else {
-                (minor, a.y + step)
-            };
-            if x < st.clip_x0 || x > st.clip_x1 || y < st.clip_y0 || y > st.clip_y1 {
-                continue;
-            }
-            let (mut r, mut g, mut bl) = (a.r, a.g, a.b);
-            if gouraud && n != 0 {
-                // [obs] the colour steps round down (toward minus infinity), not toward zero
-                let f = |c0: i32, c1: i32| -> i32 {
-                    c0 + ((c1 - c0) as i64 * i as i64).div_euclid(n as i64) as i32
-                };
-                r = f(a.r, b.r);
-                g = f(a.g, b.g);
-                bl = f(a.b, b.b);
-            }
-            let d = if dith {
-                DITHER_TBL[(y & 3) as usize][(x & 3) as usize]
-            } else {
-                0
-            };
+        line_walk(&st, a, b, gouraud, |x, y, r, g, bl, d| {
             self.put(x, y, to5(r, d), to5(g, d), to5(bl, d), semi, abr, false);
-        }
+        });
     }
 
     /// GP0 40-5F: single lines (3 words, Gouraud 4) and polylines (vertices up to the
@@ -1055,6 +1072,9 @@ impl Gpu {
     }
 
     fn command(&mut self, w: &[u32]) {
+        if let Some(hd) = self.hd.as_deref_mut() {
+            hd.revalidate(&self.vram);
+        }
         let c = w[0];
         let op = c >> 24;
         match op {
