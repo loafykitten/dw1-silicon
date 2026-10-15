@@ -3,5 +3,6 @@
 pub mod gpu;
 pub mod gte;
 pub mod mdec;
+pub mod pgxp;
 pub mod spu;
 pub mod xa;

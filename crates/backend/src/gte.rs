@@ -408,12 +408,37 @@ impl Gte {
         if q > 0x1FFFF { 0x1FFFF } else { q as u32 }
     }
 
+    /// The no-wobble option (`pgxp`): the float projection of the point just transformed, from
+    /// the unshifted MAC1..3 (x = view x * H / z + OFX, before the 11-bit cut; z = view depth),
+    /// next to its integer result `sx`, `sy`. Reads the registers only: what the game sees is
+    /// unchanged. `flag_before`: FLAG before this vertex's transform, so only this point's
+    /// saturations count, not those of an earlier RTPT vertex.
+    fn report_precise(&self, m: &[i64; 3], sf: bool, sx: i32, sy: i32, flag_before: u32) {
+        let z = m[2] as f64 / 4096.0;
+        let h = f64::from(self.c[creg::H] as u16);
+        if 2.0 * z <= h {
+            crate::pgxp::record(sx, sy, 0.0, 0.0, z, crate::pgxp::NEAR);
+            return;
+        }
+        let div = if sf { 4096.0 } else { 1.0 };
+        let saturated = self.flag & !flag_before & (f_ir(1) | f_ir(2) | F_SX2 | F_SY2) != 0;
+        crate::pgxp::record(
+            sx,
+            sy,
+            m[0] as f64 / div * h / z + f64::from(self.c[creg::OFX]) / 65536.0,
+            m[1] as f64 / div * h / z + f64::from(self.c[creg::OFY]) / 65536.0,
+            z,
+            if saturated { crate::pgxp::CLAMPED } else { 0 },
+        );
+    }
+
     // ---- commands ----
 
     /// RTPS body for vertex `v` (0..2): one perspective transform. `depth_cue` runs the final
     /// MAC0/IR0 depth-cue step; RTPT does it for V2 only, so V0/V1 can't leave its flags.
     fn rtps_vertex(&mut self, v: usize, sf: bool, lm: bool, depth_cue: bool) {
         let shift = if sf { 12 } else { 0 };
+        let flag_before = self.flag;
         let (vx, vy, vz) = (self.vx(v), self.vy(v), self.vz(v));
         let mut m = [0i64; 3];
         for (i, mi) in m.iter_mut().enumerate() {
@@ -452,6 +477,9 @@ impl Gte {
         self.set_mac0(s);
         let y = self.sat_sxy((s >> 16) as i32, F_SY2);
         self.push_sxy(x, y);
+        if crate::pgxp::enabled() {
+            self.report_precise(&m, sf, x, y, flag_before);
+        }
         if !depth_cue {
             return;
         }
