@@ -135,6 +135,19 @@ fn main() {
         // Noise from matching-decomp style, not ABI hazards (docs/phase1-report.md).
         .flag("-Wno-unknown-pragmas")
         .flag("-Wno-unused-parameter");
+    // `DW1_SANITIZE=undefined` (or `address`, comma lists as clang takes them) compiles the game
+    // C with clang's sanitizers, to find PS1-isms that don't crash at once; link the runtime with
+    // `RUSTFLAGS="-C link-arg=-fsanitize=<same>"` and a separate `CARGO_TARGET_DIR`. Off by
+    // default; reports go to stderr and the run continues.
+    println!("cargo:rerun-if-env-changed=DW1_SANITIZE");
+    if let Some(list) = env::var("DW1_SANITIZE").ok().filter(|s| !s.is_empty()) {
+        build
+            .flag(format!("-fsanitize={list}"))
+            // report and go on (ASan stops at the first error otherwise; with
+            // ASAN_OPTIONS=halt_on_error=0)
+            .flag("-fsanitize-recover=all")
+            .flag("-fno-omit-frame-pointer");
+    }
     // Overlay files whose initialised data the PS1 reloads with the overlay are compiled
     // through wrappers into a second archive (overlays.rs).
     let overlay_build_base = build.clone();

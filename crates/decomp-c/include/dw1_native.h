@@ -69,6 +69,26 @@ extern int32_t dw1_pc_saves;
  * no-wobble option keeps their integer corners; zero: back to 3D (crates/psyq/src/gte.rs). */
 void dw1_pgxp_2d(int32_t on);
 
+/*
+ * PS1 0x801A1398-0x801B1B97 as one object: TAMER_MODEL_BUFFER (0x7800), MAIN_D_801A8B98
+ * (0x6800) and MAP_COLLISION_DATA (0x2800). The tamer's MMD fills the first two (it is larger
+ * than its buffer), and getTileTrigger can index before the collision grid into its end, so the
+ * PS1 relied on their adjacency; the files that use them refer to this span with their own
+ * element types (decomp main.c, map_collision.c, map.c, model.c, std_setup.c, vs_scene.c).
+ */
+extern uint8_t dw1_tamer_collision_span[0x10800];
+#define DW1_TAMER_MODEL_BUFFER (dw1_tamer_collision_span)
+#define DW1_MAIN_D_801A8B98 (dw1_tamer_collision_span + 0x7800)
+#define DW1_MAP_COLLISION_DATA (dw1_tamer_collision_span + 0xE000)
+/* A collision-grid index that stays inside the span (beyond it the PS1 read STDVS_CAMERA). */
+static inline int32_t dw1_collision_index(int32_t i)
+{
+	if (i < -0xE000 || i >= 0x2800) {
+		dw1_native_fatal("a MAP_COLLISION_DATA index outside the PS1 span it shares with the tamer model");
+	}
+	return i;
+}
+
 /* How wide the US game's drawString draws ASCII `str` (the decomp's font.c). */
 int32_t dw1_text_width(char *str);
 

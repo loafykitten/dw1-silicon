@@ -1,0 +1,5 @@
+# One macOS deployment target for everything the build compiles (Rust, the game C, SDL3 through
+# CMake): without it CMake builds SDL for the build machine's macOS while the binary says 11.0,
+# so the app could refuse to run on an older Mac. 11.0 is the first macOS on Apple Silicon.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "11.0"

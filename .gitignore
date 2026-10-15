@@ -40,3 +40,4 @@ scratchpad/
 # Agent worktrees (Claude Code)
 .claude/worktrees/
 __pycache__/
+/target-*/
