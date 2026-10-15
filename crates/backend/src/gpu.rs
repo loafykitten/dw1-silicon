@@ -1161,18 +1161,20 @@ impl Gpu {
     }
 
     /// Runs GP0 command words (one OT packet body, or a few words). Several commands may
-    /// follow each other; a command cut off at the end drops the rest (logged).
-    pub fn gp0(&mut self, words: &[u32]) {
+    /// follow each other; a command cut off at the end drops the rest (logged). Returns whether
+    /// the words ended on a command boundary (false when something was dropped).
+    pub fn gp0(&mut self, words: &[u32]) -> bool {
         let mut i = 0;
         while i < words.len() {
             let len = Self::command_len(&words[i..]);
             if len == 0 || i + len > words.len() {
                 self.log_once(words[i] >> 24, "command cut off at the packet end, dropped");
-                return;
+                return false;
             }
             self.command(&words[i..i + len]);
             i += len;
         }
+        true
     }
 
     // ---- display ----
@@ -1371,6 +1373,18 @@ mod tests {
 
     /// A modulated, subtractive, semi-transparent textured triangle with E6 mask checking on must
     /// leave masked pixels alone, including the last pixel of its odd rows (found in review).
+    /// `gp0` says whether its words ended on a command boundary (draw_chain's self-link rule
+    /// relies on it).
+    #[test]
+    fn gp0_reports_a_cut_off_command() {
+        let mut g = Gpu::new();
+        assert!(g.gp0(&[0xE50B_40A0, 0]));
+        assert!(g.gp0(&[]));
+        // A CPU-to-VRAM copy of a 4x1 rectangle: header, place, size, then 2 data words.
+        assert!(!g.gp0(&[0xA000_0000, 0, 0x0001_0004]));
+        assert!(g.gp0(&[0xA000_0000, 0, 0x0001_0004, 0, 0]));
+    }
+
     #[test]
     fn mask_checking_also_protects_odd_row_tails() {
         let mut g = Gpu::new();

@@ -14,7 +14,8 @@
 #                                                 tour-lava tour-freezeland
 #                                                 tour-beelzemontzero tour-bob
 #                                                 tour-master99-2001 tour-master99-2002
-#                                                 tour-winolivas rest-ending236 rest-beetle
+#                                                 tour-winolivas cup cup-lost
+#                                                 rest-ending236 rest-beetle
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
@@ -72,6 +73,8 @@ tour-bob p9-tour-bob-record p9-arena-vs-p2
 tour-master99-2001 p9-tour-m2001-record p9-tour-master99-2001
 tour-master99-2002 p9-tour-m2002-record p9-arena-master99
 tour-winolivas p9-tour-wino-record p9-tour-winolivas
+cup p9-cup-record p9-cup-lobby
+cup-lost p9-cup-lost-record p9-cup-lobby
 rest-ending236 p9-rest-e236-record p9-rest-ending236
 rest-beetle p9-rest-beetle-record p9-rest-beetle'
 

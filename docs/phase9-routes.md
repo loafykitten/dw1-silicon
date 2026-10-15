@@ -78,7 +78,8 @@ days' cups; the first column is today. Registering for today sets `PSTAT_TOURNAM
 Greymon reminds you; the arena door (trigger 54, "go in by eleven pm") starts STD. The save was
 registered for tomorrow, so the route cancels that and enters today's Grade C (three rounds). A
 match takes about 6,000 VBlanks and the cup starts at 12:00, so from a morning save only the first
-match and the second round's start fit under VBlank ~32700 (`oracle/replays/arena-cup.txt`).
+match and the second round's start fit under VBlank ~32700 (`oracle/replays/arena-cup.txt`). A
+whole cup, from a fixture placed in the lobby just before noon: "A whole cup", below.
 
 ## The end of the game: Machinedramon, the ending, the credits, the return
 
@@ -224,10 +225,65 @@ schedule's header says what the recording does. Some walks without battles repro
 directions are camera-relative: many screens turn the camera 45 or 90 degrees, so probe a
 direction with a short hold before walking blind.
 
+## A whole cup (stream cup, 2026-10-15)
+
+- **The fixture** (`captures/fixtures/p9-cup-lobby.mcd`): Master99's 2002 save moved by
+  `tools/oracle/place_fixture.py` into the Arena Lobby where the plaza's exit lands (screen 223,
+  previous 192, exit 1, (0, -1383): the lobby's MAP_WARPS spawn 1), at 11:50 on the save's day 11,
+  registered for today's cup:
+  `place_fixture.py p9-arena-master99.mcd p9-cup-lobby.mcd 223 192 1 0 -1383 40=1 --time 11:50 --register 1`.
+  Two new options, each writing only what the game writes: `--time HH:MM` sets HOUR, MINUTE and
+  CURRENT_FRAME = HOUR * 1200 + MINUTE * 20 as `advanceToTime` does (clock.c, the partner waking
+  up: no care catch-up, so the care state stays as saved at 08:08), and lastHandledFrame equal to
+  it as in any save; `--register CUP` does what the schedule window's confirmation does
+  (`initTournamentSchedule` cases 3 and 5, dget.c): pstat 3 (the cup) = CUP, triggers 37, 38 and 39,
+  pstat 2 = DAY, pstat 4 = the partner's type. Trigger 40 (overlevelled) is `tournamentCheckFair`'s;
+  the values came from `arena-cup`'s own registration (its checkpoints before and after Greymon:
+  pstat 2 0x8C -> 0x0B, pstat 3 0x10 -> 1, trigger 40 set; pstats 103 and 254 changed too, but a
+  save keeps only pstats 0-34). Checked on Redux (`p9-cup-explore1`): Greymon says "So you've
+  entered today's competition, right? Go in by eleven pm.", offers to cancel, reminds at 12:00
+  ("You're entered in today's Grade C Tournament, right?"), and the door starts STD, as in
+  `arena-cup`.
+- **`cup`** (`oracle/replays/cup.txt`, profile `cup` = `title` base, `route-arena-start-schedule.lua`,
+  `route-cup-lobby-schedule.lua`, `route-cup-schedule.lua`; 12,320 polls, 94 CD reads, to VBlank
+  25,130): the lobby, Greymon, the noon reminder, the door (STD from about 5,030), then no input:
+  three rounds on Auto (7,030-11,410, 15,140-16,270, 18,870-23,720), the bracket between them,
+  the champion scene (CHAMP.TMD), and STD_deinitializeTournament's fade. Certified: a fresh Redux
+  replay with a checkpoint every 50 polls matched every poll, VBlank and CD read
+  (`captures/oracle-runs/p9-cup-dense`); natively the 33 standard checkpoints
+  (`p9-cup-record`) and all 259 dense ones are identical. The first opponent's finisher reaches
+  STD_startQueuedMove's unset `tech` (`docs/phase9-overlay-audit.md`, finding 11: measured, fixed).
+- **`cup-lost`** (`oracle/replays/cup-lost.txt`, profile `cup-lost`: the same start, then
+  `route-cup-lost-schedule.lua`; 6,698 polls, 60 CD reads, to VBlank 13,775): the same cup lost in
+  the first round. A schedule controller (RAM-driven, so it doesn't depend on where the battle
+  lands in VBlanks) waits for GAME_STATE 4 and 200 VBlanks in moves the command cursor once left,
+  from Auto to "Defensive" (command 6), and confirms: MetalGreymon only guards, the opponent's
+  attacks and finishers take it to 7,255 HP while the opponent keeps 3,330 of 3,330, the timer
+  runs out (about 13,330) and the match is judged lost; the cup ends there (STD_deinitializeTournament).
+  Certified like `cup`: the fresh dense replay matched (`p9-cup-lost-dense`), natively 20 of 20
+  standard checkpoints (`p9-cup-lost-record`) and 142 of 142 dense ones identical.
+- **Why neither goes back into the lobby on the emulator.** The first gameLoop frame after any cup
+  links a packet to itself: STD_deinitializeTournament's 11 frames (STD_battleTickFrame) end with
+  `DR_OFFSETS[b]` at the head of ordering-table entry 32 of buffer `b`; control returns through
+  the map script (tickScript) into the gameLoop frame that started the cup, which adds
+  `DR_OFFSETS[ACTIVE_FRAMEBUFFER]` (still `b`, its table not cleared since) to that entry again
+  (applyDrawOffset), so the packet's link is itself and the GPU list never ends. Found natively (the
+  port stopped: "GPU packet list ... doesn't end") and matched on Redux, which cuts the chain at the
+  repeat and raises a DMA bus error interrupt (`ref/pcsx-redux/src/core/psxhw.h`; the game's libetc
+  prints "DMA bus error: code=00908000"; `oracle/probe-dicr.lua` shows only the SDK's DMA handlers
+  writing DICR afterwards), plays about 20 more polls and then hangs for good (polls stop; the
+  explorer and two recordings alike). The packet is a draw-offset command (0xE5), so the PS1's DMA
+  would send it again and again without changing anything and never reach the rest of the list;
+  the game is played through cups on hardware, presumably recovering through libgpu's DrawSync
+  timeout ("GPU timeout" is in the executable), which isn't measurable here. The port now ends a
+  list at a packet linked to itself when it holds only state commands (`psyq::gpu::draw_chain`) and
+  goes on: past the loop it matches the 20 polls Redux still plays (`p9-cup-probe2`, game0
+  checkpoint identical), and a free native run from the fixture continues into the lobby, where
+  Greymon gives the "Victory Reward / Victory Prize". Recordings stop just before that frame.
+
 ## Still to reach
 
 Other recruits, the Ice Sanctuary and Trash Mountain gyms (TRN2 on screens 99 and 165; Beetle
-Land's 108 is a short walk from the `debug-gym` route), a whole tournament (a save made in the
-arena lobby just before 12:00 would leave room for it; `tools/oracle/place_fixture.py` can put a
-save there), the other ending map (236: the same script and ENDI path), the post-game
+Land's 108 is a short walk from the `debug-gym` route), the end of a cup back in the lobby (the
+prize; blocked on the emulator by the GPU list loop above), the other ending map (236: the same script and ENDI path), the post-game
 Digitamamon egg fight.

@@ -232,3 +232,20 @@ written down as accepted. That is the first release.
   Forest) with late-game partners (Piximon, MegaSeadramon, Digitamamon, MetalGreymon). One native
   fix: the scripted-battle start read empty entity slots (`handleBattleStart`, the PS1 read 0 from
   low RAM; also found by the ending stream). Thirty-five replays in `tools/replay-check.sh`.
+- **A whole cup** (cup stream, 2026-10-15; `docs/phase9-routes.md`, "A whole cup"). Fixture
+  `p9-cup-lobby`: Master99's 2002 save in the Arena Lobby at 11:50, registered for today's Grade C
+  (`place_fixture.py` gained `--time` and `--register`, each writing what `advanceToTime` and the
+  schedule window write). `cup`: all three rounds won on Auto and the champion scene (12,320
+  polls, 33 checkpoints, 259 of 259 at every 50 polls identical natively); `cup-lost`: the same cup
+  lost in round one on time with the partner set to Defensive by a schedule controller (6,698
+  polls, 20 checkpoints, 142 of 142 dense). Both fresh Redux replays matched every poll and CD
+  read; `cup` re-recorded from the route came out byte-identical. Native fixes: the AI finisher's
+  unset `tech` in `STD_startQueuedMove` (audit finding 11) is the caller's `$s3`, measured on Redux
+  (`oracle/probe-std-tech.lua`: the enemy's `move`, 0x57) and now passed by each caller; and the
+  first frame after every cup links `DR_OFFSETS[b]` to itself (the deinit's last frame and gameLoop
+  both add it to the same table entry), which stopped the port ("GPU packet list ... doesn't end")
+  and hangs the pinned Redux after a DMA bus error: `psyq::gpu::draw_chain` now ends a list at a
+  self-linked packet of state commands only (judgement call, the PS1's DMA would repeat the
+  harmless 0xE5 and libgpu's timeout presumably recovers; not measurable on Redux), and a free
+  native run continues into the lobby's "Victory Reward / Victory Prize". Recordings end before
+  that frame. Thirty-seven replays in `tools/replay-check.sh`.
