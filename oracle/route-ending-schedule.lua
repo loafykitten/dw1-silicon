@@ -1,4 +1,4 @@
--- The end of the game (Phase 9, the ending stream), appended to continue-save3 with the fixture
+-- The end of the game (Phase 9, the ending stream), appended to ending-continue with the fixture
 -- captures/fixtures/p9-ending-mt-infinity.mcd (tools/oracle/place_fixture.py on Master99's 2001
 -- GameFAQs save: moved to Mt. Infinity's last corridor, screen 222, where the warp from screen 254
 -- lands, with MetalGreymon's flag 326 set; docs/phase9-routes.md). Up the corridor into the boss

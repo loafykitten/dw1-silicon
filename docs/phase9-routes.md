@@ -112,7 +112,7 @@ then on the emulator.
   warp leaves it) with MetalGreymon's flag 326 set: `captures/fixtures/p9-ending-mt-infinity.mcd`.
   Loading a save is generic (main.c's continue path), so the game starts there like from any save.
 - **The replay** (`oracle/replays/ending.txt`, profile `ending` = the `title` base,
-  `oracle/route-continue-save3-schedule.lua`, `oracle/route-ending-schedule.lua`; 10,198 polls, 99
+  `oracle/route-ending-continue-schedule.lua`, `oracle/route-ending-schedule.lua`; 10,198 polls, 99
   CD reads, to VBlank 31,900): up the corridor into 225 (4,940), Analogman (5,180), the buildup and
   spawn (about 6,290-6,620: `EAB_initializeRings` at 6,289, `EAB_tick`'s first call at 6,618),
   the battle (7,930-14,170, the finisher at 13,510), the ending map (18,420), the clear save written
