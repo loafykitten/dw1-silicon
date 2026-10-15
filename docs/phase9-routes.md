@@ -80,11 +80,57 @@ registered for tomorrow, so the route cancels that and enters today's Grade C (t
 match takes about 6,000 VBlanks and the cup starts at 12:00, so from a morning save only the first
 match and the second round's start fit under VBlank ~32700 (`oracle/replays/arena-cup.txt`).
 
+## The end of the game: Machinedramon, the ending, the credits, the return
+
+Found 2026-10-15 (ending stream) from the scripts (`decomp/disks/us/SCN`: `MAPHEAD.SCN`'s
+`SET_SCRIPT` pairs give each screen's script; `DG.SCN` starts with a table of script offsets) and
+then on the emulator.
+
+- **Where the overlays are used.** Only script 184 (screen 225, MGEN99, the top of Mt. Infinity)
+  calls EAB: section 0x33 (step trigger 51, the middle of the room) runs Analogman's scene,
+  `CALL_ROUTINE 0x33` (reads `BOSS_EFE.TMD`, loads EAB), `0x28` (`EAB_startBuildup`: the rings
+  around Machinedramon), `CALL_DIGIMON_ROUTINE 8` (tamer state 18, `EAB_tick`: the flash, the
+  wireframe spawn), then the predefined battle (pstat 0xFA = 1, enemy slot 5). After it the script
+  sets flags 50 (Machinedramon beaten), 206, 207, 212, adds 7 prosperity and warps to the ending
+  map, 236 or 237 (TEND01/02, picked by flags 214 and 220 and the prosperity; this save went to 237). There script 192 section
+  0x33: `CALL_ROUTINE 0x34` (loads ENDI), the farewell lines, `0x36` (`gameClearSave`: the game-clear
+  save prompt, MAIN_STATE 2, CURRENT_SCREEN becomes the city top), `0x35` (tamer state 16,
+  `ENDI_tickEnding`: the tamer dissolves into particles that fly up). Then MAIN_STATE 3 ends the
+  game loop: the credits movie (movie 3, which `MOV_playMovie` never lets the pad skip, about 7,800
+  VBlanks), the title again; CONTINUE GAME with the clear save plays movie 2 (skippable) and puts
+  you back in the city ("I'm back!", the Machinedramon card). With flag 50 set the room only offers
+  the post-game Digitamamon egg (flag 256), so a finished save can't replay the ending.
+- **The way up.** Mt. Infinity's entrance is the yard's north-east corner (step trigger 56 of
+  script 162, x 3000..3300 z 3300..3500, after the step-58 crossing): screens 166, 167, 210, 212,
+  219, 247, 248, 249, 253, 254, 222, 225, each with roaming enemies (one fight on the first floor
+  took 2,000 VBlanks with a Digitamamon), and MetalGreymon (flag 326) blocks 222. Too long for one
+  recording, and there's no save point on the mountain.
+- **The fixture.** Master99's 2001 GameFAQs save (`captures/fixtures/p9-ending-master99-2001.mcd`,
+  unchanged: Digitamamon, prosperity 71, flags 88 and 354 set, 50 not; the card's third save) moved
+  with the new `tools/oracle/place_fixture.py` to the spot where the warp from 254 lands in the last
+  corridor (screen 222, exit 0, (-400, -4100); the partner 200 behind, the waypoint trail reset as a
+  warp leaves it) with MetalGreymon's flag 326 set: `captures/fixtures/p9-ending-mt-infinity.mcd`.
+  Loading a save is generic (main.c's continue path), so the game starts there like from any save.
+- **The replay** (`oracle/replays/ending.txt`, profile `ending` = the `title` base,
+  `oracle/route-continue-save3-schedule.lua`, `oracle/route-ending-schedule.lua`; 10,198 polls, 99
+  CD reads, to VBlank 31,900): up the corridor into 225 (4,940), Analogman (5,180), the buildup and
+  spawn (about 6,290-6,620: `EAB_initializeRings` at 6,289, `EAB_tick`'s first call at 6,618),
+  the battle (7,930-14,170, the finisher at 13,510), the ending map (18,420), the clear save written
+  to the card (19,420), ENDI (about 19,980-20,480; the particles released at 20,184), the credits,
+  the title (28,560), CONTINUE GAME with the clear save, movie 2 skipped, File City (31,240).
+  Certified: a fresh Redux replay matched every poll, VBlank and CD read
+  (`captures/oracle-runs/p9-ending-dense`); natively the 33 standard checkpoints and all 220 at
+  every 50 polls are identical, and the card the game writes (the clear save) is byte-identical to
+  Redux's (`DW1_CARD_DUMP`). The written card is kept as `captures/fixtures/p9-ending-clear-save.mcd`
+  (a post-game save: the Digitamamon egg).
+- **Frames** (spot checks at 1x against the recording's screenshots): the battle 0 pixels differ;
+  the spawn 565, all on the green EAB particle lines (`LINE_F2`, the line rasteriser's known ties)
+  and the model edges; the ending 45 at the screen's left edge.
+
 ## Still to reach
 
 Fishing (Mr. Warp, Seadra fishing; needs a rod: the 2002 Master99 save has 99 of every item),
 curling (Mr. Warp, Curling Cave), recruiting (an early recruit, e.g. Agumon in the Native Forest,
-or a Frigimon), the other gyms, the boss buildup and the ending (a completed save near the end), a
-whole tournament (a save made in the arena lobby just before 12:00 would leave room for it).
+or a Frigimon), the other gyms, a whole tournament (a save made in the arena lobby just before 12:00 would leave room for it).
 Fishing's Seadramon, curling's stones, the arenas and the result scenes also need the
 `GsTMDfast*` handlers the audit lists as missing (`docs/phase9-overlay-audit.md`, finding 9).

@@ -85,6 +85,9 @@ local EXTRA = {
     ['arena-start'] = { base = 'title', file = '/route-arena-start-schedule.lua' },
     ['arena-cup'] = { base = 'title',
                       file = { '/route-arena-start-schedule.lua', '/route-arena-cup-schedule.lua' } },
+    ['continue-save3'] = { base = 'title', file = '/route-continue-save3-schedule.lua' },
+    ['ending'] = { base = 'title',
+                   file = { '/route-continue-save3-schedule.lua', '/route-ending-schedule.lua' } },
     ['battle-twice'] = { base = 'continue-save2',
                          file = { '/route-battle-schedule.lua', '/route-battle-twice-schedule.lua' } },
 }

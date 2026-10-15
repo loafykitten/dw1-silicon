@@ -192,3 +192,14 @@ written down as accepted. That is the first release.
   path). From the disassembly the PS1's value is the caller's `$s3`: `VS__tickDigimonAttackRanged`'s
   `move` argument or `VS__tickDigimonOther`'s fighter index (STD's callers likewise), to confirm on
   the emulator when an AI finisher is recorded.
+- **Ending stream** (2026-10-15, `docs/phase9-routes.md`, "The end of the game"): the boss buildup
+  (EAB: only Machinedramon's scene at the top of Mt. Infinity uses it) and the ending (ENDI), then
+  the clear save, the credits, the title and the return to File City, certified as
+  `oracle/replays/ending.txt` (fixture `p9-ending-mt-infinity`: Master99's 2001 save moved to the
+  last corridor by the new `tools/oracle/place_fixture.py`); natively 33 of 33 checkpoints and 220
+  of 220 at every 50 polls identical, the written clear-save card byte-identical. Two native fixes
+  (BOSS_EFE.TMD's read request cut its buffer address to 32 bits; the predefined battle's empty
+  entity slots). The two judgement calls, measured on Redux: EAB_initializeRings' 15 extra PS1
+  writes (audit finding 6) were all rewritten by `EAB_tick`'s first call with nothing reading
+  them in between, so the native 3-entry bound stands; ENDI_releaseParticles' stale `t[3]` (finding
+  13) was 0, now explicit, and the released particles equal Redux's. Fifteen replays.
