@@ -7,8 +7,9 @@ it's the handoff, with the goal, ground rules, sources, architecture, oracle, ph
 and open questions.
 
 - **Current status (2026-10-15, session 6):** Phases 1-4, 6 and 7 done; Phase 5
-  (overlays) has battles, training and the Item Keeper certified (`tools/replay-check.sh`, ten
-  replays), the rest waits on fixture saves from Ember. Phase 8 (renderer) done: wgpu
+  (overlays) has battles, training and the Item Keeper certified; Phase 9's streams reached the
+  rest without Ember's saves (debug room, downloaded saves, moved saves): twenty replays in
+  `tools/replay-check.sh`, all identical. Phase 8 (renderer) done: wgpu
   window (`crates/render`), HD surfaces at 2-8x (`backend::hd`) and no wobble (`backend::pgxp`)
   beside the exact 1x VRAM, settings with hotkeys, "full colour" (F5, session 6); every replay
   identical with them all on (`docs/phase8-plan.md`). Full colour on by default (Ember).
