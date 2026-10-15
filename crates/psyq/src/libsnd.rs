@@ -449,10 +449,16 @@ fn pan_share_64(pan: i32) -> (i32, i32) {
 /// volumes 64-127, key-on volumes 1-127 on either side, sweeps up and down over 3-15 ticks),
 /// the 64 of p6-probe-autovol and the battle replay's fades; the other orders of the three pans
 /// each miss some.]
-pub fn auto_vol_volume(level: i32, vol_left: i32, vol_right: i32, tone: &Tone, prog_vol: u8) -> (u16, u16) {
+pub fn auto_vol_volume(
+    level: i32,
+    vol_left: i32,
+    vol_right: i32,
+    tone: &Tone,
+    prog_vol: u8,
+) -> (u16, u16) {
     let (_, pan) = key_on_pan(vol_left, vol_right);
-    let base = i64::from(level) * i64::from(tone.vol) * i64::from(prog_vol) * 0x3fff
-        / (127 * 127 * 127);
+    let base =
+        i64::from(level) * i64::from(tone.vol) * i64::from(prog_vol) * 0x3fff / (127 * 127 * 127);
     let (tl, tr) = pan_share_64(i32::from(tone.pan));
     let (cl, cr) = pan_share_64(64);
     let (vl, vr) = pan_share_64(pan);
@@ -1623,7 +1629,11 @@ mod tests {
         snd.auto_vol(10, 0x7f, 0, 6);
         snd.tick(&mut spu);
         snd.tick(&mut spu);
-        assert_eq!(vol(&spu), (0x28da, 0x2ad5), "level 85 of the voice's own tone");
+        assert_eq!(
+            vol(&spu),
+            (0x28da, 0x2ad5),
+            "level 85 of the voice's own tone"
+        );
         // Another voice's key-on mid-sweep: the next steps take its tone [obs:
         // p9-sound-autovol-last2: 0xe87 / 0xf3c at level 64 with a tone of volume 60].
         assert_eq!(snd.key_on_v(&spu, 11, key(1)), 11);
