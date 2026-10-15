@@ -787,11 +787,12 @@ impl Gpu {
         // (`pgxp`), each corner the GTE projected this frame takes its precise position (the
         // others keep their integer one, no depth), unless the mapping is a 2D sprite's.
         if let Some(hd) = self.hd.as_deref_mut() {
-            let mut precise = false;
+            let (mut precise, mut found_all) = (false, false);
             if crate::pgxp::enabled() {
                 let (ox, oy) = (self.st.ofs_x, self.st.ofs_y);
                 let xy: Vec<(i32, i32)> = v[..nv].iter().map(|p| (p.x - ox, p.y - oy)).collect();
                 let found = crate::pgxp::lookup_poly(&xy);
+                found_all = found[..nv].iter().all(Option::is_some);
                 for (p, f) in v[..nv].iter_mut().zip(found) {
                     match f {
                         Some(f) => {
@@ -804,9 +805,13 @@ impl Gpu {
             }
             // A sprite-like mapping (a map tile, a 2D picture) keeps its integer corners and is
             // drawn as at 1x, block by block; decided for the whole quad, so a floor tile with one
-            // sprite-like half doesn't open a gap on its diagonal. Other textured polygons (3D
-            // models) without precise corners interpolate smoothly at the render scale.
+            // sprite-like half doesn't open a gap on its diagonal. Not when every corner was
+            // projected this frame: that is a 3D polygon whose mapping only looks flat (a model's
+            // one-texel patch), and integer corners would open cracks beside its precise
+            // neighbours. Other textured polygons (3D models) without precise corners
+            // interpolate smoothly at the render scale.
             let flat_2d = textured
+                && !found_all
                 && sprite_like(&v[0], &v[1], &v[2])
                 && (!quad || sprite_like(&v[1], &v[2], &v[3]));
             if flat_2d {

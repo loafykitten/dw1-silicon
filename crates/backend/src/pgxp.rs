@@ -54,6 +54,9 @@ struct Table {
 }
 
 static ON: AtomicBool = AtomicBool::new(false);
+/// Inside `without` or between `set_paused(true)` and `set_paused(false)`: projections are not
+/// recorded.
+static PAUSED: AtomicBool = AtomicBool::new(false);
 static TABLE: Mutex<Option<Table>> = Mutex::new(None);
 
 fn table<R>(f: impl FnOnce(&mut Table) -> R) -> R {
@@ -72,6 +75,22 @@ pub fn set_enabled(on: bool) {
     }
 }
 
+/// Runs `f` with recording paused: for code that places a 2D picture through the GTE (libgs's
+/// scaled and rotated sprites), whose corners are not a 3D model's and keep their integer
+/// positions.
+pub fn without<R>(f: impl FnOnce() -> R) -> R {
+    let was = set_paused(true);
+    let r = f();
+    set_paused(was);
+    r
+}
+
+/// Pauses recording (`true`) or resumes it, for the game's C that places 2D pictures through
+/// the GTE (`dw1_pgxp_2d`); returns whether it was paused. `end_frame` resumes it.
+pub fn set_paused(on: bool) -> bool {
+    PAUSED.swap(on, Ordering::Relaxed)
+}
+
 pub fn enabled() -> bool {
     ON.load(Ordering::Relaxed)
 }
@@ -87,7 +106,7 @@ fn slot(key: u32) -> usize {
 /// One RTPS result: `sx`, `sy` as SXY2 holds them, the float position `x`, `y` (GTE screen
 /// space, the same units) and the view depth `z`; `flags` = `CLAMPED`, `NEAR` or 0.
 pub fn record(sx: i32, sy: i32, x: f64, y: f64, z: f64, flags: u32) {
-    if flags & NEAR != 0 {
+    if flags & NEAR != 0 || PAUSED.load(Ordering::Relaxed) {
         return;
     }
     // The float must describe the same point as the integer result; when the GTE saturated
@@ -121,11 +140,13 @@ pub fn record(sx: i32, sy: i32, x: f64, y: f64, z: f64, flags: u32) {
                 if e.n > CANDIDATES {
                     return;
                 }
-                // The same point again (a shared vertex projected twice): the same place and
-                // depth. A point at another depth stays a separate candidate.
+                // The same point again: a shared vertex projected twice, or a joint's vertex
+                // projected once per part (a hair apart). Within a pixel and nearly the same depth
+                // (1/64) it is one point, so the parts meet with no crack between them; the
+                // first projection stands. A point at another depth stays a separate candidate.
                 if e.c[..e.n].iter().any(|c| {
                     let (dx, dy) = (c.x - fx, c.y - fy);
-                    dx * dx + dy * dy <= 1.0 / 4096.0 && zdist(c.z, z as f32) <= 1.0 / 256.0
+                    dx * dx + dy * dy <= 1.0 && zdist(c.z, z as f32) <= 1.0 / 64.0
                 }) {
                     return;
                 }
@@ -258,6 +279,7 @@ pub fn lookup_poly(xy: &[(i32, i32)]) -> [Option<Precise>; 4] {
 
 /// After each `DrawOTag`: the projections recorded so far are forgotten.
 pub fn end_frame() {
+    PAUSED.store(false, Ordering::Relaxed);
     table(|t| {
         t.epoch = t.epoch.wrapping_add(1);
         if t.epoch == 0 {
@@ -336,6 +358,24 @@ mod tests {
         record(10, 20, 10.25, 20.25, 100.0, 0);
         record(10, 20, 10.25, 20.25, 100.2, 0); // the same point again
         assert_eq!(table(|t| find(t, 10, 20).map(|e| e.n)), Some(2));
+    }
+
+    #[test]
+    fn a_joint_projected_once_per_part_is_one_point() {
+        let _g = serial();
+        set_enabled(true);
+        end_frame();
+        // a joint's corner as two parts project it: the same pixel, a hair apart
+        record(10, 20, 10.2, 20.3, 100.0, 0);
+        record(10, 20, 10.6, 20.1, 100.5, 0);
+        // the corners of a polygon on each part, at depths that would pick different points
+        record(30, 20, 30.5, 20.5, 98.0, 0);
+        record(30, 40, 30.5, 40.5, 103.0, 0);
+        record(10, 40, 10.5, 40.5, 100.0, 0);
+        let a = lookup_poly(&[(10, 20), (30, 20), (10, 40)]);
+        let b = lookup_poly(&[(10, 20), (30, 40), (10, 40)]);
+        assert_eq!(a[0], b[0]);
+        assert_eq!(a[0].map(|p| p.x), Some(9.7));
     }
 
     #[test]

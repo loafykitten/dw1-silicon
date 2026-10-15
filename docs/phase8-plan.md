@@ -194,3 +194,15 @@ Ember has looked at them; the widescreen report is written. Then Phase 9.
   unsaturated; a pixel written after the option was turned off could keep its full-colour value),
   both fixed with tests; second pass clean. Side-by-sides for Ember in the gitignored
   `captures/phase8-full-colour/`.
+- **Cracks in models with no wobble (Ember, session 6):** thin lines of background through
+  models (Koromon's head) at scale above 1 with no wobble on. Two causes, both fixed: (1) a model
+  polygon whose texture mapping looks flat (a one-texel colour patch, or texture lined up with
+  the screen; 174 of ~3000 polygons in a Jijimon's-house frame) kept integer corners while its
+  neighbours were precise: now a polygon whose every corner was projected this frame is drawn
+  precise; (2) a jointed model's corner projected once per part landed a hair apart and each
+  part took its own copy (a dotted line along Tokomon's ear): points within a pixel and 1/64 in
+  relative depth now count as one. 2D pictures placed through the GTE keep integer corners:
+  libgs's scaled and rotated sprites (`pgxp::without`) and the battle start text in btl, std and
+  vs (`dw1_pgxp_2d` in the decomp fork, found by a Sol survey of every game-C projection site).
+  Replays identical with every extra on; Astra reviewed three times (two real findings, both the
+  2D cases above), converged. Before/after in `captures/phase8-cracks/`.

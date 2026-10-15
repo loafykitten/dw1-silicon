@@ -291,7 +291,8 @@ pub unsafe extern "C" fn GsSortSprite(sp: *const GsSprite, ot: *mut GsOt, pri: u
         // 1, and with OFX = OFY = 0, as the game leaves them, SXY is the transformed point), RTPT
         // on the first three corners, RTPS on the fourth. The GTE registers it leaves (RT, TR,
         // the vertices, the screen FIFO) are the SDK's: the rotation matrix and translation are
-        // compared against the captures, the data registers are scratch.
+        // compared against the captures, the data registers are scratch. No wobble doesn't record
+        // these corners: the sprite is 2D and keeps its integer ones on the HD surfaces.
         let angle = s.rotate / 360;
         let (c, sn) = (crate::libgte::rcos(angle), crate::libgte::rsin(angle));
         let mut m = [[c, -sn, 0], [sn, c, 0], [0, 0, 0x1000]];
@@ -307,30 +308,32 @@ pub unsafe extern "C" fn GsSortSprite(sp: *const GsSprite, ot: *mut GsOt, pri: u
         let (mx, my) = (i32::from(s.mx), i32::from(s.my));
         let corners = [(-mx, -my), (w - mx, -my), (-mx, h - my), (w - mx, h - my)];
         let half = |lo: i32, hi: i32| (hi as u16 as u32) << 16 | lo as u16 as u32;
-        let sxy = crate::gte::with(|g| {
-            g.ctc2(0, half(m[0][0], m[0][1]));
-            g.ctc2(1, half(m[0][2], m[1][0]));
-            g.ctc2(2, half(m[1][1], m[1][2]));
-            g.ctc2(3, half(m[2][0], m[2][1]));
-            g.ctc2(4, m[2][2] as u16 as u32);
-            g.ctc2(5, i32::from(s.x) as u32);
-            g.ctc2(6, i32::from(s.y) as u32);
-            let proj = g.cfc2(26);
-            g.ctc2(7, proj);
-            for (k, &(dx, dy)) in corners[..3].iter().enumerate() {
-                g.mtc2(dreg::VXY0 + 2 * k, half(dx, dy));
-                g.mtc2(dreg::VZ0 + 2 * k, 0);
-            }
-            g.execute(cmd::RTPT);
-            let mut sxy = [0u32; 4];
-            for (k, v) in sxy.iter_mut().take(3).enumerate() {
-                *v = g.mfc2(dreg::SXY0 + k);
-            }
-            g.mtc2(dreg::VXY0, half(corners[3].0, corners[3].1));
-            g.mtc2(dreg::VZ0, 0);
-            g.execute(cmd::RTPS);
-            sxy[3] = g.mfc2(dreg::SXY2);
-            sxy
+        let sxy = backend::pgxp::without(|| {
+            crate::gte::with(|g| {
+                g.ctc2(0, half(m[0][0], m[0][1]));
+                g.ctc2(1, half(m[0][2], m[1][0]));
+                g.ctc2(2, half(m[1][1], m[1][2]));
+                g.ctc2(3, half(m[2][0], m[2][1]));
+                g.ctc2(4, m[2][2] as u16 as u32);
+                g.ctc2(5, i32::from(s.x) as u32);
+                g.ctc2(6, i32::from(s.y) as u32);
+                let proj = g.cfc2(26);
+                g.ctc2(7, proj);
+                for (k, &(dx, dy)) in corners[..3].iter().enumerate() {
+                    g.mtc2(dreg::VXY0 + 2 * k, half(dx, dy));
+                    g.mtc2(dreg::VZ0 + 2 * k, 0);
+                }
+                g.execute(cmd::RTPT);
+                let mut sxy = [0u32; 4];
+                for (k, v) in sxy.iter_mut().take(3).enumerate() {
+                    *v = g.mfc2(dreg::SXY0 + k);
+                }
+                g.mtc2(dreg::VXY0, half(corners[3].0, corners[3].1));
+                g.mtc2(dreg::VZ0, 0);
+                g.execute(cmd::RTPS);
+                sxy[3] = g.mfc2(dreg::SXY2);
+                sxy
+            })
         });
         let (u1, v1) = (
             u.wrapping_add(w as u32 - 1) & 0xFF,

@@ -65,6 +65,10 @@ void dw1_overlay_reset(int32_t lib);
  * (crates/psyq/src/native.rs; the decomp's main_menu.c, Phase 7). */
 extern int32_t dw1_pc_saves;
 
+/* Nonzero: the GTE projections that follow place a 2D picture (HUD text, menu glyphs), so the
+ * no-wobble option keeps their integer corners; zero: back to 3D (crates/psyq/src/gte.rs). */
+void dw1_pgxp_2d(int32_t on);
+
 /* How wide the US game's drawString draws ASCII `str` (the decomp's font.c). */
 int32_t dw1_text_width(char *str);
 

@@ -89,6 +89,14 @@ pub extern "C" fn dw1_gte_cop2(command: u32) {
     }
 }
 
+/// The game's C is about to place a 2D picture through the GTE (`on` nonzero: HUD text tiles,
+/// menu glyphs), or is done: no wobble (`backend::pgxp`) doesn't record those projections, so
+/// the picture keeps its integer corners on the HD surfaces like the rest of the 2D.
+#[unsafe(no_mangle)]
+pub extern "C" fn dw1_pgxp_2d(on: i32) {
+    backend::pgxp::set_paused(on != 0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -22,6 +22,8 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   on by default (Ember). HD shading and see-through effects on 8 bits a channel with no dither; off is
   byte-identical to before, replays identical with it on, Astra's review converged
   (`docs/phase8-plan.md` Progress). Side-by-sides in `captures/phase8-full-colour/`.
+- **No wobble no longer cracks models** (Ember saw lines through Koromon's head): fixed the same
+  session (`docs/phase8-plan.md` Progress). Ember should check it in play.
 - **Next session:** close Phase 8 (the check-in: anything else Ember asks about the picture),
   then Phase 9. Fixture saves for Phase 5's remaining
   overlays still come from Ember over time.
