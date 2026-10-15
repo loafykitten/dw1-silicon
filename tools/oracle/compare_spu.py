@@ -11,8 +11,8 @@ apart, which is most of the game, that's the emulator's own VBlank numbering.
 
 Compared, per voice: key-ons with what the voice was keyed with (sample address, pitch, volume,
 ADSR); key-offs of a voice that's sounding; pitch and volume changes while it sounds (changes
-written just before a key-on belong to the key-on); a pitch or volume change whose value differs
-is counted apart ("set value differs", the fades), not as a failure. A matching event a VBlank
+written just before a key-on belong to the key-on), the SsUtAutoVol fades' steps included (exact
+since 2026-10-15: libsnd.rs, auto_vol_volume). A matching event a VBlank
 away counts as a match "off by one": the port runs a VBlank's ticks after the game's code, the SDK whenever its
 timer fires; one between the same two polls of a loading screen (polls more than 2 VBlanks
 apart) as "same loading gap". Globally: the main and reverb volumes, the reverb voice mask (restricted to
@@ -233,12 +233,6 @@ def compare_lists(name, ora, nat, report, show, song=False):
                 stats['late/early'] += 1
                 if len(report) < show:
                     report.append(f'{name}: {o[1]} at oracle {o[0]}, port {n[0]}')
-            i, j = i + 1, j + 1
-            continue
-        if (not song and o and n and o[1][0] == n[1][0] == 'set' and o[1][1] in ('voll', 'volr')
-                and o[1][1] == n[1][1] and close(o[0], n[0])):
-            # A fade's step (SsUtAutoVol): its values aren't modelled exactly (libsnd.rs).
-            stats['set value differs'] += 1
             i, j = i + 1, j + 1
             continue
         # An insertion or deletion: find the nearest event that matches again.

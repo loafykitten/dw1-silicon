@@ -313,8 +313,6 @@ pub struct SndVoice {
     /// Key on / key off at the next tick.
     pub key_on: bool,
     pub key_off: bool,
-    /// What the voice was keyed with: the tone, its program's volume, the left/right volumes.
-    keyed: Option<(Tone, u8, i32, i32)>,
     /// A volume sweep (`SsUtAutoVol`) in progress.
     pub auto_vol: Option<AutoVol>,
     /// The SEQ note the voice belongs to, if the sequencer keyed it.
@@ -365,6 +363,10 @@ pub struct SndState {
     next_tick: u64,
     /// Key-ons so far (the voices' ages).
     key_ons: u32,
+    /// The latest `SsUtKeyOnV` call's tone, its program's volume and its left/right volumes,
+    /// which every `SsUtAutoVol` step uses, whichever voice it sweeps (see
+    /// [`SndState::auto_vol`]).
+    last_key_on: Option<(Tone, u8, i32, i32)>,
 }
 
 /// Pitch for a note `semitones` above the center, before octaves: one row per semitone, one
@@ -417,6 +419,49 @@ fn pan_share(pan: i32) -> (i32, i32) {
     )
 }
 
+/// `SsUtKeyOnV`'s left and right volumes as a volume (the louder) and a pan (0-127, 64 the
+/// centre: the quieter side's share of the louder, in 64ths). [obs: the key-on probes]
+fn key_on_pan(vol_left: i32, vol_right: i32) -> (i32, i32) {
+    if vol_left == vol_right {
+        (vol_left, 64)
+    } else if vol_left > vol_right {
+        (vol_left, vol_right * 64 / vol_left)
+    } else {
+        (vol_right, 127 - vol_left * 64 / vol_right)
+    }
+}
+
+/// One side's share of a pan in 64ths, as `SsUtAutoVol`'s steps take it: full on its own side,
+/// 63/64 at the centre, falling to 0 at the far side. [obs: below]
+fn pan_share_64(pan: i32) -> (i32, i32) {
+    ((127 - pan).min(64), pan.min(64))
+}
+
+/// The voice volume registers at one step of an `SsUtAutoVol` sweep of a voice `SsUtKeyOnV`
+/// keyed. Not the key-on's formula: the step's `level` (0-127) takes the place of the key-on's
+/// volume, tone volume x program volume x 0x3FFF / 127^3 in one division, then the pans in 64ths
+/// (where the key-on's are in 63rds, so a centred voice steps at 63/64 per centred pan on the
+/// left and full on the right): the tone's, then a third one at the centre (the program's or the
+/// bank's: 64 in every DW1 bank, which `key_on_v` checks), then the voice's from the key-on's
+/// left and right volumes, each rounded down.
+/// [obs: exact for 500 probes of `SsUtKeyOnV` then `SsUtAutoVol` and the tick
+/// (captures/oracle-runs/p9-sound-autovol-*: tone volumes 0-127, tone pans 0-127, program
+/// volumes 64-127, key-on volumes 1-127 on either side, sweeps up and down over 3-15 ticks),
+/// the 64 of p6-probe-autovol and the battle replay's fades; the other orders of the three pans
+/// each miss some.]
+pub fn auto_vol_volume(level: i32, vol_left: i32, vol_right: i32, tone: &Tone, prog_vol: u8) -> (u16, u16) {
+    let (_, pan) = key_on_pan(vol_left, vol_right);
+    let base = i64::from(level) * i64::from(tone.vol) * i64::from(prog_vol) * 0x3fff
+        / (127 * 127 * 127);
+    let (tl, tr) = pan_share_64(i32::from(tone.pan));
+    let (cl, cr) = pan_share_64(64);
+    let (vl, vr) = pan_share_64(pan);
+    let side = |t: i32, c: i32, v: i32| {
+        (base * i64::from(t) / 64 * i64::from(c) / 64 * i64::from(v) / 64) as u16
+    };
+    (side(tl, cl, vl), side(tr, cr, vr))
+}
+
 /// The voice volume registers for a key-on: `SsUtKeyOnV`'s left and right volumes become a
 /// volume (the louder) and a pan (the quieter one's share of it), which with the tone's and the
 /// program's volume and the tone's pan give each side, in 0x3FFF units. [obs: exact for all
@@ -425,13 +470,7 @@ fn pan_share(pan: i32) -> (i32, i32) {
 /// has master volume 127 and pan 64, and the sound effect banks program pan 64, so those
 /// don't enter; a bank that differed traps.]
 pub fn key_on_volume(vol_left: i32, vol_right: i32, tone: &Tone, prog_vol: u8) -> (u16, u16) {
-    let (vol, pan) = if vol_left == vol_right {
-        (vol_left, 64)
-    } else if vol_left > vol_right {
-        (vol_left, vol_right * 64 / vol_left)
-    } else {
-        (vol_right, 127 - vol_left * 64 / vol_right)
-    };
+    let (vol, pan) = key_on_pan(vol_left, vol_right);
     // The probes fit several orders of these products; this one stays in 32 bits.
     let base = vol * i32::from(tone.vol) * 0x3fff / (127 * 127) * i32::from(prog_vol) / 127;
     let (tl, tr) = pan_share(i32::from(tone.pan));
@@ -487,6 +526,7 @@ impl SndState {
             voices: [SndVoice::default(); VOICES],
             next_tick: 0,
             key_ons: 0,
+            last_key_on: None,
         }
     }
 
@@ -786,7 +826,6 @@ impl SndState {
                         dirty_sample: true,
                         key_on: true,
                         key_off: false,
-                        keyed: None,
                         auto_vol: None,
                         owner: Some(owner),
                         age: self.key_ons,
@@ -893,11 +932,19 @@ impl SndState {
                 "SsUtKeyOnV: a bank whose master or program pan isn't DW1's",
             );
         }
+        let start = (vab.sample_address(tone.vag) / 8) as u16;
+        // Recorded before the voice is checked: a refused key-on still sets the tone the next
+        // SsUtAutoVol steps use [obs: p9-sound-autovol-last3].
+        self.last_key_on = Some((
+            tone,
+            prog_vol,
+            i32::from(key.vol_left),
+            i32::from(key.vol_right),
+        ));
         let n = voice as usize;
         if self.voices[n].key_on || spu.key_status(1 << n) == SPU_ON {
             return -1;
         }
-        let start = (vab.sample_address(tone.vag) / 8) as u16;
         let vol = key_on_volume(
             i32::from(key.vol_left),
             i32::from(key.vol_right),
@@ -917,12 +964,6 @@ impl SndState {
             dirty_sample: true,
             key_on: true,
             key_off: false,
-            keyed: Some((
-                tone,
-                prog_vol,
-                i32::from(key.vol_left),
-                i32::from(key.vol_right),
-            )),
             auto_vol: None,
             owner: None,
             age: self.key_ons,
@@ -931,17 +972,23 @@ impl SndState {
         voice
     }
 
-    /// `SsUtAutoVol`: from the next tick, the voice's volume moves from `start` to `end`
-    /// (127ths of what it was keyed with) over `ticks` ticks, by a whole step each. [obs, in
-    /// part: probing the SDK (captures/oracle-runs/p6-probe-autovol) shows the steps are
-    /// (start - end) / ticks a tick, rounded down, ending on `end`, and the right side of a
-    /// centred voice follows the key-on volume of the stepped level exactly; the left side comes
-    /// out up to 5% lower in a way not worked out yet. The game only uses this to fade a sound
-    /// for the 6 ticks after it keys it off.]
+    /// `SsUtAutoVol`: from the next tick, the voice's volume moves from `start` to `end` (0-127)
+    /// by `(start - end) / ticks` a tick (rounded down, at least 1), one step a tick, landing on
+    /// `end` (so 127 to 0 over 6 ticks takes 7: 106, 85, 64, 43, 22, 1, 0), each step written as
+    /// [`auto_vol_volume`] [obs: the probes there].
+    ///
+    /// The tone, program volume and key-on volumes in each step aren't the swept voice's but
+    /// those of the latest `SsUtKeyOnV` call at that tick, whichever voice it was for, even a
+    /// refused one [obs: captures/oracle-runs/p9-sound-autovol-last1..3: a key-on of another
+    /// voice before the sweep, or two ticks into it, changes the steps from then on; the battle
+    /// replay's fades at VBlanks 4905 and 5961 follow the key-on of another voice just before,
+    /// with music playing, so the sequencer's notes don't count]. So a sweep after
+    /// `SsUtAllKeyOff` (the game's stopSound) brings the silenced voice's volume back for its
+    /// steps [obs: p9-sound-autovol-allkeyoff].
     pub fn auto_vol(&mut self, voice: i16, start: i16, end: i16, ticks: i16) {
         let v = &mut self.voices[voice as usize];
         let (start, end) = (i32::from(start), i32::from(end));
-        let step = ((start - end).abs() / i32::from(ticks).max(1)).max(1);
+        let step = ((start - end).abs() / i32::from(ticks)).max(1);
         v.auto_vol = Some(AutoVol {
             level: start,
             end,
@@ -991,15 +1038,19 @@ impl SndState {
     /// noise masks, in the order the emulator shows the SDK writing them. [obs]
     pub fn tick(&mut self, spu: &mut SpuState) {
         let (mut on, mut off, mut reverb) = (0u32, 0u32, 0u32);
+        let last_key_on = self.last_key_on;
         for (n, v) in self.voices.iter_mut().enumerate() {
-            if let (Some(sweep), Some((tone, prog_vol, vl, vr))) = (v.auto_vol.as_mut(), v.keyed) {
+            if let Some(sweep) = v.auto_vol.as_mut() {
+                let Some((tone, prog_vol, vl, vr)) = last_key_on else {
+                    crate::trap::unimplemented("SsUtAutoVol before any SsUtKeyOnV");
+                };
                 sweep.level = if sweep.level > sweep.end {
                     (sweep.level - sweep.step).max(sweep.end)
                 } else {
                     (sweep.level + sweep.step).min(sweep.end)
                 };
                 let level = sweep.level;
-                v.vol = key_on_volume(vl * level / 127, vr * level / 127, &tone, prog_vol);
+                v.vol = auto_vol_volume(level, vl, vr, &tone, prog_vol);
                 v.dirty_vol = true;
                 if level == sweep.end {
                     v.auto_vol = None;
@@ -1291,6 +1342,10 @@ pub extern "C" fn SsUtAutoVol(voice: i16, start_vol: i16, end_vol: i16, delta_ti
     if !ok {
         return -1;
     }
+    if delta_time == 0 {
+        // [obs: a probe of SsUtAutoVol with delta_time 0 never returned to its caller]
+        crate::trap::unimplemented("SsUtAutoVol: a sweep over 0 ticks (the SDK never returns)");
+    }
     state().auto_vol(voice, start_vol, end_vol, delta_time);
     0
 }
@@ -1465,6 +1520,121 @@ mod tests {
         assert_eq!(key_on_volume(63, 127, &tone(100, 64), 127), (6347, 12900));
         assert_eq!(key_on_volume(1, 65, &tone(127, 64), 127), (0, 8385));
         assert_eq!(key_on_volume(1, 0, &tone(127, 1), 100), (101, 0));
+    }
+
+    #[test]
+    fn auto_vol_steps_match_the_sdk() {
+        let tone = |vol, pan| Tone {
+            mode: 0,
+            vol,
+            pan,
+            center: 60,
+            shift: 0,
+            adsr1: 0,
+            adsr2: 0,
+            vag: 1,
+            min: 0,
+            max: 127,
+            pb_min: 0,
+            pb_max: 0,
+        };
+        let steps = |vl, vr, t: &Tone, pv| {
+            [106, 85, 64, 43, 22, 1, 0].map(|level| auto_vol_volume(level, vl, vr, t, pv))
+        };
+        // [obs] SsUtAutoVol(v, 127, 0, 6) after SsUtKeyOnV: a centred full tone
+        // (p6-probe-autovol), the battle replay's tone of volume 95 (VBlank 4848), a tone panned
+        // hard left keyed 127/64, and one panned right keyed 30/127 (p9-sound-autovol-*).
+        assert_eq!(
+            steps(127, 127, &tone(127, 64), 127),
+            [
+                (0x32f1, 0x356a),
+                (0x28da, 0x2ad5),
+                (0x1ec3, 0x2040),
+                (0x14aa, 0x15ab),
+                (0xa92, 0xb16),
+                (0x7a, 0x81),
+                (0, 0)
+            ]
+        );
+        assert_eq!(
+            steps(127, 127, &tone(95, 64), 127),
+            [
+                (0x261b, 0x27f4),
+                (0x1e8d, 0x200a),
+                (0x1701, 0x181f),
+                (0xf75, 0x1035),
+                (0x7e6, 0x84a),
+                (0x5a, 0x60),
+                (0, 0)
+            ]
+        );
+        assert_eq!(
+            steps(127, 64, &tone(127, 1), 127),
+            [
+                (0x3494, 0x6a),
+                (0x2a29, 0x55),
+                (0x1fbf, 0x40),
+                (0x1554, 0x2b),
+                (0xae9, 0x16),
+                (0x7e, 1),
+                (0, 0)
+            ]
+        );
+        assert_eq!(
+            steps(30, 127, &tone(127, 100), 127),
+            [
+                (1330, 13674),
+                (1066, 10965),
+                (803, 8256),
+                (539, 5547),
+                (276, 2838),
+                (12, 129),
+                (0, 0)
+            ]
+        );
+        assert_eq!(auto_vol_volume(106, 127, 127, &tone(1, 0), 64), (52, 0));
+    }
+
+    #[test]
+    fn a_sweep_steps_with_the_latest_key_on_tone() {
+        let (mut snd, mut spu) = fresh();
+        let mut vh = make_vh(1, &[0x40, 0x80]);
+        // Tone 1 at volume 60 (tone 0 stays at 127).
+        vh[32 + VAB_PROGRAMS * PROG_ATTR_SIZE + TONE_ATTR_SIZE + 2] = 60;
+        snd.open_head_sticky(&vh, 0, 0x1010);
+        let key = |tone| KeyOn {
+            vab: 0,
+            prog: 0,
+            tone,
+            note: 60,
+            fine: 0,
+            vol_left: 0x7f,
+            vol_right: 0x7f,
+        };
+        let vol = |spu: &SpuState| {
+            (
+                spu.read(reg::voice(10, reg::VOL_L)),
+                spu.read(reg::voice(10, reg::VOL_R)),
+            )
+        };
+        assert_eq!(snd.key_on_v(&spu, 10, key(0)), 10);
+        snd.tick(&mut spu);
+        assert_eq!(vol(&spu), (0x3fff, 0x3fff));
+        snd.auto_vol(10, 0x7f, 0, 6);
+        snd.tick(&mut spu);
+        snd.tick(&mut spu);
+        assert_eq!(vol(&spu), (0x28da, 0x2ad5), "level 85 of the voice's own tone");
+        // Another voice's key-on mid-sweep: the next steps take its tone [obs:
+        // p9-sound-autovol-last2: 0xe87 / 0xf3c at level 64 with a tone of volume 60].
+        assert_eq!(snd.key_on_v(&spu, 11, key(1)), 11);
+        snd.tick(&mut spu);
+        assert_eq!(vol(&spu), (0xe87, 0xf3c));
+        // SsUtAllKeyOff silences the voice; a sweep brings its volume back.
+        snd.all_key_off(&mut spu);
+        assert_eq!(vol(&spu), (0, 0));
+        snd.auto_vol(10, 0x7f, 0, 6);
+        snd.tick(&mut spu);
+        assert_eq!(vol(&spu), (0x1811, 0x193c));
     }
 
     #[test]
