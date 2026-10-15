@@ -131,3 +131,21 @@ written down as accepted. That is the first release.
   DuckStation card's location, the care claim, the copy buttons), fixed. A fresh clone from
   GitHub built and matched the new-game replay (19/19). Ember read it: "looks great"
   (2026-10-15).
+- **Before the playthrough: the unrecorded parts** (session 6, 2026-10-15). Sol's static audit of
+  the overlays no recording reaches (`docs/phase9-overlay-audit.md`) found definite native bugs in
+  digivolution (EVL), death and rebirth (DOOA/DOO2), tournaments and Battle Mode (STD/VS), the boss
+  buildup (EAB) and the ending (ENDI); three Sonnet subagents fixed them in the decomp fork, and
+  the debug room (`docs/phase9-routes.md`: a fixture save with four story flags zeroed) gave
+  recordings of digivolution and death. Those found three more things the audit couldn't see: an
+  out-of-range model index the PS1 reads from the next part of the model file (`sort4j`, bounded
+  by the table `GsMapModelingData` saw), empty entity slots in EVL/DOOA/EAB's visibility loops (as
+  MURD's), and STATS_LIMIT_ARRAY read one past its end for lives (the PS1 read 1 there). Now
+  certified: `debug-evo` (79/79 dense checkpoints) and `debug-death` (116/116); twelve replays in
+  `tools/replay-check.sh`. Astra reviewed the batch twice (one finding: the model-header search
+  could read outside the model, replaced by the mapped-table lookup), converged. Decomp fork
+  9102d79. Still open: the missing `GsTMDfast*` handlers (audit finding 9: arenas, result scenes,
+  Seadramon, curling stones) and `SetDrawLoad`; recordings of fishing, curling, tournaments,
+  recruiting, the other gyms, Battle Mode (Redux's second card slot never answers), the boss
+  buildup and the ending; three judgement calls to check against the emulator when reached (the
+  native stops on a finisher's uninitialised `tech`, VS intro's `prev = 0`, ENDI's stale stack
+  word).

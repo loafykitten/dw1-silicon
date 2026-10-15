@@ -32,7 +32,7 @@ fn a_scaled_sprites_corners_are_not_recorded() {
         scaley: 8192,
         rotate: 0,
     };
-    let mut corners = [(0, 0); 4];
+    let corners;
     unsafe {
         let org = ps1_ram_ptr(0x801E_0300).cast::<u32>();
         for i in 0..16 {

@@ -13,6 +13,7 @@
 --   wait N                no input for N VBlanks
 --   tap BTN               hold BTN for 4 VBlanks, then wait 26 more (the route's usual tap)
 --   shot NAME             screenshot NAME.raw/.txt now
+--   dump NAME             main RAM (2 MB) to NAME.bin
 --   state                 print the state line again
 --   quit                  end the run
 -- After each batch it prints "EXPLORE state ..." and takes a screenshot s_<vblank>. Every
@@ -25,6 +26,8 @@ local B = { SELECT = 0, START = 3, UP = 4, RIGHT = 5, DOWN = 6, LEFT = 7, L2 = 8
 
 local C = dofile(HERE .. '/canonical-state.lua')
 local pad = PCSX.SIO0.slots[1].pads[1]
+-- Buttons named P2_<name> (P2_CROSS) are pressed on the second pad (Battle Mode's player 2).
+local pad2 = PCSX.SIO0.slots[2].pads[1]
 
 local function status()
     local rec = C.collect()
@@ -78,8 +81,11 @@ local log = assert(io.open('inputs.log', 'ab'))
 local function parseButtons(s)
     local bits = {}
     for name in s:gmatch('[^+]+') do
-        assert(B[name:upper()], 'unknown button ' .. name)
-        bits[#bits + 1] = B[name:upper()]
+        local n = name:upper()
+        local p, base = pad, n
+        if n:sub(1, 3) == 'P2_' then p, base = pad2, n:sub(4) end
+        assert(B[base], 'unknown button ' .. name)
+        bits[#bits + 1] = { p, B[base] }
     end
     return bits
 end
@@ -88,7 +94,7 @@ local function tick()
     vblank = vblank + 1
     -- release first, then press, as the route does
     if active and vblank >= active.last then
-        for _, b in ipairs(active.bits) do pad.clearOverride(b) end
+        for _, b in ipairs(active.bits) do b[1].clearOverride(b[2]) end
         active = nil
     end
     if waitUntil and vblank >= waitUntil then waitUntil = nil end
@@ -108,7 +114,7 @@ local function tick()
         if cmd == 'hold' then
             local n = tonumber(a2)
             local bits = parseButtons(a1)
-            for _, b in ipairs(bits) do pad.setOverride(b) end
+            for _, b in ipairs(bits) do b[1].setOverride(b[2]) end
             active = { bits = bits, last = vblank + n }
             for name in a1:gmatch('[^+]+') do
                 log:write(string.format("    { %d, %d, 1, %d, '%s' },\n", vblank, vblank, n, name:upper()))
@@ -116,7 +122,7 @@ local function tick()
             log:flush()
         elseif cmd == 'tap' then
             local bits = parseButtons(a1)
-            for _, b in ipairs(bits) do pad.setOverride(b) end
+            for _, b in ipairs(bits) do b[1].setOverride(b[2]) end
             active = { bits = bits, last = vblank + 4 }
             waitUntil = vblank + 30
             log:write(string.format("    { %d, %d, 1, 4, '%s' },\n", vblank, vblank, a1:upper()))
@@ -125,6 +131,11 @@ local function tick()
             waitUntil = vblank + tonumber(a1)
         elseif cmd == 'shot' then
             shot(a1)
+        elseif cmd == 'dump' then
+            -- the 2 MB of main RAM, for tools/oracle/map_triggers.py and the like
+            local f = assert(io.open(a1 .. '.bin', 'wb'))
+            f:write(ffi.string(PCSX.getMemPtr(), 0x200000)); f:close()
+            print('EXPLORE dumped ' .. a1 .. '.bin')
         elseif cmd == 'state' then
             print(string.format('EXPLORE state vblank=%d %s', vblank, status()))
         elseif cmd == 'quit' then
@@ -144,7 +155,7 @@ DW1ROUTE_ON_TARGET = function(v)
     -- Detach the route: its listener must not fire its remaining scheduled presses (they would
     -- be missing from inputs.log), and any button it holds is released.
     DW1ROUTE_DETACHED = true
-    for _, b in pairs(B) do pad.clearOverride(b) end
+    for _, b in pairs(B) do pad.clearOverride(b); pad2.clearOverride(b) end
     KEEP_EXPLORE_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', tick)
     -- the route's own listener already ran for this VBlank; take over from the next one, but
     -- show the state now

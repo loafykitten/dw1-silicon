@@ -44,11 +44,12 @@ const OBJECT_WORDS: usize = 7;
 pub unsafe extern "C" fn GsMapModelingData(p: *mut u32) {
     unsafe {
         let flags = p.read();
+        let count = p.add(1).read() as usize;
+        let table = p.add(2);
+        remember_mapping(table, count);
         if flags & 1 != 0 {
             return;
         }
-        let count = p.add(1).read() as usize;
-        let table = p.add(2);
         for i in 0..count {
             let object = table.add(i * OBJECT_WORDS);
             for field in [0, 2, 4] {
@@ -60,6 +61,36 @@ pub unsafe extern "C" fn GsMapModelingData(p: *mut u32) {
         }
         p.write(flags | 1);
     }
+}
+
+/// Object tables the game has mapped (`GsMapModelingData`), with their object counts: where a
+/// linked object's TMD is, for `GsSortObject4J`'s reads past a list (`sort4j::ObjectLists`).
+/// A table mapped again (a new model loaded into the same buffer) replaces its entry.
+static MAPPED: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+/// Most tables kept (the oldest goes first; DW1 maps a few dozen models).
+const MAPPED_KEEP: usize = 1024;
+
+fn remember_mapping(table: *const u32, count: usize) {
+    let mut m = MAPPED.lock().unwrap();
+    m.retain(|&(t, _)| t != table as usize);
+    if m.len() == MAPPED_KEEP {
+        m.remove(0);
+    }
+    m.push((table as usize, count));
+}
+
+/// The mapped object table holding object record `record`, and its object count: None if the
+/// record isn't one of a table `GsMapModelingData` saw.
+pub(crate) fn mapped_table_of(record: *const u32) -> Option<(*const u32, usize)> {
+    let r = record as usize;
+    let size = OBJECT_WORDS * 4;
+    MAPPED
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|&&(t, n)| r >= t && r < t + n * size && (r - t) % size == 0)
+        .map(|&(t, n)| (t as *const u32, n))
 }
 
 /// The number of packet words after a TMD primitive's header, from its flag and mode bytes
@@ -226,5 +257,29 @@ mod tests {
             assert_eq!(p.add(9).read(), 0x3C00_080C);
             assert_eq!(p.add(18).read(), 0x3600_0001);
         }
+    }
+}
+
+#[cfg(test)]
+mod mapping_tests {
+    use super::*;
+
+    #[test]
+    fn a_linked_objects_table_is_found_only_when_mapped() {
+        // a TMD with no objects' lists needed: flags, count 2, two object records
+        let mut tmd = vec![0u32; 2 + 2 * OBJECT_WORDS];
+        tmd[1] = 2;
+        let p = tmd.as_mut_ptr();
+        let table = unsafe { p.add(2) };
+        let second = unsafe { table.add(OBJECT_WORDS) };
+        assert_eq!(mapped_table_of(second), None);
+        remember_mapping(table, 2);
+        assert_eq!(mapped_table_of(second), Some((table.cast_const(), 2)));
+        // not a record boundary, or past the table
+        assert_eq!(mapped_table_of(unsafe { table.add(1) }), None);
+        assert_eq!(mapped_table_of(unsafe { table.add(2 * OBJECT_WORDS) }), None);
+        // mapped again with another count (a new model in the buffer) replaces the entry
+        remember_mapping(table, 1);
+        assert_eq!(mapped_table_of(second), None);
     }
 }

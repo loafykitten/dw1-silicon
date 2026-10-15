@@ -128,6 +128,7 @@ pub unsafe extern "C" fn GsSortObject4J(
         let n_norm = tmd.add(3).read() as usize;
         let mut op = ptr_of_ptr32(tmd.add(4).read()).cast::<u32>().cast_const();
         let mut left = tmd.add(5).read() as usize;
+        let lists = ObjectLists::new(tmd, vp, n_vert, np, n_norm);
 
         let mut pk = GsGetWorkBase().cast::<u32>();
         while left > 0 {
@@ -153,7 +154,7 @@ pub unsafe extern "C" fn GsSortObject4J(
                 eprintln!("psyq: GsFCALL4 slot {slot} (TMD mode {mode:#04x} flag {flag}) is empty");
                 unimplemented("GsSortObject4J without an installed handler");
             };
-            check_indices(op, n, words, mode, flag, n_vert, n_norm);
+            check_indices(op, n, words, mode, flag, &lists);
             let handler: TmdHandler = std::mem::transmute(f);
             pk = handler(op, vp, np, pk, n as i32, shift, otp, scratch);
             op = op.add(n * (1 + words));
@@ -163,18 +164,127 @@ pub unsafe extern "C" fn GsSortObject4J(
     }
 }
 
-/// Stops the program if a run of a kind implemented here indexes past its object's vertex or
-/// normal list. The SDK would read whatever lies beyond; natively that can be any memory, so an
-/// out-of-range index is treated as unmodelled. Kinds without a native handler trap in their
-/// stub anyway.
+/// An object's vertex and normal lists, for `check_indices`. The SDK reads an index past a
+/// list's end as the 8 bytes that follow it [obs: Numemon's model, normal 22 of 22, after
+/// Mr. Digivolution, Phase 9]. Natively the TMD file sits in memory with the PS1's layout
+/// (`GsMapModelingData` rewrites only the object table), so such a read gives the PS1's bytes
+/// while it stays inside the file's lists (any object's): `tmd_span`, from the table and object
+/// count the game mapped.
+struct ObjectLists {
+    record: *const u32,
+    vp: usize,
+    n_vert: usize,
+    np: usize,
+    n_norm: usize,
+}
+
+const OBJECT_WORDS: usize = 7;
+
+/// The end of `n` primitives from `op`, walking their headers as the sorter does; None when a
+/// header isn't one the sorter knows.
+///
+/// # Safety
+/// `op` must point at `n` primitives.
+unsafe fn primitives_end(op: *const u32, n: usize) -> Option<usize> {
+    let mut at = op;
+    let mut left = n;
+    while left > 0 {
+        let header = unsafe { at.read() };
+        let (ilen, flag, mode) = (
+            (header >> 8) as u8,
+            (header >> 16) as u8,
+            (header >> 24) as u8,
+        );
+        let run = if ilen == 0 { header & 0xFFFF } else { 1 } as usize;
+        let words = primitive_words(flag, mode)?;
+        if run == 0 || run > left {
+            return None;
+        }
+        at = unsafe { at.add(run * (1 + words)) };
+        left -= run;
+    }
+    Some(at as usize)
+}
+
+/// The span of all the lists of the mapped TMD holding the object record `record` (the table
+/// and object count `GsMapModelingData` saw); None for a record of no mapped table, or lists
+/// the sorter can't walk.
+///
+/// # Safety
+/// The table `model::mapped_table_of` gives must still hold that TMD (the game maps a model
+/// again when it loads another into the buffer).
+unsafe fn tmd_span(record: *const u32) -> Option<(usize, usize)> {
+    let (table, count) = super::model::mapped_table_of(record)?;
+    let (mut lo, mut hi) = (usize::MAX, 0usize);
+    for i in 0..count {
+        let o = unsafe { table.add(i * OBJECT_WORDS) };
+        let w = |j: usize| unsafe { o.add(j).read() };
+        let size = std::mem::size_of::<Vert>();
+        let vp = ptr_of_ptr32(w(0)) as usize;
+        let np = ptr_of_ptr32(w(2)) as usize;
+        let op = ptr_of_ptr32(w(4)).cast::<u32>();
+        let pend = unsafe { primitives_end(op, w(5) as usize) }?;
+        for (start, end) in [
+            (vp, vp + w(1) as usize * size),
+            (np, np + w(3) as usize * size),
+            (op as usize, pend),
+        ] {
+            lo = lo.min(start);
+            hi = hi.max(end);
+        }
+    }
+    Some((lo, hi))
+}
+
+impl ObjectLists {
+    fn new(
+        record: *const u32,
+        vp: *const Vert,
+        n_vert: usize,
+        np: *const Vert,
+        n_norm: usize,
+    ) -> ObjectLists {
+        ObjectLists {
+            record,
+            vp: vp as usize,
+            n_vert,
+            np: np as usize,
+            n_norm,
+        }
+    }
+
+    /// Whether entry `index` of the list at `base` with `count` entries reads bytes the PS1
+    /// would also read: inside the list, or past it but inside the TMD's lists.
+    fn readable(&self, base: usize, count: usize, index: usize) -> bool {
+        if index < count {
+            return true;
+        }
+        let at = base + index * std::mem::size_of::<Vert>();
+        // SAFETY: the object came from GsLinkObject4 on a mapped TMD (GsSortObject4J's contract).
+        unsafe { tmd_span(self.record) }
+            .is_some_and(|(lo, hi)| at >= lo && at + std::mem::size_of::<Vert>() <= hi)
+    }
+
+    fn vertex(&self, index: usize) -> bool {
+        self.readable(self.vp, self.n_vert, index)
+    }
+
+    fn normal(&self, index: usize) -> bool {
+        self.readable(self.np, self.n_norm, index)
+    }
+}
+
+/// Stops the program if a run of a kind implemented here reads outside its object's data: an
+/// index past its vertex or normal list is what the SDK reads as the following bytes
+/// (`ObjectLists`), but beyond the object's lists that could be any memory natively, so it is
+/// treated as unmodelled. Kinds without a native handler trap in their stub anyway.
 unsafe fn check_indices(
     op: *const u32,
     n: usize,
     words: usize,
     mode: u8,
     flag: u8,
-    n_vert: usize,
-    n_norm: usize,
+    lists: &ObjectLists,
 ) {
     // Lit Gouraud textured triangles and quads: (normal, vertex) halfword pairs after the
     // header and one texture word per vertex. [doc: TMD primitive layouts]
@@ -185,8 +295,11 @@ unsafe fn check_indices(
             let idx = unsafe { op.add(i * (1 + words) + 6).cast::<u16>() };
             for k in 0..4 {
                 let vertex = usize::from(unsafe { idx.add(k).read() });
-                if vertex >= n_vert {
-                    eprintln!("psyq: TMD primitive {i} of a run: vertex {vertex} of {n_vert}");
+                if !lists.vertex(vertex) {
+                    eprintln!(
+                        "psyq: TMD primitive {i} of a run: vertex {vertex} of {}",
+                        lists.n_vert
+                    );
                     unimplemented("GsSortObject4J on a primitive indexing past its TMD lists");
                 }
             }
@@ -207,10 +320,10 @@ unsafe fn check_indices(
                     usize::from(idx.add(2 * k + 1).read()),
                 )
             };
-            if normal >= n_norm || vertex >= n_vert {
+            if !lists.normal(normal) || !lists.vertex(vertex) {
                 eprintln!(
-                    "psyq: TMD primitive {i} of a run: normal {normal} of {n_norm}, vertex {vertex} \
-                     of {n_vert}"
+                    "psyq: TMD primitive {i} of a run: normal {normal} of {}, vertex {vertex} of {}",
+                    lists.n_norm, lists.n_vert
                 );
                 unimplemented("GsSortObject4J on a primitive indexing past its TMD lists");
             }

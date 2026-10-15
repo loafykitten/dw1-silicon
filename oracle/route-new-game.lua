@@ -66,6 +66,11 @@ local EXTRA = {
     ['care-fixture'] = { base = 'continue', file = '/route-care-schedule.lua' },
     ['keeper-fixture'] = { base = 'continue', file = '/route-keeper-schedule.lua' },
     ['register-save'] = { base = 'continue', file = '/route-register-save-schedule.lua' },
+    ['debug-room'] = { base = 'continue', file = '/route-debug-room-schedule.lua' },
+    ['debug-evo'] = { base = 'continue',
+                      file = { '/route-debug-room-schedule.lua', '/route-debug-evo-schedule.lua' } },
+    ['debug-death'] = { base = 'continue',
+                        file = { '/route-debug-room-schedule.lua', '/route-debug-death-schedule.lua' } },
     ['battle-fixture'] = { base = 'continue-save2', file = '/route-battle-schedule.lua' },
     ['training-fixture'] = { base = 'continue-save2', file = '/route-training-schedule.lua' },
     ['training-bonus'] = { base = 'continue-save2',
@@ -103,20 +108,25 @@ local RAND_ADDR = 0x9010 -- BIOS rand() state (see oracle/probe-boot.lua)
 
 local mem = ffi.cast('uint32_t*', PCSX.getMemPtr())
 local pad = PCSX.SIO0.slots[1].pads[1]
+-- Presses named P2_<button> (P2_CROSS) go to the second pad (Battle Mode's player 2).
+local pad2 = PCSX.SIO0.slots[2].pads[1]
 
--- Expand PRESSES into press/release events keyed by VBlank.
+-- Expand PRESSES into press/release events keyed by VBlank: each event is {pad, bit}.
 local pressAt, releaseAt = {}, {}
 -- DW1ROUTE_PRESS_UNTIL=<vblank>: ignore presses scheduled after it (to watch an idle menu).
 local PRESS_UNTIL = tonumber(os.getenv('DW1ROUTE_PRESS_UNTIL') or '') or math.huge
 for _, p in ipairs(PRESSES) do
     local first, last, period, hold, name = p[1], p[2], p[3], p[4], p[5]
     last = math.min(last, PRESS_UNTIL)
+    local p = pad
+    if name:sub(1, 3) == 'P2_' then p, name = pad2, name:sub(4) end
     local bit = B[name]
+    assert(bit, 'unknown button ' .. name)
     for t = first, last, period do
         pressAt[t] = pressAt[t] or {}
-        table.insert(pressAt[t], bit)
+        table.insert(pressAt[t], { p, bit })
         releaseAt[t + hold] = releaseAt[t + hold] or {}
-        table.insert(releaseAt[t + hold], bit)
+        table.insert(releaseAt[t + hold], { p, bit })
     end
 end
 
@@ -162,8 +172,8 @@ KEEP_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
     -- milestone may fire after it.
     if DW1ROUTE_DETACHED then return end
     vblank = vblank + 1
-    if releaseAt[vblank] then for _, b in ipairs(releaseAt[vblank]) do pad.clearOverride(b) end end
-    if pressAt[vblank] then for _, b in ipairs(pressAt[vblank]) do pad.setOverride(b) end end
+    if releaseAt[vblank] then for _, b in ipairs(releaseAt[vblank]) do b[1].clearOverride(b[2]) end end
+    if pressAt[vblank] then for _, b in ipairs(pressAt[vblank]) do b[1].setOverride(b[2]) end end
 
     local m = milestoneAt[vblank]
     if m then

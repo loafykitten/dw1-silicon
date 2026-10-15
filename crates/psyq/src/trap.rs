@@ -76,3 +76,4 @@ pub unsafe extern "C" fn dw1_native_fatal(what: *const std::ffi::c_char) -> ! {
     let what = unsafe { std::ffi::CStr::from_ptr(what) }.to_string_lossy();
     unimplemented(&format!("native limit: {what}"));
 }
+
