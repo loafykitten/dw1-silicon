@@ -23,6 +23,9 @@ bit for bit:
   are 2 VBlanks apart, so each side is known to about a VBlank (on the new-game replay's movie
   1,044 of 1,627 sectors land on the same VBlank, 581 one apart, 2 two apart).
 
+- the port's CD input never runs dry inside a read (a movie's audio plays without a gap, as on
+  the PS1; a gap at the end of a read, before another movie or a re-read, is expected).
+
 Exits non-zero on any difference. Levels after the decoder aren't compared: Redux plays XA on
 its own audio stream without the SPU's CD volume, which the port applies as psx-spx documents.
 """
@@ -76,6 +79,7 @@ def main():
         best = min((c for c in (prev, nxt) if c is not None), default=None)
         return (best[1], best[2]) if best else None
 
+    report, stats = [], collections.Counter()
     npcm = open(a.native_prefix + '.bin', 'rb').read()
     nat = collections.defaultdict(list)  # lba -> [((heard on the oracle's clock, anchor), pcm)]
     sectors, pops = [], []
@@ -83,10 +87,13 @@ def main():
         f = line.split()
         if f[0] == 'sector':
             vb, np_, since, lba, _arr, frames, off, pushed = map(int, f[1:])
+            if off < 0 or frames <= 0 or off + frames * 4 > len(npcm):
+                stats['bad log records'] += 1
+                continue
             sectors.append((lba, npcm[off:off + frames * 4], pushed, vb,
                             on_oracle_clock(np_, since, vb)))
         elif f[0] == 'pop':
-            pops.append((int(f[4]), int(f[1])))
+            pops.append((int(f[4]), int(f[1]), int(f[5])))
     popped = [p[0] for p in pops]
     for lba, pcm, pushed, vb, placed in sectors:
         # Heard from the first VBlank whose pops pass the frames queued before it: placed on the
@@ -98,6 +105,26 @@ def main():
             heard = (placed[0] + pops[k][1] - vb, placed[1])
         nat[lba].append((heard, pcm))
     audio_lbas = sorted(nat)
+    # Gaps in the port's playback: the CD input found its FIFO empty (the decoder's underrun count
+    # rose) between two pop lines (written every VBlank while it plays, so between movies one
+    # spans the whole wait). That's expected only at a read's end: no sector follows the last one
+    # decoded before the gap, or the next is not the next audio sector of the same read (another
+    # movie, or the game re-reading after a lost frame, which the emulator does too). Inside a
+    # read it's a dropout the PS1 doesn't have.
+    sector_vbs = [vb for _, _, _, vb, _ in sectors]
+    for (_, vb0, u0), (_, vb, u) in zip(pops, pops[1:]):
+        if u <= u0:
+            continue
+        k = bisect.bisect_right(sector_vbs, vb0)
+        before = sectors[k - 1][0] if k > 0 else None
+        after = sectors[k][0] if k < len(sectors) else None
+        if before is None or after is None or after != before + 8:
+            stats['gaps at a read\'s end'] += 1
+        else:
+            stats['gaps inside a read'] += 1
+            if len(report) < a.show:
+                report.append(f'the port\'s CD input ran dry for {u - u0} frames by its VBlank {vb}, '
+                              f'between LBAs {before} and {after}')
     # The port's reads: audio sectors come every 8 sectors in a movie, so a larger step starts
     # another movie (or another stretch of one).
     run_of, run = {}, 0
@@ -107,7 +134,6 @@ def main():
         run_of[lba] = run
 
     opcm = open(os.path.join(a.oracle_dir, 'xa-pcm.bin'), 'rb').read()
-    report, stats = [], collections.Counter()
     seen = []
     timed = []  # (lba, emulator VBlank, port heard VBlank, the port's poll count then)
     first = last = None
@@ -203,7 +229,8 @@ def main():
         print(f'emulator VBlanks {lo}-{hi} have no poll natively: lined up by {shift} VBlanks')
     bad = (stats['samples differ'] + stats['emulator sector the port never decoded']
            + stats['heard late/early'] + stats['never played by the port']
-           + stats['unseen and different'] + stats['emulator ATV not unity'])
+           + stats['unseen and different'] + stats['emulator ATV not unity']
+           + stats['gaps inside a read'] + stats['bad log records'])
     if stats['samples same'] == 0:
         print('no sector compared')
         bad += 1

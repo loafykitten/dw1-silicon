@@ -13,6 +13,11 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 cargo build --release -p dw1 -q || exit 1
 bin=target/release/dw1
+# The checks themselves first: each must fail on a deliberately bad synthetic log.
+if ! python3 tools/oracle/test_sound_checks.py > /dev/null 2>&1; then
+    echo "tools/oracle/test_sound_checks.py fails: the checks can't be trusted"
+    exit 1
+fi
 
 # name  SPU capture dir  XA capture dir  MDEC capture dir  fixture card (- for none / fresh cards)
 table='battle-fixture p6-spu-battle-full - - ember-save2-prefight

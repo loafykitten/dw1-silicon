@@ -258,5 +258,5 @@ written down as accepted. That is the first release.
   (sectors reach the CD input at their arrival, pumped every VBlank, after a VBlank's lead-in).
   The movies' MDEC codes are identical; the colour conversion now rounds to the nearest and cuts
   to 9 bits (psx-spx), leaving only the IDCT's rounding (Redux's AAN against psx-spx's matrix: at
-  most 5 levels, no lean). New checks in `tools/sound-check.sh` (`oracle/capture-xa.lua`,
+  most 5 levels, no channel leaning more than 0.04 of a level). New checks in `tools/sound-check.sh` (`oracle/capture-xa.lua`,
   `oracle/capture-mdec.lua`, `compare_xa.py`, `compare_mdec.py`); 37 replays identical.
