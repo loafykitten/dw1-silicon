@@ -142,6 +142,11 @@ local EXTRA = {
                                      '/route-debug-seadramon-schedule.lua' } },
     ['debug-fish'] = { base = 'continue-save3',
                        file = { '/route-master99-yard-schedule.lua', '/route-debug-fish-schedule.lua' } },
+    -- Phase 9, stream rest: the other ending map, the post-game egg, recruits and the other gyms
+    ['rest-ending236'] = { base = 'title',
+                           file = { '/route-ending-continue-schedule.lua', '/route-rest-ending236-schedule.lua' } },
+    ['rest-egg'] = { base = 'continue', file = { '/route-rest-egg-schedule.lua' } },
+    ['rest-beetle'] = { base = 'continue-save3', file = { '/route-rest-beetle-schedule.lua' } },
 }
 local base = PROFILE
 if EXTRA[PROFILE] then base = EXTRA[PROFILE].base end
