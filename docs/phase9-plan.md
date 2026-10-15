@@ -203,3 +203,20 @@ written down as accepted. That is the first release.
   writes (audit finding 6) were all rewritten by `EAB_tick`'s first call with nothing reading
   them in between, so the native 3-entry bound stands; ENDI_releaseParticles' stale `t[3]` (finding
   13) was 0, now explicit, and the released particles equal Redux's. Fifteen replays.
+- **Fishing, curling, recruiting and the other gyms** (fishcurl stream, 2026-10-15;
+  `docs/phase9-routes.md` has the routes). Six new certified replays, all from Master99's 2002
+  save made into debug fixtures (`debug_fixture.py --keep/--clear/--item`): `debug-fish` (FISH: a
+  cast, a Digicatfish's bite, the strike, reeling, the catch), `debug-seadramon` (FISH at 08:36:
+  Seadramon hooked on his waypoint, fought, landed, the Lake Guardian scene to Beetle Land),
+  `debug-curl` (KAR: Penguinmon's free match, lost 0-5), `debug-curl-win` (a won match: Penguinmon
+  recruited, trigger 257), `debug-gym` (the Blue Flute's ride to Beetle Land, a Tentomon battle and
+  a Normal session at the stump gym's Striking sign: TRN2). Each: a fresh Redux replay identical to
+  the recording, natively identical at every standard and every-50-polls checkpoint. DGET is the
+  tournament schedule window (Arena Lobby), already covered by `arena-cup`. Native fixes: replays
+  answer `VSync(-1)` with the PS1's count (`Replay::ps1_vcount`; FISH's bite and Seadramon timing
+  read it, and the native counter runs ahead because loading takes no time), FISH's appended
+  `GsDOBJ2` records aligned (audit finding 12), KAR's NULL strings drawn from the PS1's address 0
+  (halfwords 0x0003, 0x0000, measured) instead of crashing. Route machinery: `oracle/explore.lua`
+  waits for a quiet CD before stopping (runs that stopped mid-read diverged), `waitne`,
+  `autoreel`, `autocurl`; schedule files may return a RAM-driven controller
+  (`route-new-game.lua`), used for the matches and fights whose turns don't come at fixed VBlanks. Twenty replays with the ending.

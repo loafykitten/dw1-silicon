@@ -16,6 +16,11 @@ pub trait Host: Send {
     /// for each button held, in libetc's bit order. `caller` is the return address into the
     /// game code that called `PadRead` (replays check it).
     fn pad(&mut self, caller: usize) -> u32;
+    /// What `VSync(-1)` returns at native VBlank `native` (VBlanks since `ResetCallback`).
+    /// A replay answers the PS1's count, which native loading (taking no time) leaves behind.
+    fn vsync_count(&mut self, native: u32) -> u32 {
+        native
+    }
 }
 
 struct Clock {
@@ -106,7 +111,16 @@ pub fn advance_to(target: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn VSync(mode: i32) -> i32 {
     if mode < 0 {
-        return vblank_count() as i32;
+        let native = vblank_count();
+        let host = CLOCK.lock().unwrap().host.take();
+        return match host {
+            Some(mut host) => {
+                let n = host.vsync_count(native);
+                CLOCK.lock().unwrap().host = Some(host);
+                n as i32
+            }
+            None => native as i32,
+        };
     }
     let target = {
         let c = CLOCK.lock().unwrap();

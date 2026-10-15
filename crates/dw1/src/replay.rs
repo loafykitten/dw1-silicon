@@ -258,6 +258,21 @@ impl Replay {
         Ok(p.mask)
     }
 
+    /// What `VSync(-1)` returned on the PS1 at native VBlank `native`: the recording's VBlank at
+    /// the last poll plus the native VBlanks since it, less `vblank_offset`, as for the polls
+    /// (libetc's `Vcount` [obs: RAM dumps inside the GPU::Vsync events of route VBlanks 9640 and
+    /// 8401 read 8494 and 7255, the event's own VBlank not yet counted; the game code after it
+    /// sees one more: debug-gym, whose Seadramon spawns on `VSync(-1) / 3 % 20`, matches with
+    /// this offset and diverges with one less]). FISH is the only reader (the bite and Seadramon
+    /// checks). None before the first poll. Native loading takes no time, so the native counter
+    /// alone runs ahead of the PS1's, which changed when fish bit.
+    pub fn ps1_vcount(&self, native: u32) -> Option<u32> {
+        let last = self.polls.get(self.next.checked_sub(1)?)?;
+        let v = i64::from(last.vblank) + i64::from(native) - i64::from(self.last_native)
+            - self.vblank_offset;
+        u32::try_from(v).ok()
+    }
+
     /// The native VBlank at which the recording ends, once every poll has been consumed: the
     /// last poll's native VBlank plus the recording's distance from its last poll to
     /// `final_vblank`. None while polls remain, or if the header has no `final_vblank`.
