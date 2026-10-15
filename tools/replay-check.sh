@@ -6,6 +6,7 @@
 #                                                 battle-fixture battle-twice training-fixture
 #                                                 training-bonus training-six keeper-fixture
 #                                                 register-save debug-evo debug-death
+#                                                 battle-mode arena-cup
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
@@ -25,7 +26,7 @@ else
 fi
 bin=target/$profile/dw1
 
-# name  oracle dump dir  fixture card (- for fresh cards)
+# name  oracle dump dir  fixture card (- for fresh cards)  [second card, for two-card replays]
 # (the v3-* dumps are fresh Redux replays with the schema v3 canonical state; p5-*-replay1 are
 # the battle recordings' certification runs)
 table='new-game v3-new-game -
@@ -39,10 +40,12 @@ training-six p5-six-replay1 ember-save2-prefight
 keeper-fixture p5-keeper-replay1 ember-day2-gabumon
 register-save p7-register-save ember-day2-gabumon
 debug-evo p9-debug-evo-record debug-day2-gabumon
-debug-death p9-debug-death-record debug-day2-gabumon'
+debug-death p9-debug-death-record debug-day2-gabumon
+battle-mode p9-arena-vs-record p9-arena-vs-p1 p9-arena-vs-p2
+arena-cup p9-arena-std-record p9-arena-master99'
 
 want="$*"
-echo "$table" | while read -r name oracle card; do
+echo "$table" | while read -r name oracle card card2; do
     if [ -n "$want" ] && ! echo " $want " | grep -q " $name "; then continue; fi
     odir=captures/oracle-runs/$oracle
     if [ ! -d "$odir" ]; then echo "$name: SKIP (no oracle dumps in $odir)"; continue; fi
@@ -53,7 +56,13 @@ echo "$table" | while read -r name oracle card; do
     else
         cardfile=captures/fixtures/$card.mcd
         if [ ! -f "$cardfile" ]; then echo "$name: SKIP (no card $cardfile)"; continue; fi
-        DW1_REPLAY=oracle/replays/$name.txt DW1_CARD1=$cardfile DW1_OUT=$out "$bin" > "$out/log.txt" 2>&1
+        if [ -n "$card2" ]; then
+            card2file=captures/fixtures/$card2.mcd
+            if [ ! -f "$card2file" ]; then echo "$name: SKIP (no card $card2file)"; continue; fi
+            DW1_REPLAY=oracle/replays/$name.txt DW1_CARD1=$cardfile DW1_CARD2=$card2file DW1_OUT=$out "$bin" > "$out/log.txt" 2>&1
+        else
+            DW1_REPLAY=oracle/replays/$name.txt DW1_CARD1=$cardfile DW1_OUT=$out "$bin" > "$out/log.txt" 2>&1
+        fi
     fi
     rc=$?
     # Every checkpoint must pair: a certified replay runs to its end on both sides.

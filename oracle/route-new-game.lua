@@ -89,12 +89,20 @@ local EXTRA = {
     ['training-six'] = { base = 'continue-save2',
                          file = { '/route-training-schedule.lua', '/route-training-bonus-schedule.lua',
                                   '/route-training-all-schedule.lua', '/route-training-six-schedule.lua' } },
+    ['battle-mode'] = { base = 'title', pad2 = true, file = '/route-battle-mode-schedule.lua' },
+    ['arena-start'] = { base = 'title', file = '/route-arena-start-schedule.lua' },
+    ['arena-cup'] = { base = 'title',
+                      file = { '/route-arena-start-schedule.lua', '/route-arena-cup-schedule.lua' } },
     ['battle-twice'] = { base = 'continue-save2',
                          file = { '/route-battle-schedule.lua', '/route-battle-twice-schedule.lua' } },
 }
 local base = PROFILE
 if EXTRA[PROFILE] then base = EXTRA[PROFILE].base end
-if base == 'continue' then
+if base == 'title' then
+    -- Only the logo skip: the profile's own file starts at the title menu (Battle Mode).
+    PRESSES = { { 700, 1900, 150, 4, 'START' } }
+    MILESTONES = { { 2350, 'title_menu' } }
+elseif base == 'continue' then
     PRESSES, MILESTONES = dofile(CONTINUE_SCHEDULE_FILE or (HERE .. '/route-continue-schedule.lua'))
 elseif base == 'continue-save2' then
     PRESSES, MILESTONES = dofile(HERE .. '/route-continue-save2-schedule.lua')
@@ -111,6 +119,13 @@ if EXTRA[PROFILE] then
     end
 end
 local TARGET = DW1ROUTE_TARGET or MILESTONES[#MILESTONES][2]
+
+-- Two-player profiles (Battle Mode, `pad2 = true`) plug in the second controller. Redux leaves
+-- pad 2 disconnected by default (`setDefaults(false)` in src/core/pad.cc: `Connected` false), and
+-- then the SIO answers 0xFF for it and the game never sees a P2_ press: Battle Mode's player 2
+-- prompt never takes its Yes [obs: 2026-10-15, p9-arena-cardprobe1/2]. oracle/replay.lua writes a
+-- "pad2 connected" header line so its replays plug it in too.
+if EXTRA[PROFILE] and EXTRA[PROFILE].pad2 then PCSX.settings.pads[2].Connected = true end
 
 local RAND_ADDR = 0x9010 -- BIOS rand() state (see oracle/probe-boot.lua)
 
