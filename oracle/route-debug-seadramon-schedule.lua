@@ -25,19 +25,21 @@ local MILESTONES = {
     { 7000, 'cast' },
     { 7540, 'hooked' },
     { 11000, 'fight' },
-    { 14000, 'late_fight' },
-    { 17000, 'after' },
-    { 19000, 'seadramon_done' },
+    { 13000, 'late_fight' },
+    { 14500, 'lake_guardian' },
+    { 15700, 'beetle_land' },
+    { 16300, 'seadramon_done' },
 }
 
 -- The fight, played from the emulated RAM (inputs found with the explorer's autoreel did not
 -- reproduce here): every 3 VBlanks while the rod is in its fight state (0xB at 0x8007B41C), Cross
--- held while the tension (0x8007B504) is at most 6000 and Seadramon (the hooked fish's state at
+-- held while the tension (0x8007B504) is at most HI and Seadramon (the hooked fish's state at
 -- 0x8007B488) is not running (50); once he is landed, a 4-VBlank Cross every 120 VBlanks while a
 -- map script runs (IS_SCRIPT_PAUSED 0x80134FF4 is 0), until the screen changes (Beetle Land).
+-- HI 4500 lands him (so does 3000; at 6000 and 7500 the line snapped).
 local FROM, CROSS = 7561, 14
 -- The tension under which Cross is held (DW1SEA_HI overrides it for trying other fights).
-local HI = tonumber(os.getenv('DW1SEA_HI') or '') or 6000
+local HI = tonumber(os.getenv('DW1SEA_HI') or '') or 4500
 local pressed, releaseAt, nextTap, start = false, nil, 0, nil
 local function controller(vblank, pad, ram)
     if vblank < FROM then return end

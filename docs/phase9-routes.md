@@ -96,8 +96,12 @@ loads in Jijimon's house (screen 205), so the routes use a `continue-save3` base
   (`FISH_BITE_CHANCE`, per bait and kind: Chain melon gives Digicatfish 30%), Cross within
   `catchingTime / 2` frames of the bite strikes, then Cross held raises the tension and reels.
   Seadramon swims at hours 8 and 17 (`seadramonTime1/2` 1700 and 800 at Dragon Eye Lake) and
-  bites any bait at 20%; the route skips an hour first (the top debug Jijimon) so it fishes
-  without him. `oracle/explore.lua` gained `waitne ADDR VALUE N` (wait for the bite) and
+  bites any bait at 20% within 200 units every 8 frames; the route skips an hour first (the top
+  debug Jijimon) so it fishes without him. `debug-seadramon` fishes at 08:36 instead: a cast at
+  power 12 onto his first waypoint (x -1188, z -2202, where he slows), his bite, a fight played by
+  a controller (Cross while the tension is under 4500 and he isn't running), the catch, "It's the
+  Lake Guardian!" and the ride to Beetle Land. He spawns only while fewer than 32 fish swim, on a
+  frame where `VSync(-1) / 3 % 20` is 0, and only at those hours (the clock stops while fishing). `oracle/explore.lua` gained `waitne ADDR VALUE N` (wait for the bite) and
   `autoreel` (the tension rule, run in Lua with no stops).
 - **The PS1's VBlank counter:** FISH is the one place the game reads `VSync(-1)` (the bite and
   Seadramon checks: `VSync(-1) / 3 % 20`). Natively the counter ran ahead of the PS1's (loading
@@ -109,7 +113,10 @@ loads in Jijimon's house (screen 205), so the routes use a `continue-save3` base
   map scripts indexed by the script id `MAPHEAD.SCN` gives each screen). KAR loads on screen 136.
   The match is played by a controller the schedule file returns (route-new-game.lua now calls it
   each VBlank): turns don't come at fixed VBlanks, and inputs found with the explorer started one
-  VBlank apart from the route's and did not reproduce. Penguinmon wins 5 to 0.
+  VBlank apart from the route's and did not reproduce. Penguinmon wins 5 to 0. `debug-curl-win`
+  throws at powers 2000, 1600, 2200, 1800 and 2400 (found by trying schedules): we win (KAR writes
+  pstat 0x79 = 1) and outside Penguinmon keeps his word: trigger 257 is set and he leaves for the
+  city, a recruit (DGET, despite its name, is the tournament window: below).
 - **The gyms (TRN2)** (`debug-gym`, fixture `p9-fishcurl-debug-master99-flute`: `--item 115`, a
   Blue Flute). TRN2 loads on screens 99 (Ice Sanctuary), 107 and 108 (Beetle Land) and 165 (Trash
   Mountain) (`loadTrainingLibrary`). Beetle Land is reached from Dragon Eye Lake: Cross on the
@@ -126,7 +133,7 @@ loads in Jijimon's house (screen 205), so the routes use a `continue-save3` base
 
 ## Still to reach
 
-Catching Seadramon (fishing at 08:00-08:59 or 17:00-17:59), a won curling match (Penguinmon
-joins the city: a recruit), recruiting in general, the Ice Sanctuary and Trash Mountain gyms, the
-boss buildup and the ending (a completed save near the end), a whole tournament (a save made in
-the arena lobby just before 12:00 would leave room for it).
+Other recruits, the Ice Sanctuary and Trash Mountain gyms (TRN2 on screens 99 and 165; Beetle
+Land's 108 is a short walk from the `debug-gym` route), the boss buildup and the ending (a
+completed save near the end), a whole tournament (a save made in the arena lobby just before
+12:00 would leave room for it).
