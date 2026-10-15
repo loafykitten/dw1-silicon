@@ -116,6 +116,17 @@ fn sign11(v: u32) -> i32 {
     (v << 21) as i32 >> 21
 }
 
+/// Whether a textured triangle's mapping is a 2D sprite's: u depends on x only and v on y only.
+fn sprite_like(a: &Vtx, b: &Vtx, c: &Vtx) -> bool {
+    let dudy = i64::from(a.u) * i64::from(c.x - b.x)
+        + i64::from(b.u) * i64::from(a.x - c.x)
+        + i64::from(c.u) * i64::from(b.x - a.x);
+    let dvdx = i64::from(a.v) * i64::from(c.y - b.y)
+        + i64::from(b.v) * i64::from(a.y - c.y)
+        + i64::from(c.v) * i64::from(b.y - a.y);
+    dudy == 0 && dvdx == 0
+}
+
 pub(crate) fn to5(c8: i32, d: i32) -> i32 {
     (c8 + d).clamp(0, 255) >> 3
 }
@@ -685,9 +696,34 @@ impl Gpu {
             self.triangle(&v[1], &v[2], &v[3], gouraud, t, semi, abr);
         }
         self.triangle(&v[0], &v[1], &v[2], gouraud, t, semi, abr);
-        // The C then draws the same triangles again on the HD surfaces (PGXP lookup, PsxHd_Triangle).
-        // No precise positions yet (slice 8.3). The order is the 1x one.
+        // The same triangles again on the HD surfaces, in the 1x order. With no wobble on
+        // (`pgxp`), each corner the GTE projected this frame takes its precise position (the
+        // others keep their integer one, no depth), unless the mapping is a 2D sprite's.
         if let Some(hd) = self.hd.as_deref_mut() {
+            let mut precise = false;
+            if crate::pgxp::enabled() {
+                let (ox, oy) = (self.st.ofs_x, self.st.ofs_y);
+                let xy: Vec<(i32, i32)> = v[..nv].iter().map(|p| (p.x - ox, p.y - oy)).collect();
+                let found = crate::pgxp::lookup_poly(&xy);
+                for (p, f) in v[..nv].iter_mut().zip(found) {
+                    match f {
+                        Some(f) => {
+                            (p.px, p.py, p.pz) = (f.x + ox as f32, f.y + oy as f32, f.z);
+                            precise = true;
+                        }
+                        None => (p.px, p.py, p.pz) = (p.x as f32, p.y as f32, 0.0),
+                    }
+                }
+                // A sprite-like mapping keeps its integer corners; decided for the whole quad,
+                // so a floor tile with one sprite-like half doesn't open a gap on its diagonal.
+                if precise
+                    && textured
+                    && sprite_like(&v[0], &v[1], &v[2])
+                    && (!quad || sprite_like(&v[1], &v[2], &v[3]))
+                {
+                    precise = false;
+                }
+            }
             if quad {
                 hd.triangle(
                     &self.vram,
@@ -697,7 +733,7 @@ impl Gpu {
                     t,
                     semi,
                     abr,
-                    false,
+                    precise,
                 );
             }
             hd.triangle(
@@ -708,7 +744,7 @@ impl Gpu {
                 t,
                 semi,
                 abr,
-                false,
+                precise,
             );
         }
     }

@@ -184,44 +184,53 @@ pub struct Precise {
 }
 
 /// The precise positions of a polygon's packet vertices `xy` (3 or 4, draw offset not applied),
-/// or None unless every corner has one.
-pub fn lookup_poly(xy: &[(i32, i32)]) -> Option<[Precise; 4]> {
+/// per corner (`None` for a corner nobody projected this frame). A vertex shared by two polygons
+/// normally gets the same answer in both (the same point, or the same depth picks it), so
+/// edges stay closed.
+pub fn lookup_poly(xy: &[(i32, i32)]) -> [Option<Precise>; 4] {
     let n = xy.len();
     assert!(n == 3 || n == 4);
+    if !enabled() {
+        return [None; 4];
+    }
     table(|t| {
-        let e = xy
-            .iter()
-            .map(|&(x, y)| find(t, x, y))
-            .collect::<Option<Vec<&Entry>>>()?;
+        let mut e: [Option<&Entry>; 4] = [None; 4];
+        for (i, &(x, y)) in xy.iter().enumerate() {
+            e[i] = find(t, x, y);
+        }
         let mut pick = [0usize; 4];
-        let singles: Vec<f32> = (0..n)
-            .filter(|&i| e[i].n == 1)
-            .map(|i| e[i].c[0].z)
+        let singles: Vec<f32> = e[..n]
+            .iter()
+            .flatten()
+            .filter(|e| e.n == 1)
+            .map(|e| e.c[0].z)
             .collect();
-        let multi = (0..n).find(|&i| e[i].n > 1);
-        if let Some(m) = multi {
+        if let Some(m) = (0..n).find(|&i| e[i].is_some_and(|e| e.n > 1)) {
             if !singles.is_empty() {
                 // Each corner with several points takes the one nearest the others' mean depth.
                 let zref = singles.iter().sum::<f32>() / singles.len() as f32;
                 for i in 0..n {
-                    if e[i].n > 1 {
-                        pick[i] = nearest(e[i], zref);
+                    if let Some(ei) = e[i].filter(|e| e.n > 1) {
+                        pick[i] = nearest(ei, zref);
                     }
                 }
             } else {
                 // No single-point corner: try each point of the first such corner as the depth,
                 // the others nearest to it, and keep the set with the smallest depth spread.
+                let em = e[m].unwrap();
                 let mut best: Option<(f32, [usize; 4])> = None;
-                for j in 0..e[m].n {
-                    let z = e[m].c[j].z;
+                for j in 0..em.n {
+                    let z = em.c[j].z;
                     let mut p = [0usize; 4];
                     p[m] = j;
                     let (mut zmin, mut zmax) = (z, z);
                     for i in (0..n).filter(|&i| i != m) {
-                        p[i] = nearest(e[i], z);
-                        let zi = e[i].c[p[i]].z;
-                        zmin = zmin.min(zi);
-                        zmax = zmax.max(zi);
+                        if let Some(ei) = e[i] {
+                            p[i] = nearest(ei, z);
+                            let zi = ei.c[p[i]].z;
+                            zmin = zmin.min(zi);
+                            zmax = zmax.max(zi);
+                        }
                     }
                     let cost = zdist(zmin, zmax);
                     if best.is_none_or(|(c, _)| cost < c) {
@@ -231,16 +240,18 @@ pub fn lookup_poly(xy: &[(i32, i32)]) -> Option<[Precise; 4]> {
                 pick = best.unwrap().1;
             }
         }
-        let mut out = [Precise::default(); 4];
+        let mut out = [None; 4];
         for i in 0..n {
-            let c = e[i].c[pick[i]];
-            out[i] = Precise {
-                x: c.x,
-                y: c.y,
-                z: c.z,
-            };
+            out[i] = e[i].map(|e| {
+                let c = e.c[pick[i]];
+                Precise {
+                    x: c.x,
+                    y: c.y,
+                    z: c.z,
+                }
+            });
         }
-        Some(out)
+        out
     })
 }
 
@@ -255,10 +266,18 @@ pub fn end_frame() {
     });
 }
 
+/// Tests that record take this first (the table is global); recording is off again when the
+/// guard goes.
 #[cfg(test)]
-pub(crate) fn serial() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn serial() -> impl Drop {
+    struct Off(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+    impl Drop for Off {
+        fn drop(&mut self) {
+            set_enabled(false);
+        }
+    }
     static GATE: Mutex<()> = Mutex::new(());
-    GATE.lock().unwrap_or_else(|e| e.into_inner())
+    Off(GATE.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 #[cfg(test)]
@@ -268,25 +287,27 @@ mod tests {
     #[test]
     fn a_polygon_gets_its_corners_back_half_a_pixel_up() {
         let _g = serial();
+        set_enabled(true);
         end_frame();
         record(10, 20, 10.25, 20.75, 100.0, 0);
         record(30, 20, 30.5, 20.5, 110.0, 0);
         record(10, 40, 10.9, 40.1, 120.0, 0);
-        let p = lookup_poly(&[(10, 20), (30, 20), (10, 40)]).unwrap();
+        let p = lookup_poly(&[(10, 20), (30, 20), (10, 40)]);
         assert_eq!(
             p[0],
-            Precise {
+            Some(Precise {
                 x: 9.75,
                 y: 20.25,
                 z: 100.0
-            }
+            })
         );
-        assert_eq!(p[2].z, 120.0);
-        // A corner nobody projected: no precise polygon.
-        assert!(lookup_poly(&[(10, 20), (30, 20), (11, 40)]).is_none());
+        assert_eq!(p[2].unwrap().z, 120.0);
+        // A corner nobody projected has none; the others still do.
+        let p = lookup_poly(&[(10, 20), (30, 20), (11, 40)]);
+        assert!(p[0].is_some() && p[1].is_some() && p[2].is_none());
         // Gone after the frame.
         end_frame();
-        assert!(lookup_poly(&[(10, 20), (30, 20), (10, 40)]).is_none());
+        assert_eq!(lookup_poly(&[(10, 20), (30, 20), (10, 40)]), [None; 4]);
     }
 
     #[test]
@@ -308,14 +329,15 @@ mod tests {
     #[test]
     fn corners_with_several_points_agree_in_depth() {
         let _g = serial();
+        set_enabled(true);
         end_frame();
         // Corner (0,0) has two points: one at depth 100 (this model), one at 500 (another).
         record(0, 0, 0.2, 0.2, 500.0, 0);
         record(0, 0, 0.7, 0.7, 100.0, 0);
         record(10, 0, 10.5, 0.5, 105.0, 0);
         record(0, 10, 0.5, 10.5, 95.0, 0);
-        let p = lookup_poly(&[(0, 0), (10, 0), (0, 10)]).unwrap();
-        assert_eq!(p[0].z, 100.0);
+        let p = lookup_poly(&[(0, 0), (10, 0), (0, 10)]);
+        assert_eq!(p[0].unwrap().z, 100.0);
         // Every corner ambiguous: the set with the least depth spread.
         end_frame();
         for (k, (x, y)) in [(0, 0), (10, 0), (0, 10)].into_iter().enumerate() {
@@ -330,8 +352,8 @@ mod tests {
                 0,
             );
         }
-        let p = lookup_poly(&[(0, 0), (10, 0), (0, 10)]).unwrap();
-        let zs: Vec<f32> = p[..3].iter().map(|c| c.z).collect();
+        let p = lookup_poly(&[(0, 0), (10, 0), (0, 10)]);
+        let zs: Vec<f32> = p[..3].iter().map(|c| c.unwrap().z).collect();
         assert!(zs == [500.0; 3] || zs == [100.0, 101.0, 102.0], "{zs:?}");
     }
 }
@@ -380,7 +402,10 @@ mod gte_tests {
         let x = table(|t| find(t, sx, sy).map(|e| (e.c[0].x, e.c[0].y, e.c[0].z)));
         set_enabled(false);
         let (x, y, z) = x.unwrap();
-        assert!((x - 169.472).abs() < 0.01 && (y - 114.374).abs() < 0.01, "{x} {y}");
+        assert!(
+            (x - 169.472).abs() < 0.01 && (y - 114.374).abs() < 0.01,
+            "{x} {y}"
+        );
         assert_eq!(z, 1000.0);
     }
 }

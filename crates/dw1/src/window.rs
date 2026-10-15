@@ -475,7 +475,14 @@ impl Window {
     }
 
     fn present(&mut self) {
-        let shown = psyq::gpu::with(|g| g.read_display(&mut self.buf));
+        // At a render scale above 1 (`DW1_SCALE`), the HD surface's picture.
+        let shown = psyq::gpu::with(|g| {
+            if g.scale() > 1 {
+                g.read_display_hd(&mut self.buf)
+            } else {
+                g.read_display(&mut self.buf)
+            }
+        });
         let picture = shown.map(|(w, h)| Picture {
             pixels: &self.buf[..w * h],
             w: w as u32,
