@@ -268,9 +268,9 @@ impl Replay {
     /// alone runs ahead of the PS1's, which changed when fish bit.
     pub fn ps1_vcount(&self, native: u32) -> Option<u32> {
         let last = self.polls.get(self.next.checked_sub(1)?)?;
-        let v = i64::from(last.vblank) + i64::from(native) - i64::from(self.last_native)
-            - self.vblank_offset;
-        u32::try_from(v).ok()
+        // Wrapping, as the PS1's 32-bit counter does.
+        let since = native.wrapping_sub(self.last_native);
+        Some(last.vblank.wrapping_add(since).wrapping_sub(self.vblank_offset as u32))
     }
 
     /// The native VBlank at which the recording ends, once every poll has been consumed: the
@@ -417,7 +417,11 @@ mod tests {
                 .contains("no card1_sha1")
         );
         replay.cards[0] = Some("fresh".into());
+        assert_eq!(replay.ps1_vcount(500), None);
         assert_eq!(replay.poll("MOV_playMovie", 507), Ok(0));
+        // The PS1's count: the poll's 1651 less 1144, plus the native VBlanks since it.
+        assert_eq!(replay.ps1_vcount(507), Some(507));
+        assert_eq!(replay.ps1_vcount(520), Some(520));
         assert!(replay.timing_note().is_none());
         assert!(
             replay
@@ -427,6 +431,11 @@ mod tests {
         );
         assert_eq!(replay.poll("MOV_playMovie", 510), Ok(0x800));
         assert!(replay.timing_note().unwrap().contains("poll 1"));
+        assert_eq!(replay.ps1_vcount(515), Some(1653 + 5 - 1144));
+        // Across the native counter's wrap.
+        replay.last_native = u32::MAX;
+        assert_eq!(replay.ps1_vcount(2), Some(1653 + 3 - 1144));
+        replay.last_native = 510;
         // Both polls used: the end is the last poll's frame plus 1654 - 1653.
         assert_eq!(replay.end_vblank(), Some(511));
         assert!(

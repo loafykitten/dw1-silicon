@@ -92,8 +92,8 @@ local active = nil      -- { buttons = {bits}, last = vblank at which to release
 local waitUntil = nil
 local waitWord = nil    -- { index into ram32, value, last vblank } for waitne
 local ram32 = ffi.cast('uint32_t*', PCSX.getMemPtr())
-local reel = nil        -- { start, last, pressed } for autoreel
-local curl = nil        -- { last, releaseAt, nextTap } for autocurl
+local reel = nil        -- { start, last, pressed (the press's VBlank or false) } for autoreel
+local curl = nil        -- { last, pressedAt, releaseAt, nextTap } for autocurl
 local function ramI32(addr)
     local v = ram32[bit.rshift(bit.band(addr, 0x1FFFFF), 2)]
     return v >= 0x80000000 and v - 0x100000000 or v
@@ -107,10 +107,24 @@ KEEP_EXPLORE_COUNT = PCSX.Events.createEventListener('GPU::Vsync', function()
     if not takenOver then preCount = preCount + 1 end
 end)
 local function cdTouch() lastCd = takenOver and vblank or preCount end
+-- A blocking CdReadSync(0) can outlast the 60 VBlanks, so a call counts as CD activity until it
+-- returns: a one-shot breakpoint on its return address (the libcd calls don't nest). Spent
+-- return breakpoints are removed from tick, outside their own callback.
+local cdSyncRet, cdSyncSpent = nil, {}
+local function cdSyncEnter()
+    cdTouch()
+    if cdSyncRet then return end
+    cdSyncRet = PCSX.addBreakpoint(PCSX.getRegisters().GPR.n.ra, 'Exec', 4, 'explore CdReadSync return',
+        function()
+            cdTouch()
+            cdSyncSpent[#cdSyncSpent + 1], cdSyncRet = cdSyncRet, nil
+            return false
+        end)
+end
 PCSX.settings.emulator.Debug.Debug = true
 KEEP_EXPLORE_CD = {
     PCSX.addBreakpoint(0x800B2BB4, 'Exec', 4, 'explore CdRead', cdTouch),
-    PCSX.addBreakpoint(0x800B2CB4, 'Exec', 4, 'explore CdReadSync', cdTouch),
+    PCSX.addBreakpoint(0x800B2CB4, 'Exec', 4, 'explore CdReadSync', cdSyncEnter),
     PCSX.addBreakpoint(0x800B23C0, 'Exec', 4, 'explore CdSearchFile', cdTouch),
 }
 local needState = true
@@ -139,30 +153,35 @@ local function tick()
     if waitWord and (ram32[waitWord[1]] ~= waitWord[2] or vblank >= waitWord[3]) then
         waitWord = nil
     end
+    -- autoreel and autocurl log a press when it ends, with the VBlanks it was really held (a
+    -- deadline or the rod's state can cut it short), so inputs.log replays what ran.
+    local function logPress(from)
+        log:write(string.format("    { %d, %d, 1, %d, 'CROSS' },\n", from, from, vblank - from))
+        log:flush()
+    end
     if reel then
         local rodState = ramI32(0x8007B41C)
         if vblank >= reel.last or rodState ~= 0xB then
-            if reel.pressed then pad.clearOverride(B.CROSS) end
+            if reel.pressed then pad.clearOverride(B.CROSS); logPress(reel.pressed) end
             reel = nil
         elseif (vblank - reel.start) % 3 == 0 then
             local fish, level = ramI32(0x8007B488), ramI32(0x8007B504)
             local press = level <= reel.hi and not (fish == 50 and level > reel.run)
+            if reel.pressed then logPress(reel.pressed) end
             if press then
                 pad.setOverride(B.CROSS)
-                log:write(string.format("    { %d, %d, 1, 3, 'CROSS' },\n", vblank, vblank))
-                log:flush()
             elseif reel.pressed then
                 pad.clearOverride(B.CROSS)
             end
-            reel.pressed = press
+            reel.pressed = press and vblank or nil
         end
     end
     if curl then
         if curl.releaseAt and vblank >= curl.releaseAt then
-            pad.clearOverride(B.CROSS); curl.releaseAt = nil
+            pad.clearOverride(B.CROSS); logPress(curl.pressedAt); curl.releaseAt = nil
         end
         if vblank >= curl.last then
-            if curl.releaseAt then pad.clearOverride(B.CROSS) end
+            if curl.releaseAt then pad.clearOverride(B.CROSS); logPress(curl.pressedAt) end
             curl = nil
         elseif not curl.releaseAt and vblank >= curl.nextTap then
             local mem8 = ffi.cast('int8_t*', PCSX.getMemPtr())
@@ -173,14 +192,13 @@ local function tick()
             if state == 1 or state == 15 or state == 19 or (ours and (state == 5 or state == 6))
                 or (ours and state == 8 and power >= 1900) then
                 pad.setOverride(B.CROSS)
-                curl.releaseAt, curl.nextTap = vblank + 4, vblank + 30
-                log:write(string.format("    { %d, %d, 1, 4, 'CROSS' },\n", vblank, vblank))
-                log:flush()
+                curl.pressedAt, curl.releaseAt, curl.nextTap = vblank, vblank + 4, vblank + 30
             end
         end
     end
     while not active and not waitUntil and not waitWord and not reel and not curl do
-        if #queue == 0 and vblank - lastCd < 60 then return end
+        for i = #cdSyncSpent, 1, -1 do cdSyncSpent[i]:remove(); cdSyncSpent[i] = nil end
+        if #queue == 0 and (cdSyncRet or vblank - lastCd < 60) then return end
         if #queue == 0 then
             if needState then
                 print(string.format('EXPLORE state vblank=%d %s', vblank, status()))

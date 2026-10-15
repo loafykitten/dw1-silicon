@@ -1,8 +1,10 @@
 -- DW1ROUTE_PROFILE=debug-gym (Phase 9, stream fishcurl): TRN2, the gyms outside File City. After
 -- route-master99-yard-schedule.lua and route-master99-warp-schedule.lua, on the fixture
 -- p9-fishcurl-debug-master99-flute (tools/oracle/debug_fixture.py --keep 45 --keep 46 --item 115:
--- Master99's save with a Blue Flute added). Mr. Warp to Dragon Eye Lake (08:3x, so the fishing
--- Seadramon swims there too), the Blue Flute at the shore, the Lake Guardian's ride to Beetle Land,
+-- Master99's save with a Blue Flute added; the certified card was made before --item gave the
+-- slot a name-texture index as giveItem does, so its flute's index is 0xFF where today's tool
+-- writes 25; the replay is certified on the old card, so keep it). Mr. Warp to Dragon Eye Lake
+-- (08:3x, so the fishing Seadramon swims there too), the Blue Flute at the shore, the Lake Guardian's ride to Beetle Land,
 -- and a Normal session at the stump gym's Striking sign (BETL03: TRN2 loads on maps 99, 107, 108
 -- and 165, map.c loadTrainingLibrary). Derived with oracle/explore.lua.
 local PRESSES = {
