@@ -125,6 +125,12 @@ fn display<R>(f: impl FnOnce(&mut Display) -> R) -> R {
     f(&mut DISPLAY.lock().unwrap())
 }
 
+/// The display's width and height (`GsInitGraph`), as libgs keeps them for the dividing
+/// handlers [obs: 320 and 240 in their work area for DW1's display].
+pub(crate) fn display_size() -> (u32, u32) {
+    display(|d| (d.width as u16 as u32, d.height as u16 as u32))
+}
+
 impl Display {
     /// Points the drawing environment at the active buffer and sends it [obs: GsSwapDispBuff
     /// calls GsSetDrawBuffClip then GsSetDrawBuffOffset, each a PutDrawEnv].

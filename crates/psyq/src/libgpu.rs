@@ -454,6 +454,46 @@ pub unsafe extern "C" fn SetDrawOffset(p: *mut DrOffset, ofs: *const u16) {
     }
 }
 
+/// libgpu `DR_LOAD`: a CPU-to-VRAM copy of up to 13 words.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DrLoad {
+    pub tag: u32,
+    pub code: [u32; 3],
+    pub p: [u32; 13],
+}
+
+/// `SetDrawLoad(p, r)`: a `DR_LOAD` primitive that copies the pixels the caller puts in `p.p`
+/// into VRAM rectangle `r` [doc: libgpu reference; GP0(A0h) copy CPU to VRAM, GP0(01h) clear
+/// cache]. [obs: p9-render-drawload, 160 rectangles] The command words are GP0(A0h), then the
+/// rectangle's x and y, then its width and height (each halfword as given); the pixel data
+/// (`(w * h + 1) / 2` words) is left to the caller, and the word after it becomes GP0(01h); the
+/// tag's length byte counts all of that (the link is kept). The game's rectangles are 16 x 1 (a
+/// CLUT row: 8 words). For more than 12 words the SDK instead writes a one-word tag with a null
+/// link, which nothing in the game asks for, so it stops the program.
+///
+/// # Safety
+/// `p` must point to a `DR_LOAD` and `r` to a `RECT`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SetDrawLoad(p: *mut DrLoad, r: *const Rect) {
+    unsafe {
+        let r = &*r;
+        let words = (i32::from(r.w) * i32::from(r.h) + 1) >> 1;
+        if words as u32 > 12 {
+            crate::trap::unimplemented("SetDrawLoad with more than 12 words of pixels");
+        }
+        let words = words as usize;
+        let w = p.cast::<u32>();
+        w.cast::<u8>().add(3).write(4 + words as u8);
+        w.add(1).write(0xA000_0000);
+        w.add(2)
+            .write(u32::from(r.x as u16) | u32::from(r.y as u16) << 16);
+        w.add(3)
+            .write(u32::from(r.w as u16) | u32::from(r.h as u16) << 16);
+        w.add(4 + words).write(0x0100_0000);
+    }
+}
+
 /// `AddPrim(ot, p)`: puts primitive `p` at the head of ordering-table entry `ot`: `p` links to
 /// what `ot` linked to, `ot` links to `p`; both keep their length bytes [hdr: addPrim; obs].
 ///

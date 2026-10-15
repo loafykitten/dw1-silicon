@@ -162,3 +162,15 @@ written down as accepted. That is the first release.
   `/Users/fenn/Developer/dw1-silicon-wt/` (render: the missing GsTMDfast handlers; fishcurl:
   fishing, curling, recruiting, the other gyms; arena: tournaments and Battle Mode). Three
   emulators run concurrently and deterministically (measured).
+- **Render stream** (2026-10-15, `docs/phase9-render.md`): audit finding 9 and `SetDrawLoad`
+  done. Every primitive kind the disc's 345 TMDs use has a native handler (`libgs/tmd.rs`: F3L,
+  F4L, G4L, TF3L, TF4L, TNF3, TNF4 with mode 0x2D, TNG3, TNG4 alongside TG3L/TG4L), the arenas'
+  `GsDIV1` floors divide (`libgs/divide.rs`: TNF3/TNF4/TNG3/TNG4, in the scratchpad as the SDK
+  does), hidden objects are skipped, `GsOT.offset` is honoured, and `SetDrawLoad` builds the
+  EFE's CLUT loads. Proven on the real SDK with synthetic objects through `call-sdk.lua` (new:
+  scratchpad access, `DW1_RESTORE`): 5,300 `GsSortObject4J` requests and 160 `SetDrawLoad`
+  rectangles match word for word (packets, table, scratchpad, GTE), and every disc model sorts
+  natively without a stop. Found on the way: the SDK drops polygons whose projection has a FLAG
+  error (the old TG handlers didn't), writes some packet words before its tests, and subtracts
+  `GsOT.offset`.
+

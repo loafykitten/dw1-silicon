@@ -10,9 +10,6 @@ use crate::trap::stubs;
 // libc: process exit (returns to the BIOS on the PS1). Renamed `dw1_exit` by dw1_native.h.
 stubs! { dw1_exit }
 
-// libgpu
-stubs! { SetDrawLoad }
-
 // libgs: the TMD primitive handlers GsSortObject4J dispatches to through GsFCALL4.
 stubs! {
     GsTMDdivTF3NL GsTMDdivTF4L GsTMDdivTF4NL GsTMDdivTG3NL GsTMDdivTG4NL GsTMDfastF4NL

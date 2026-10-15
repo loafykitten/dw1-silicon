@@ -28,20 +28,24 @@
 //! version), so it stops the program here, as does any other flag bit (two-sided, gradation).
 //!
 //! What every handler does to each primitive of its run [obs]:
-//! - vertices 0-2 through RTPT, then NCLIP: 0 or less drops the primitive (a quad is judged on
-//!   its first triangle);
-//! - a quad's fourth vertex through RTPS, then AVSZ4; a triangle's AVSZ3. The packet goes at the
+//! - vertices 0-2 through RTPT: a FLAG error (bit 31: a coordinate or depth out of range) drops
+//!   the primitive; then NCLIP: 0 or less drops it (a quad is judged on its first triangle);
+//! - a quad's fourth vertex through RTPS (a FLAG error drops it), then AVSZ4; a triangle's
+//!   AVSZ3. The packet goes at the
 //!   head of ordering-table entry `(OTZ - GsOT.offset) >> shift`, whatever the table's length
 //!   (an index past it, or an OTZ below the offset, writes outside the table: natively that
 //!   stops the program); `GsOT.point` unused;
 //! - the colours: lit kinds through NCCS (flat: the first normal) or NCCT and NCCS (Gouraud: one
-//!   normal per vertex), with RGBC = the mode byte as the GPU command over the primitive's colour
-//!   word's red, green and blue (textured: 0x80 each, they have no colour word); unlit kinds
+//!   normal per vertex), with RGBC = the colour word as stored (untextured: its high byte, the
+//!   mode byte on the disc, becomes the GPU command) or the mode byte over 0x808080 (textured,
+//!   which have no colour word); unlit kinds
 //!   copy their colour words, the first with the command (the mode byte without its raw-texture
 //!   bit) over its high byte, the others as stored;
 //! - the packet: the GPU primitive of the same shape (`POLY_F3` .. `POLY_GT4`): flat ones the
 //!   colour then per vertex its XY (and texture word, as stored); Gouraud ones per vertex colour,
-//!   XY (and texture word).
+//!   XY (and texture word);
+//! - some packet words are written before those tests, so a dropped primitive leaves them past
+//!   the work base (`EARLY_*`, per handler).
 //!
 //! Natively the primitive data holds the PS1's bytes, the packet area is `GsGetWorkBase()`'s, and
 //! ordering-table links are 24-bit offsets in the link window (`memory::link_of`).
@@ -71,7 +75,7 @@ impl Kind {
     }
 
     /// Word offset (from the header) of the colour words: after the texture words.
-    fn colour_at(self) -> usize {
+    pub fn colour_at(self) -> usize {
         1 + if self.textured { self.nv } else { 0 }
     }
 
@@ -155,7 +159,9 @@ fn check_header(name: &str, header: u32, flag: u8, base_mode: u8) {
 /// [obs: p9-render-s4j-fast, random offsets; the game's are always 0]. Below the offset it wraps
 /// to a huge index, past the table.
 pub(crate) fn ot_index(otz: u32, offset: u32, shift: i32) -> u32 {
-    otz.wrapping_sub(offset).checked_shr(shift as u32).unwrap_or(0)
+    otz.wrapping_sub(offset)
+        .checked_shr(shift as u32)
+        .unwrap_or(0)
 }
 
 /// Packet words a handler writes before its tests [obs: the words a dropped primitive leaves]:
@@ -222,20 +228,8 @@ unsafe fn fast_run(
                 }
             }
             if early & EARLY_COLOUR != 0 {
-                pk.add(1).write((mode & !1) << 24 | (p.add(kind.colour_at()).read() & 0x00FF_FFFF));
-            }
-            if std::env::var_os("DW1_DIAG").is_some() {
-                let sz: Vec<u32> = (0..4).map(|k| gte.mfc2(dreg::SZ0 + k)).collect();
-                let mut g2 = gte.clone();
-                g2.execute(cmd::NCLIP);
-                let nclip = g2.mfc2(dreg::MAC0) as i32;
-                let mut f4 = 0;
-                if kind.nv == 4 {
-                    load(&mut g2, &[vertex(3)]);
-                    g2.execute(cmd::RTPS);
-                    f4 = g2.cfc2(31);
-                }
-                eprintln!("DIAG mode={mode:02x} flagt={flag_t:08x} flag4={f4:08x} nclip={nclip} sz={sz:?} xy={:08x},{:08x},{:08x}", sxy[0], sxy[1], sxy[2]);
+                pk.add(1)
+                    .write((mode & !1) << 24 | (p.add(kind.colour_at()).read() & 0x00FF_FFFF));
             }
             // [obs] A projection with an error (FLAG bit 31: a coordinate or depth out of range)
             // drops the primitive.
@@ -268,12 +262,6 @@ unsafe fn fast_run(
                 gte.execute(cmd::AVSZ3);
             }
             let ot_index = ot_index(gte.mfc2(dreg::OTZ), offset, shift);
-            if std::env::var_os("DW1_DIAG").is_some() {
-                eprintln!("DIAGOTZ {} {}", gte.mfc2(dreg::OTZ), ot_index >= ot_entries);
-                if ot_index >= ot_entries {
-                    continue;
-                }
-            }
             if ot_index >= ot_entries {
                 // The SDK writes past the table [obs]; natively that's memory we don't own.
                 unimplemented("GsTMDfast* with OTZ past the ordering table");

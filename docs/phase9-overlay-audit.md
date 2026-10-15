@@ -3,8 +3,9 @@
 Read-only audit by gpt-6.1-sol (high) of std, vs, fish, evl, doo2, dooa, kar, dget, trn2, eab and
 endi for the native bug classes that broke the earlier overlays. Findings 1-8, 10, 11, 13-16
 were fixed or handled in the decomp fork (9102d79); finding 9 (missing `GsTMDfast*` handlers and
-sorter restrictions for arenas, result scenes, Seadramon and curling) and `SetDrawLoad` are still
-open. Status per finding: `docs/phase9-plan.md`, Progress.
+sorter restrictions for arenas, result scenes, Seadramon and curling) and `SetDrawLoad` were done
+by the render stream (`docs/phase9-render.md`). Status per finding: `docs/phase9-plan.md`,
+Progress.
 
 
 **The main playthrough blockers are in EVL and DOOA/DOO2.** STD and VS also have definite initialization and rendering blockers. EAB can corrupt unrelated native globals, including an ending buffer pointer.

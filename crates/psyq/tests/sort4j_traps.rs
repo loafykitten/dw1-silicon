@@ -1,9 +1,12 @@
-//! `GsSortObject4J` and its handlers stop the program on what the captures never showed (other
-//! mode or flag bits in a handler's slot, indices past an object's lists) instead of drawing
-//! something made up. Each case runs in a child process (this test binary again, with
+//! `GsSortObject4J` and its handlers stop the program on what the captures never showed or the
+//! real SDK has no sound answer for (other mode or flag bits in a handler's slot, indices past an
+//! object's lists, attributes the game never sets, a `DR_LOAD` too small for its rectangle)
+//! instead of drawing something made up. Each case runs in a child process (this test binary again, with
 //! `DW1_TRAP_CASE` set) because the stop is an abort.
 
-use psyq::libgs::{GsDobj2, GsOt, GsSortObject4J, GsTMDfastTG3L, GsTMDfastTG4L, Vert};
+use psyq::libgs::{
+    GsDobj2, GsOt, GsSortObject4J, GsTMDdivTNF4, GsTMDfastTG3L, GsTMDfastTG4L, GsTMDfastTNF4, Vert,
+};
 use psyq::memory::ptr32_of;
 
 /// The object's data: in the program's data segment, like the game's (32-bit pointers to it
@@ -43,7 +46,8 @@ fn run_case(name: &str) {
         let pk = (&raw mut PACKETS).cast::<u32>();
         match name {
             "semi_mode" => {
-                // The raw-texture bit (mode 0x3D) shares TG4L's slot and was never captured; the
+                // The raw-texture bit on a lit primitive (mode 0x3D, flag 0) shares TG4L's slot;
+                // the real SDK runs away on it (tools/oracle/tmd_requests.py, `--set bits`). The
                 // header is checked before anything else is read.
                 PRIM = triangle(0x3D, 0, [(0, 0), (0, 1), (1, 0)]);
                 GsTMDfastTG4L((&raw const PRIM).cast(), vp, vp, pk, 1, 0, &mut ot, pk);
@@ -88,6 +92,39 @@ fn run_case(name: &str) {
                 };
                 GsSortObject4J(&mut obj, &mut ot, 0, pk);
             }
+            "unlit_without_raw" => {
+                // An unlit quad without the raw-texture bit (mode 0x2C, flag 1): never on the
+                // disc, and the SDK runs away on such.
+                PRIM = triangle(0x2C, 1, [(0, 0), (0, 1), (1, 0)]);
+                GsTMDfastTNF4((&raw const PRIM).cast(), vp, vp, pk, 1, 0, &mut ot, pk);
+            }
+            "divided_alone" => {
+                // A dividing handler outside a GsDIV1 sort (no divide level; any other level is
+                // unobserved).
+                PRIM = triangle(0x2C, 0, [(0, 0), (0, 1), (1, 0)]);
+                GsTMDdivTNF4((&raw const PRIM).cast(), vp, vp, pk, 1, 0, &mut ot, pk);
+            }
+            "attribute" => {
+                // GsDIV2: the game sets only 0, GsDIV1 and display off.
+                let mut obj = GsDobj2 {
+                    attribute: 0x400,
+                    coord2: std::ptr::null_mut(),
+                    tmd: (&raw mut RECORD).cast(),
+                    id: 0,
+                };
+                GsSortObject4J(&mut obj, &mut ot, 0, pk);
+            }
+            "draw_load" => {
+                // 32 x 1 pixels: more than a DR_LOAD's 12 words of room.
+                let mut p = psyq::libgpu::DrLoad::default();
+                let r = psyq::libgpu::Rect {
+                    x: 0,
+                    y: 480,
+                    w: 32,
+                    h: 1,
+                };
+                psyq::libgpu::SetDrawLoad(&mut p, &r);
+            }
             other => panic!("unknown case {other}"),
         }
     }
@@ -99,7 +136,15 @@ fn unobserved_primitives_stop_the_program() {
         run_case(&case);
         return;
     }
-    for case in ["semi_mode", "two_sided", "bad_index"] {
+    for case in [
+        "semi_mode",
+        "two_sided",
+        "bad_index",
+        "unlit_without_raw",
+        "divided_alone",
+        "attribute",
+        "draw_load",
+    ] {
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",

@@ -30,10 +30,12 @@ GT3/GT4), each with the semi-transparency and raw-texture bits varied, mixed in 
 
 Sets:
 - `fast`: attribute 0 (the non-dividing handlers), random lighting, matrices, positions
-  (including behind the eye, off screen and huge), shifts and tables.
+  (including behind the eye, off screen and huge), shifts, tables and `GsOT` offsets.
 - `div`: attribute 0x200 (`GsDIV1`, the arenas' floor) on the unlit textured kinds the arenas
   use (DIV handlers TNF3/TNF4/TNG3/TNG4), random as above.
 - `attr`: display off (bit 31) with and without other bits.
+- `bits`: each kind with and without the semi-transparency bit, one small object per request.
+- `bounds`: the dividing handlers' screen-edge and near-depth tests at their edges.
 - `explore`: a few simple objects (identity rotation, one primitive) to see the shape of the
   output while implementing.
 """
@@ -232,7 +234,7 @@ class Gen:
         return verts, norms, out, len(prims), gpu_words
 
     def request(self, verts, norms, prim_words, n_prim, gpu_words, attribute, shift, ot_len, gte, factor,
-                offset=0, point=0, scratch=True):
+                offset=0, point=0, scratch=True, extra_ins=()):
         r = self.r
         n_ot = 1 << ot_len
         obj = struct.pack('<IIII', attribute, 0, BUF + REC, r.getrandbits(32))
@@ -253,6 +255,7 @@ class Gen:
             ('B+%x' % ORG, ob.hex()), ('B+%x' % PACKETS, 'a5' * pk_len),
             ('%x' % G_OUT_PACKET_P, struct.pack('<I', BUF + PACKETS).hex()),
         ]
+        ins += list(extra_ins)
         outs = [('B+%x' % PACKETS, pk_len), ('B+%x' % ORG, len(ob)), ('%x' % G_OUT_PACKET_P, 4),
                 ('B+%x' % OBJ, 16), ('B+%x' % OT, 20), ('B+%x' % PRIMS, len(pb)), ('%x' % G_LIBGS, 0xF0)]
         if scratch:
@@ -298,7 +301,9 @@ def gen_fast(seed, scale):
         ks = r.sample(kinds, r.choice([1, 1, 2, 3, len(kinds)]))
         verts, norms, prims, n, gw = g.obj(ks, r.randint(1, 24), tame, 0, g.bits(ks, i % 3 == 0))
         shift, ot_len = g.shift_and_len(tame)
-        off, pt = (0, 0) if r.random() < 0.8 else (r.getrandbits(16), r.getrandbits(16))
+        # GsOT.offset is subtracted from OTZ: mostly 0 (the game's), sometimes small, rarely any.
+        off = r.choice([0] * 8 + [r.randint(0, 400), r.getrandbits(16)])
+        pt = r.choice([0, 0, r.getrandbits(16)])
         lines.append(g.request(verts, norms, prims, n, gw, 0, shift, ot_len, g.gte(tame), 1, off, pt,
                                scratch=i % 10 == 0))
     return lines
@@ -310,10 +315,13 @@ def gen_div(seed, scale):
     lines = []
     for i in range(800 * scale):
         tame = r.random() < 0.8
+        # GsOT.offset 0 or small: an OTZ below the offset sends the dividing handlers' writes far
+        # past the table, which can take the emulated machine down.
+        off = r.choice([0] * 9 + [r.randint(0, 64)])
         ks = r.sample(DIV_KINDS, r.choice([1, 1, 2, 4]))
         verts, norms, prims, n, gw = g.obj(ks, r.randint(1, 12), tame, 0x200, g.bits(ks, i % 3 == 0))
         shift, ot_len = g.shift_and_len(tame)
-        lines.append(g.request(verts, norms, prims, n, gw, 0x200, shift, ot_len, g.gte(tame), 4))
+        lines.append(g.request(verts, norms, prims, n, gw, 0x200, shift, ot_len, g.gte(tame), 4, off))
     return lines
 
 
@@ -333,6 +341,68 @@ def gen_attr(seed, scale):
             verts, norms, prims, n, gw = g.obj(ks, r.randint(1, 8), True, attribute, g.bits(ks, False))
             shift, ot_len = g.shift_and_len(True)
             lines.append(g.request(verts, norms, prims, n, gw, attribute, shift, ot_len, g.gte(True), 32))
+    return lines
+
+
+def gen_bounds(seed, scale):
+    """The dividing handlers' screen and near tests at their edges: identity rotation, H = 1000,
+    z = 1000 (screen = local + offset exactly), small front-facing squares and triangles placed
+    one pixel either side of each screen edge, under several screen offsets and libgs screen
+    sizes (HWD0, VWD0); then depths either side of H/2."""
+    g = Gen(seed)
+    r = g.r
+    lines = []
+
+    def gte(ofx, ofy, tz, h=1000):
+        c = [0x1000, 0, 0x1000, 0, 0x1000, 0, 0, tz] + [0, 0, 0, 0, 0] + [0x800] * 3 + \
+            [0x1000, 0, 0x1000, 0, 0x1000] + [0, 0, 0] + [ofx & M32, ofy & M32, h, 0xEF9E, 0x01400000, 0x155,
+                                                           0x100, 0]
+        return ','.join(['0'] * 15 + ['x'] + ['0'] * 12 + ['x'] * 3 + ['0'] + ['%x' % x for x in c])
+
+    def prim(kind, n):
+        flag, mode, nv, lit, tex, gour, olen = KINDS[kind]
+        mode |= r.choice([0, 2])
+        words = [g.tex_word() for _ in range(nv)]
+        words += [g.colour(mode) for _ in range(nv if gour else 1)]
+        idx = list(range(nv)) + ([0] if nv == 3 else [])
+        words += [idx[k] | idx[k + 1] << 16 for k in range(0, len(idx), 2)]
+        return [mode << 24 | flag << 16 | 1] + words, 1 + GPU_WORDS[kind]
+
+    def add(kind, x0, y0, d, ofx=0, ofy=0, tz=1000, z=(0, 0, 0, 0), size=None, h=1000):
+        verts = [[x0, y0, z[0]], [x0 + d, y0, z[1]], [x0, y0 + d, z[2]], [x0 + d, y0 + d, z[3]]]
+        p, gw = prim(kind, 1)
+        extra = []
+        if size:
+            extra = [('%x' % G_LIBGS, struct.pack('<II', *size).hex())]
+        lines.append(g.request(verts, [[0, 0, 4096]], p, 1, gw, 0x200, 2, 8, gte(ofx, ofy, tz, h), 4,
+                               extra_ins=extra))
+
+    for kind in DIV_KINDS:
+        for d in (1, 5):
+            for (ofx, ofy, w, h, size) in [(0, 0, 320, 240, None), (100, -50, 320, 240, None),
+                                           (0, 0, 256, 200, (256, 200)), (37, 11, 320, 240, None)]:
+                left, top = ofx - w // 2, ofy - h // 2
+                right, bottom = left + w, top + h
+                ys = top + h // 2
+                xs = left + w // 2
+                for edge in (-1, 0, 1):
+                    add(kind, left - d + edge, ys, d, ofx << 16, ofy << 16, size=size)   # max x = left + edge
+                    add(kind, right + edge, ys, d, ofx << 16, ofy << 16, size=size)      # min x = right + edge
+                    add(kind, xs, top - d + edge, d, ofx << 16, ofy << 16, size=size)    # max y = top + edge
+                    add(kind, xs, bottom + edge, d, ofx << 16, ofy << 16, size=size)     # min y = bottom + edge
+            # Fractional screen offsets.
+            for frac in (0x8000, 0xFFFF, 0x0001):
+                for edge in (-1, 0, 1):
+                    add(kind, -160 - d + edge, 0, d, frac, 0)
+                    add(kind, 160 + edge, 0, d, -frac, 0)
+        # Depths about H/2 (500): all equal, and one vertex either side.
+        for sz in (498, 499, 500, 501, 502):
+            add(kind, -10, -10, 20, tz=sz)
+            add(kind, -10, -10, 20, tz=500, z=(sz - 500, 0, 0, 0))
+            add(kind, -10, -10, 20, tz=500, z=(0, 0, 0, sz - 500))
+        # And with an odd H (1001: is the depth compared with H/2 rounded down, or doubled?).
+        for sz in (499, 500, 501):
+            add(kind, -10, -10, 20, tz=sz, h=1001)
     return lines
 
 
@@ -400,9 +470,10 @@ def main():
     ap.add_argument('out')
     ap.add_argument('--seed', type=int, default=20261015)
     ap.add_argument('--scale', type=int, default=1)
-    ap.add_argument('--set', choices=['fast', 'div', 'attr', 'explore', 'bits'], default='fast')
+    ap.add_argument('--set', choices=['fast', 'div', 'attr', 'explore', 'bits', 'bounds'], default='fast')
     a = ap.parse_args()
-    gen = {'fast': gen_fast, 'div': gen_div, 'attr': gen_attr, 'explore': gen_explore, 'bits': gen_bits}[a.set]
+    gen = {'fast': gen_fast, 'div': gen_div, 'attr': gen_attr, 'explore': gen_explore, 'bits': gen_bits,
+           'bounds': gen_bounds}[a.set]
     lines = gen(a.seed, a.scale)
     with open(a.out, 'w') as f:
         f.write('\n'.join(lines) + '\n')

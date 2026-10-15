@@ -90,7 +90,19 @@ fn tmd_mode_bits_match_the_real_sdk() {
     oracle::run(&dir("p9-render-s4j-bits"));
 }
 
+#[cfg(not(have_libgs_tmd_bounds_capture))]
+#[test]
+#[ignore = "needs captures/oracle-runs/p9-render-s4j-bounds; local only"]
+fn divide_screen_and_near_tests_match_the_real_sdk() {}
+
+#[cfg(have_libgs_tmd_bounds_capture)]
+#[test]
+fn divide_screen_and_near_tests_match_the_real_sdk() {
+    oracle::run(&dir("p9-render-s4j-bounds"));
+}
+
 #[cfg(any(
+    have_libgs_tmd_bounds_capture,
     have_libgs_tmd_fast_capture,
     have_libgs_tmd_div_capture,
     have_libgs_tmd_attr_capture,
@@ -101,8 +113,8 @@ mod oracle {
     use psyq::libgs::{
         GsDobj2, GsGetWorkBase, GsOt, GsSetWorkBase, GsSortObject4J, GsTMDdivTNF3, GsTMDdivTNF4,
         GsTMDdivTNG3, GsTMDdivTNG4, GsTMDfastF3L, GsTMDfastF4L, GsTMDfastG4L, GsTMDfastTF3L,
-        GsTMDfastTF4L, GsTMDfastTG3L, GsTMDfastTG4L, GsTMDfastTNF3, GsTMDfastTNF4,
-        GsTMDfastTNG3, GsTMDfastTNG4, TmdHandler,
+        GsTMDfastTF4L, GsTMDfastTG3L, GsTMDfastTG4L, GsTMDfastTNF3, GsTMDfastTNF4, GsTMDfastTNG3,
+        GsTMDfastTNG4, TmdHandler,
     };
     use psyq::memory::{LINK_END, dw1_ps1_ram, dw1_scratchpad, link_of, ps1_ram_ptr, ptr32_of};
     use std::collections::BTreeMap;
@@ -116,6 +128,7 @@ mod oracle {
     const PACKETS: u32 = BUF + 0x3000;
     const SCRATCHPAD: u32 = 0x1F80_0000;
     const OUT_PACKET_P: u32 = 0x8013_6FE4;
+    const LIBGS_HWD0: u32 = 0x8013_6F10;
 
     fn unhex(s: &str) -> Vec<u8> {
         (0..s.len() / 2)
@@ -188,12 +201,9 @@ mod oracle {
             (63, GsTMDdivTNG4),
         ];
         unsafe {
-            for s in 0..psyq::globals::GS_FCALL_SLOTS {
-                GsFCALL4[s] = None;
-            }
+            (&raw mut GsFCALL4).write([None; psyq::globals::GS_FCALL_SLOTS]);
             for (slot, f) in slots {
-                GsFCALL4[slot] =
-                    Some(std::mem::transmute::<TmdHandler, unsafe extern "C" fn()>(f));
+                GsFCALL4[slot] = Some(std::mem::transmute::<TmdHandler, unsafe extern "C" fn()>(f));
             }
         }
     }
@@ -224,10 +234,7 @@ mod oracle {
                 let (a, n) = v.split_once(':').unwrap();
                 r.outs.push((addr(a), word(n) as usize));
             } else if let Some(v) = f.strip_prefix("gtein=") {
-                r.gte = v
-                    .split(',')
-                    .map(|x| (x != "x").then(|| word(x)))
-                    .collect();
+                r.gte = v.split(',').map(|x| (x != "x").then(|| word(x))).collect();
             } else {
                 assert_eq!(f, "gteout");
             }
@@ -237,7 +244,10 @@ mod oracle {
 
     /// The result line: (read-backs by address, GTE registers d0..d31 c0..c31), or None for a
     /// call that faulted.
-    fn parse_result(line: &str) -> Option<(BTreeMap<u32, Vec<u8>>, Vec<u32>)> {
+    /// A result's read-backs by address and its 64 GTE registers.
+    type Readback = (BTreeMap<u32, Vec<u8>>, Vec<u32>);
+
+    fn parse_result(line: &str) -> Option<Readback> {
         let mut w = line.split_whitespace();
         w.next();
         let v0 = w.next().unwrap();
@@ -263,6 +273,15 @@ mod oracle {
         let base = (BUF & 0x1F_FFFF) as usize;
         ram()[base..base + 0x1_0000].fill(0);
         let mut scratch_in = None;
+        // The screen size the dividing handlers use: libgs's (GsInitGraph; DW1's is 320 x 240),
+        // which a request may change (`in=` at HWD0, VWD0).
+        let (mut width, mut height) = (320u16, 240u16);
+        for (a, bytes) in &req.ins {
+            if *a == LIBGS_HWD0 {
+                (width, height) = (le32(bytes, 0) as u16, le32(bytes, 1) as u16);
+            }
+        }
+        psyq::libgs::GsInitGraph(width, height, 4, 0, 0);
         for (a, bytes) in &req.ins {
             match *a {
                 OUT_PACKET_P => {}
@@ -295,9 +314,8 @@ mod oracle {
             point: rd(OT + 12),
             tag: native(rd(OT + 16)).cast(),
         };
-        let scratch = unsafe {
-            std::slice::from_raw_parts_mut((&raw mut dw1_scratchpad).cast::<u8>(), 1024)
-        };
+        let scratch =
+            unsafe { std::slice::from_raw_parts_mut((&raw mut dw1_scratchpad).cast::<u8>(), 1024) };
         match &scratch_in {
             Some(s) => scratch.copy_from_slice(s),
             None => scratch.fill(0),
@@ -329,7 +347,11 @@ mod oracle {
         let wb = GsGetWorkBase() as usize - ps1_ram_ptr(0x8000_0000) as usize;
         let want_wb = le32(&outs[&OUT_PACKET_P], 0) & 0x1F_FFFF;
         if wb != want_wb as usize {
-            bad.push(format!("work base +{:#x}, SDK +{:#x}", wb as u32 - (PACKETS & 0x1F_FFFF), want_wb - (PACKETS & 0x1F_FFFF)));
+            bad.push(format!(
+                "work base +{:#x}, SDK +{:#x}",
+                wb as u32 - (PACKETS & 0x1F_FFFF),
+                want_wb - (PACKETS & 0x1F_FFFF)
+            ));
         }
         // Packets: tags are links; the rest raw.
         let pk = &outs[&PACKETS];
@@ -339,7 +361,9 @@ mod oracle {
             tags.insert(a);
             let len = pk[a + 3] as usize;
             if std::env::var_os("DW1_DIAG").is_some() {
-                let ws: Vec<String> = (0..=len).map(|k| format!("{:08x}", le32(pk, a / 4 + k))).collect();
+                let ws: Vec<String> = (0..=len)
+                    .map(|k| format!("{:08x}", le32(pk, a / 4 + k)))
+                    .collect();
                 eprintln!("SDKPK {}", ws.join(" "));
             }
             if len == 0 {
@@ -350,17 +374,28 @@ mod oracle {
         }
         for i in 0..pk.len() / 4 {
             let want = le32(pk, i);
-            let want = if tags.contains(&(i * 4)) { translate_link(want) } else { want };
+            let want = if tags.contains(&(i * 4)) {
+                translate_link(want)
+            } else {
+                want
+            };
             let got = rd(PACKETS + 4 * i as u32);
             if got != want {
-                bad.push(format!("packet word +{:#x}: SDK {want:08x}, native {got:08x}", i * 4));
+                bad.push(format!(
+                    "packet word +{:#x}: SDK {want:08x}, native {got:08x}",
+                    i * 4
+                ));
             }
         }
         // The table and its guard.
         let org = &outs[&ORG];
         for i in 0..org.len() / 4 {
             let want = le32(org, i);
-            let want = if (i as u32) < n_ot { translate_link(want) } else { want };
+            let want = if (i as u32) < n_ot {
+                translate_link(want)
+            } else {
+                want
+            };
             let got = rd(ORG + 4 * i as u32);
             if got != want {
                 bad.push(format!("OT word {i}: SDK {want:08x}, native {got:08x}"));
@@ -370,7 +405,10 @@ mod oracle {
             for i in 0..256 {
                 let (want, got) = (le32(s, i), le32(scratch, i));
                 if want != got {
-                    bad.push(format!("scratchpad +{:#x}: SDK {want:08x}, native {got:08x}", i * 4));
+                    bad.push(format!(
+                        "scratchpad +{:#x}: SDK {want:08x}, native {got:08x}",
+                        i * 4
+                    ));
                 }
             }
         }
@@ -393,9 +431,9 @@ mod oracle {
         bad
     }
 
-    /// Whether the SDK wrote past the table: into the guard after it, or further (then a packet
-    /// links to what that entry held, which is neither an entry of the table, a packet, nor the
-    /// end of a list).
+    /// Whether the SDK wrote outside the table: into the guard after it, or further (then some
+    /// packet hangs off that entry instead of off one of the table's: it can't be reached from
+    /// the table).
     fn wrote_past_table(req: &Req, outs: &BTreeMap<u32, Vec<u8>>) -> bool {
         let ot_in = &req.ins.iter().find(|(a, _)| *a == ORG).unwrap().1;
         let n = 4usize << le32(&req.ins.iter().find(|(a, _)| *a == OT).unwrap().1, 0);
@@ -404,17 +442,22 @@ mod oracle {
         }
         let wb = le32(&outs[&OUT_PACKET_P], 0);
         let pk = &outs[&PACKETS];
-        let mut a = 0usize;
-        while (a as u32) < wb.wrapping_sub(PACKETS) && a + 4 <= pk.len() {
-            let tag = le32(pk, a / 4);
-            let link = 0x8000_0000 | (tag & LINK_END);
-            let ok = tag & LINK_END == LINK_END
-                || (ORG..ORG + n as u32).contains(&link)
-                || (PACKETS..wb).contains(&link);
-            if !ok {
+        let in_packets = |a: u32| (PACKETS..wb).contains(&a) && ((a - PACKETS) as usize) < pk.len();
+        // Every packet reachable from the table's entries.
+        let mut reached = std::collections::BTreeSet::new();
+        for i in 0..n / 4 {
+            let mut a = 0x8000_0000 | (le32(&outs[&ORG], i) & LINK_END);
+            while in_packets(a) && reached.insert(a) {
+                a = 0x8000_0000 | (le32(pk, ((a - PACKETS) / 4) as usize) & LINK_END);
+            }
+        }
+        // Every packet written, in memory order.
+        let mut a = PACKETS;
+        while a < wb && ((a - PACKETS) as usize) + 4 <= pk.len() {
+            if !reached.contains(&a) {
                 return true;
             }
-            let len = (tag >> 24) as usize;
+            let len = pk[(a - PACKETS) as usize + 3] as u32;
             if len == 0 {
                 return false;
             }
@@ -428,6 +471,7 @@ mod oracle {
 
     pub fn run(dir: &Path) {
         let _turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+
         let req = std::fs::read_to_string(dir.join("req.txt")).unwrap();
         let res = std::fs::read_to_string(dir.join("results.txt")).unwrap();
         let reqs: Vec<&str> = req.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -480,7 +524,13 @@ mod oracle {
             failures.is_empty(),
             "{} requests differ:\n{}",
             failures.len(),
-            failures[..failures.len().min(std::env::var("DW1_TMD_LIST").ok().and_then(|s| s.parse().ok()).unwrap_or(10))].join("\n")
+            failures[..failures.len().min(
+                std::env::var("DW1_TMD_LIST")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(10)
+            )]
+                .join("\n")
         );
     }
 }
