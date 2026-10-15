@@ -8,7 +8,7 @@
 #                                                 register-save debug-evo debug-death
 #                                                 battle-mode arena-cup ending debug-fish
 #                                                 debug-curl debug-gym debug-curl-win
-#                                                 debug-seadramon
+#                                                 debug-seadramon cup
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
@@ -50,7 +50,8 @@ debug-fish p9-fishcurl-fish-record p9-fishcurl-debug-master99-rods
 debug-curl p9-fishcurl-curl-record p9-fishcurl-debug-master99-penguin
 debug-gym p9-fishcurl-gym-record p9-fishcurl-debug-master99-flute
 debug-curl-win p9-fishcurl-curlwin-record p9-fishcurl-debug-master99-penguin
-debug-seadramon p9-fishcurl-sea-record p9-fishcurl-debug-master99-rods'
+debug-seadramon p9-fishcurl-sea-record p9-fishcurl-debug-master99-rods
+cup p9-cup-record p9-cup-lobby'
 
 want="$*"
 echo "$table" | while read -r name oracle card card2; do
