@@ -24,4 +24,4 @@ pub mod native;
 mod sequencer;
 pub mod stream;
 mod stubs;
-mod trap;
+pub mod trap;

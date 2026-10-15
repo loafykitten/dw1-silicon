@@ -99,8 +99,7 @@ pub fn vlc2(bs: &[u8], buf: &mut [u32]) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn DecDCTvlc2(bs: *const u8, buf: *mut u32, _table: *const u16) -> i32 {
     let Some(len) = crate::libcd::stream_frame_len(bs) else {
-        eprintln!("psyq: DecDCTvlc2: {bs:p} isn't a frame StGetNext handed out");
-        std::process::abort();
+        crate::trap::stop(&format!("psyq: DecDCTvlc2: {bs:p} isn't a frame StGetNext handed out"));
     };
     let bs = unsafe { std::slice::from_raw_parts(bs, len) };
     let buf = unsafe { std::slice::from_raw_parts_mut(buf, VLC_BUFFER_WORDS) };

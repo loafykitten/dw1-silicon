@@ -426,16 +426,14 @@ pub fn patch_file(
 fn with_drive<T>(call: &str, f: impl FnOnce(&mut Drive) -> Result<T, DriveError>) -> T {
     let mut guard = DRIVE.lock().unwrap();
     let Some(drive) = guard.as_mut() else {
-        eprintln!(
+        crate::trap::stop(&format!(
             "psyq: {call}: no disc inserted (the app opens it from DW1_DISC before the game runs)"
-        );
-        std::process::abort();
+        ));
     };
     match f(drive) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("psyq: {call}: {e}");
-            std::process::abort();
+            crate::trap::stop(&format!("psyq: {call}: {e}"));
         }
     }
 }
@@ -469,11 +467,10 @@ pub unsafe extern "C" fn CdIntToPos(i: i32, p: *mut CdlLoc) -> *mut CdlLoc {
 pub unsafe extern "C" fn CdPosToInt(p: *const CdlLoc) -> i32 {
     let pos = unsafe { p.read() };
     pos_to_int(pos).unwrap_or_else(|| {
-        eprintln!(
+        crate::trap::stop(&format!(
             "psyq: CdPosToInt: {:02x}:{:02x}:{:02x} isn't valid BCD",
             pos.minute, pos.second, pos.sector
-        );
-        std::process::abort();
+        ));
     })
 }
 
@@ -498,8 +495,7 @@ pub unsafe extern "C" fn CdSearchFile(fp: *mut CdlFile, name: *const c_char) -> 
 unsafe fn control(call: &str, com: u8, param: *const u8, result: *mut u8) -> i32 {
     let need = Drive::param_len(com);
     if need > 0 && param.is_null() {
-        eprintln!("psyq: {call}: command {com:#04x} needs a parameter");
-        std::process::abort();
+        crate::trap::stop(&format!("psyq: {call}: command {com:#04x} needs a parameter"));
     }
     let param = if need > 0 {
         unsafe { std::slice::from_raw_parts(param, need) }
@@ -806,8 +802,7 @@ pub unsafe extern "C" fn StFreeRing(base: *const u8) {
     let now = crate::libetc::vblank_count();
     with_drive("StFreeRing", |d| {
         if !d.free_stream_frame(base, now)? {
-            eprintln!("psyq: StFreeRing: {base:p} isn't a frame StGetNext handed out");
-            std::process::abort();
+            crate::trap::stop(&format!("psyq: StFreeRing: {base:p} isn't a frame StGetNext handed out"));
         }
         Ok(())
     });

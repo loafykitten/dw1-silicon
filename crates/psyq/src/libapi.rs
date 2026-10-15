@@ -113,8 +113,7 @@ pub extern "C" fn free3(block: *mut c_void) {
     }
     let offset = (block as usize).wrapping_sub(arena_base() as usize);
     if offset >= ARENA_SIZE || !HEAP.lock().unwrap().free(offset) {
-        eprintln!("psyq: free3({block:p}) isn't a live malloc3 block");
-        std::process::abort();
+        crate::trap::stop(&format!("psyq: free3({block:p}) isn't a live malloc3 block"));
     }
 }
 

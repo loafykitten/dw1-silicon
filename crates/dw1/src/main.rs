@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+mod applog;
 mod canon;
 mod disc;
 mod headless;
@@ -209,6 +210,14 @@ fn insert_cards(keep: bool) {
 
 /// The saves to start the slots with: the cards earlier builds kept in the save directory
 /// (`card1.mcd`, `card2.mcd`), else `DW1_CARD1`/`DW1_CARD2`; card 1's saves keep their slots.
+/// DuckStation's memory card 1 for Digimon World (USA), if it has one.
+fn duckstation_card() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let card = std::path::PathBuf::from(home)
+        .join("Library/Application Support/DuckStation/memcards/Digimon World (USA)_1.mcd");
+    card.exists().then_some(card)
+}
+
 fn seed_saves(dir: Option<&std::path::Path>) -> Result<saves::Saves, String> {
     let mut all = saves::Saves::new();
     for (n, var) in ["DW1_CARD1", "DW1_CARD2"].into_iter().enumerate() {
@@ -222,7 +231,14 @@ fn seed_saves(dir: Option<&std::path::Path>) -> Result<saves::Saves, String> {
             },
             None => None,
         };
-        let Some(path) = kept.or_else(|| std::env::var_os(var).map(Into::into)) else {
+        // With no card named, the first run of kept slots (the window build's) takes
+        // DuckStation's card for this game (read only), as `dw1-mac` did; a throwaway run
+        // (`dir` None) starts empty.
+        let duckstation = || (n == 0 && dir.is_some()).then(duckstation_card).flatten();
+        let Some(path) = kept
+            .or_else(|| std::env::var_os(var).map(Into::into))
+            .or_else(duckstation)
+        else {
             continue;
         };
         let found = saves::saves_on(&saves::read_card(&path)?);
@@ -248,10 +264,8 @@ fn insert_slots(keep: bool) {
         eprintln!("dw1: a replay runs with the memory cards it was recorded with, not save slots");
         std::process::exit(2);
     }
-    let fail = |e: String| -> ! {
-        eprintln!("dw1: {e}");
-        std::process::exit(1);
-    };
+    // (in the window build a message box says why; from Finder there's no terminal)
+    let fail = |e: String| -> ! { applog::fatal(&e) };
     match save_dir().filter(|_| keep) {
         Some(dir) => {
             lock_save_dir(&dir);
@@ -369,10 +383,7 @@ fn lock_save_dir(dir: &std::path::Path) {
         Ok(f) => {
             let _ = LOCK.set(f);
         }
-        Err(e) => {
-            eprintln!("dw1: save directory {}: {e}", dir.display());
-            std::process::exit(1);
-        }
+        Err(e) => applog::fatal(&format!("save directory {}: {e}", dir.display())),
     }
 }
 
@@ -380,9 +391,6 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if card_command(&args) {
         return;
-    }
-    if std::env::var_os("DW1_CRASH_TRACE").is_some() {
-        install_crash_trace();
     }
     // Headless for the emulator-comparison runs (and `DW1_HEADLESS=1`); the window otherwise.
     let headless = [
@@ -396,6 +404,11 @@ fn main() {
     .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty() && x != "0"))
         // A movie number, where 0 (the intro) is a value, not "off".
         || std::env::var_os("DW1_MOVIE").is_some_and(|x| !x.is_empty());
+    // An app run (no terminal) writes to a log; the window build shows stops in message boxes.
+    let crashed_before = applog::start(!headless);
+    if std::env::var_os("DW1_CRASH_TRACE").is_some() || applog::bundled() {
+        install_crash_trace();
+    }
     // The disc before the saves: the slots' text patches (`pc_text`) read it. The window build
     // opens its window first, so the first-run screen can ask for the image.
     let mut window = None;
@@ -410,14 +423,14 @@ fn main() {
     } else {
         match window::Window::new() {
             Ok(mut w) => {
+                if let Some(log) = crashed_before {
+                    applog::report_earlier_crash(&log);
+                }
                 let disc = w.find_disc(disc::at_startup());
                 psyq::libcd::insert_disc(disc);
                 window = Some(w);
             }
-            Err(e) => {
-                eprintln!("dw1: cannot open the window: {e}");
-                std::process::exit(1);
-            }
+            Err(e) => applog::fatal(&format!("cannot open the window: {e}")),
         }
     }
     // Headless runs keep saves only when asked to (`DW1_SAVE_DIR` set): the replays write

@@ -84,8 +84,7 @@ pub extern "C" fn dw1_gte_cfc2(reg: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn dw1_gte_cop2(command: u32) {
     if let ExecStatus::Unimplemented(op) = with(|gte| gte.execute(command)) {
-        eprintln!("psyq: GTE command {op:#09x} isn't modelled (crates/backend/src/gte.rs)");
-        std::process::abort();
+        crate::trap::stop(&format!("psyq: GTE command {op:#09x} isn't modelled (crates/backend/src/gte.rs)"));
     }
 }
 

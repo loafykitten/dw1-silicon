@@ -56,7 +56,7 @@ script fails if the binary links anything outside `/System` and `/usr/lib`.
   a crash leaves a report Ember can send. A stop on something the port doesn't handle shows a
   message box with the log's path.
 - First run with no saves seeds the slots from DuckStation's card if one exists (read only), as
-  `dw1-mac` does today; `dw1-mac` becomes a thin wrapper that builds and opens the app.
+  `dw1-mac` does; `dw1-mac` stays as the terminal way to play (messages in the terminal).
 - **Checks:** the app starts from Finder and from `open`; with a temporary `HOME` it takes the
   first-run path; the log appears; booklab (an M1 without this repo's toolchain state) runs a
   copy of the app, if reachable, as the "another Mac" test.
@@ -108,3 +108,15 @@ written down as accepted. That is the first release.
   the saves in both modes (the save machine's text patch needs it; it asserts so). Sol reviewed
   five times (seven findings: the start-up order regression, three responsiveness, two messages,
   extensionless `DW1_DISC`), converged. Not yet tried by hand: the dialog and drag and drop.
+- **9.2 done** (session 6): `tools/make-app.sh [--install]` builds `build/Digimon World.app`
+  (refuses a binary linking anything outside macOS; Info.plist from `packaging/Info.plist.in`;
+  icon from `packaging/icon-1024.png`, an original pixel egg drawn by `tools/make-icon.py`;
+  signed ad hoc; `--install` only replaces our own bundle in `~/Applications`).
+  `crates/dw1/src/applog.rs`: an app run logs to `~/Library/Logs/dw1-silicon/` (10 kept, each
+  locked by its run, pruning under a folder lock), shows stops (every PS1-layer stop now goes
+  through `psyq::trap::stop`), panics and start-up failures in a message box (main thread only),
+  and reports a crash at the next start (a marker per log, liveness by the log's lock, removed
+  only once reported). DuckStation's card seeds kept slots on their first run. Sol reviewed six
+  times (thirteen findings, mostly log-loss races and headless isolation), converged. Checked
+  live: the app starts from `open`, logs, and its marker goes on quit. Not yet: booklab
+  (unreachable), a crash report and the stop box seen by hand.

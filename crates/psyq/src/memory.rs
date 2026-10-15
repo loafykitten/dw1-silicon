@@ -76,11 +76,10 @@ pub fn link_of(ptr: *const u8) -> u32 {
     let (start, end) = link_window();
     let p = ptr as usize;
     if !(start..end).contains(&p) {
-        eprintln!(
+        crate::trap::stop(&format!(
             "psyq: GPU packet at {ptr:p} is outside the linkable data segment \
              {start:#x}..{end:#x} (docs/phase2-plan.md)"
-        );
-        std::process::abort();
+        ));
     }
     (p - start) as u32
 }

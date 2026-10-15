@@ -5,12 +5,32 @@
 //! plausible. A stub takes no arguments: on arm64 the caller's arguments sit unread in
 //! registers, and nothing returns, so the C prototype doesn't matter.
 
+/// Called with the message just before the program stops (`stop`, `unimplemented`): the app
+/// shows it (a message box when there's no terminal). Must not take the GPU, GTE or drive locks.
+static STOP_HOOK: std::sync::OnceLock<fn(&str)> = std::sync::OnceLock::new();
+
+/// Sets what `stop` calls before stopping (once; later calls are ignored).
+pub fn set_stop_hook(hook: fn(&str)) {
+    let _ = STOP_HOOK.set(hook);
+}
+
+/// Stops the program with `message` (printed to stderr, then shown by the app's hook): the PS1
+/// layer met something it doesn't handle, and going on would be guessing.
+#[cold]
+pub fn stop(message: &str) -> ! {
+    eprintln!("{message}");
+    if let Some(hook) = STOP_HOOK.get() {
+        hook(message);
+    }
+    std::process::abort();
+}
+
 /// Stops the program at an SDK call with no implementation yet.
 #[cold]
 pub fn unimplemented(name: &str) -> ! {
-    eprintln!(
-        "psyq: unimplemented SDK call `{name}` (trapping stub; see crates/psyq/src/stubs.rs)"
-    );
+    let message =
+        format!("psyq: unimplemented SDK call `{name}` (trapping stub; see crates/psyq/src/stubs.rs)");
+    eprintln!("{message}");
     // Which game code asked: walk the frame pointers (arm64 macOS always keeps them; Rust's
     // own unwinder stops early in this panic=abort build) and print the callers' symbols.
     unsafe extern "C" {
@@ -24,6 +44,9 @@ pub fn unimplemented(name: &str) -> ! {
         if n > 2 {
             backtrace_symbols_fd(frames.as_ptr().add(2), n - 2, 2);
         }
+    }
+    if let Some(hook) = STOP_HOOK.get() {
+        hook(&message);
     }
     std::process::abort();
 }

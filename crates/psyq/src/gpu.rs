@@ -67,7 +67,6 @@ pub unsafe fn draw_chain(head: *const u32) {
             }
             p = ptr_of_link(tag);
         }
-        eprintln!("psyq: GPU packet list at {head:p} doesn't end (a loop?)");
-        std::process::abort();
+        crate::trap::stop(&format!("psyq: GPU packet list at {head:p} doesn't end (a loop?)"));
     });
 }

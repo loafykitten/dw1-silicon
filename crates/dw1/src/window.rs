@@ -484,6 +484,7 @@ impl Window {
                 if self.log {
                     eprintln!("dw1: window closed after {} frames", self.frames);
                 }
+                crate::applog::clean_exit();
                 std::process::exit(0);
             }
             Event::KeyDown {
