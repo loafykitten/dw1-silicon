@@ -19,11 +19,11 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   defaults are auto, no wobble on, whole-multiple fit. Widescreen: a report only
   (`docs/phase8-widescreen.md`: selective, not now).
 - **Full colour is built (session 6, 2026-10-14):** F5 / `full_colour` / `DW1_FULL_COLOUR=1`,
-  default off. HD shading and see-through effects on 8 bits a channel with no dither; off is
+  on by default (Ember). HD shading and see-through effects on 8 bits a channel with no dither; off is
   byte-identical to before, replays identical with it on, Astra's review converged
   (`docs/phase8-plan.md` Progress). Side-by-sides in `captures/phase8-full-colour/`.
-- **Next session:** Ember looks at full colour (F5) and says whether it should be on by default;
-  anything else Ember asks; then the Phase 8 check-in and Phase 9. Fixture saves for Phase 5's remaining
+- **Next session:** close Phase 8 (the check-in: anything else Ember asks about the picture),
+  then Phase 9. Fixture saves for Phase 5's remaining
   overlays still come from Ember over time.
 - **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
 - **macOS sometimes reports the window hidden** ("occluded") while Ember's screen is in use
@@ -825,3 +825,5 @@ is what the Rust is checked against.
   still makes, so it survives the migration; Bevy's renderer would need the same custom wgpu code,
   and its scheduling and breaking releases fight the deterministic oracle-checked loop. A
   remaster on an engine could come after the Rust game, as its own project.
+- 2026-10-14 (session 6): full colour on by default ("I can barely tell the difference in color
+  so let's leave it on"); Ember plays with no wobble on and a high render scale.

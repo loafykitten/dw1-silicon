@@ -182,7 +182,8 @@ Ember has looked at them; the widescreen report is written. Then Phase 9.
   polygons interpolate smoothly (`smooth` in `hd.rs`). 2D frames still 0 differences from 1x;
   replays identical; Sol found nothing.
 - **8.4 full colour done:** `full_colour` in `settings.txt`, F5, `DW1_FULL_COLOUR=1` (default
-  off: Ember's look). HD surfaces now hold 8 bits a channel and a mask bit (`u32`); with full
+  on since Ember's look: "I can barely tell the difference in color so let's leave it on";
+  headless runs keep it off unless asked). HD surfaces now hold 8 bits a channel and a mask bit (`u32`); with full
   colour off every pixel is the expanded 15-bit value and the 15-bit rules run on it, so the HD
   picture is byte-identical to the previous build (426 new-game shots at 4x with no wobble); with
   it on the same rules run on 8-bit channels without the cut and the dither (a rectangle's texel

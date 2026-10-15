@@ -11,8 +11,8 @@ and open questions.
   replays), the rest waits on fixture saves from Ember. Phase 8 (renderer) mostly built: wgpu
   window (`crates/render`), HD surfaces at 2-8x (`backend::hd`) and no wobble (`backend::pgxp`)
   beside the exact 1x VRAM, settings with hotkeys, "full colour" (F5, session 6); every replay
-  identical with them all on (`docs/phase8-plan.md`). Next: Ember looks at full colour (default
-  on or off?), close Phase 8, then Phase 9.
+  identical with them all on (`docs/phase8-plan.md`). Full colour on by default (Ember).
+  Next: close Phase 8, then Phase 9.
   Public repo `loafykitten/dw1-silicon` (branch `phase0`); decomp fork branch `dw1-native`
   pushed. Direction: hybrid (decomp C game + Rust for everything new), full Rust as the
   endgame (not Bevy: asked again 2026-10-14, kept). Sony's SDK is reimplemented clean (never

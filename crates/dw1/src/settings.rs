@@ -34,7 +34,7 @@ impl Default for Settings {
         Settings {
             scale: Scale::Auto,
             no_wobble: true,
-            full_colour: false,
+            full_colour: true,
             fit: Fit::Integer,
             fullscreen: false,
         }
@@ -221,7 +221,7 @@ mod tests {
         let s = Settings {
             scale: Scale::Fixed(3),
             no_wobble: false,
-            full_colour: true,
+            full_colour: false,
             fit: Fit::Fill,
             fullscreen: true,
         };
