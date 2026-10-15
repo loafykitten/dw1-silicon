@@ -213,7 +213,8 @@ The movie player reads with Setmode's XA bit (`CdRead2(Stream|Speed|RT|Size1)`):
 every XA audio sector it reads to the SPU's CD input (no Setfilter: DW1 sets none). The stream
 now keeps those sectors (`Stream::take_audio`), libcd hands them to `libspu`'s `XaDecoder`
 after each stream call, and the SPU mixes the decoder's 44.1 kHz frames at the CD volume when
-SPUCNT's CD bit is on (`CdInit` sets both). Sectors are taken in lazily, up to a frame ahead; on
+SPUCNT's CD bit is on (`CdInit` sets both). Sectors are taken in lazily, up to a frame ahead (since
+2026-10-15 each reaches the decoder at its arrival: "XA audio against the emulator" below); on
 the intro movie the decoder's FIFO stays between about 750 and 2,700 frames (17-60 ms) and never
 runs dry after the first sector (`captures/native-runs/p6-movie-audio/intro-movie.wav`, local
 only: 121 s, sound throughout but for a second of silence in the movie itself). Not compared
@@ -239,3 +240,83 @@ stream closes, and clears the queue when it falls a quarter second behind.
 | battle-twice | 524 same, 59 off by one, 6 loading gap, 36 fade steps | 1,332 same, 118 off by one | 5,599 same |
 | training-six | 611 same, 12 off by one, 5 loading gap, 24 fade steps | 70 same, 54 off by one, 146 drifted | 11,025 same |
 | new-game | 226 same, 75 loading gap | 501 same, 629 off by one, 84 drifted | 7,126 same |
+
+## The leftovers, closed (2026-10-15, Phase 9 sound stream)
+
+### `SsUtAutoVol`: exact
+
+The fade's steps were approximate (the left side up to 5% low, the first step "depending on
+sub-tick timing"). Probed again with `oracle/sdk-probe.lua` (`SsUtKeyOnV`, the tick, `SsUtAutoVol`,
+ticks; tone and program attributes poked into the VAB header the SDK keeps; interrupts masked so
+the SDK's own tick can't interleave, which is what the "sub-tick timing" was):
+`captures/oracle-runs/p9-sound-autovol-*`, 500 probes over tone volumes 0-127, tone pans 0-127,
+program volumes 64-127, key-on volumes 1-127 on either side and sweeps up and down over 3-15 ticks.
+What the SDK does, all exact (`libsnd.rs`, `auto_vol_volume`, `SndState::auto_vol`):
+
+- The sweep's level moves by `(start - end) / ticks` a tick (rounded down, at least 1) and lands on
+  `end`: 127 to 0 over 6 ticks writes 7 steps (106, 85, 64, 43, 22, 1, 0), as before.
+- Each step is not the key-on's formula: level x tone volume x program volume x 0x3FFF / 127^3 in
+  one division, then three pans in 64ths, each rounded down: the tone's, a centred one (the
+  program's or the bank's, 64 in every DW1 bank), then the key-on's left/right balance. A centred
+  pan in 64ths is 63/64 on the left, so a centred voice's left side steps at (63/64)^3 = 95.4% of
+  its right: the "up to 5% lower" left.
+- The tone, program volume and key-on volumes are those of the **latest `SsUtKeyOnV` call**, for
+  whatever voice, even a refused one, looked up at each step (a key-on of another voice before
+  the sweep or two ticks into it changes the steps from then on: `p9-sound-autovol-last1..3`).
+  The game's two battle fades that differed (VBlanks 4905 and 5961 of the battle replay) were
+  exactly this: another voice was keyed just before, with a louder tone.
+- A sweep after `SsUtAllKeyOff` (the game's `stopSound` sweeps the effect voices still on after
+  it) brings the silenced voice's volume back for its steps (`p9-sound-autovol-allkeyoff`); the
+  port kept no tone for a silenced voice and wrote nothing.
+- `SsUtAutoVol` with 0 ticks never returns to its caller (`p9-sound-autovol-zero`); the port stops
+  there (DW1 always passes 6).
+
+`compare_spu.py` no longer excuses fade steps ("set value differs" is gone): every step of the
+four replays' fades is now the emulator's value, at the same VBlank or one apart.
+
+| replay | sound effects | music notes | globals |
+|---|---|---|---|
+| battle-fixture | 387 same, 77 off by one, 5 loading gap | 937 same | 3,954 same |
+| battle-twice | 540 same, 79 off by one, 6 loading gap | 1,332 same, 118 off by one | same as before |
+| training-six | 615 same, 32 off by one, 5 loading gap | 70 same, 54 off by one, 146 drifted | same as before |
+| new-game | 226 same, 75 loading gap | 501 same, 629 off by one, 84 drifted | same as before |
+
+### XA audio against the emulator: exact after the decoder, and now gapless
+
+The XA sectors never reach RAM (the drive sends them to the SPU), so no breakpoint sees them, but
+Redux's save state keeps the last sector its CD controller decoded (the 37.8 kHz samples, before
+the 44.1 kHz interpolation) with the read position, the audio volume matrix and the mute flags.
+`oracle/capture-xa.lua` takes a save state every VBlank of a replay and logs each new decoded
+sector; natively `DW1_XA_LOG` logs every sector decoded, the frames the SPU takes from the CD
+input each VBlank and the polls; `tools/oracle/compare_xa.py` compares them
+(`tools/sound-check.sh`: `new-game`, the new-game movie; `ending`, the credits, the title movie
+and the continue movie). What "identical" means, and what was measured:
+
+- **The decoded samples: bit for bit.** Every sector the emulator decoded (1,627 on the new-game
+  movie, 2,534 around the credits) has exactly the samples the port decoded for that LBA, and
+  every sector the port decoded between them that the emulator was never seen decoding repeats
+  the one before it (silence), so none is skipped or added. DW1's four movies are all 37.8 kHz
+  stereo 4-bit, one channel, a sector in 8; no Setfilter, ATV 0x80/0/0x80/0 (unity, as psx-spx
+  says), never muted.
+- **The interpolation to 44.1 kHz** is psx-spx's zigzag table, which is Redux's too; its output
+  can't be read from Redux (it goes straight to Redux's audio stream), so it isn't compared.
+- **The level after that isn't comparable**: Redux plays XA on its own audio stream without the
+  SPU's CD volume (0x1DB0) or SPUCNT's CD bit; the port mixes it through both as psx-spx
+  describes (CdInit's 0x3FFF, half scale). The SPU log comparison checks those registers and bits.
+- **Timing: within a VBlank or two.** Each sector starts playing natively 0-2 VBlanks after the
+  VBlank at whose end the emulator's save state first shows it decoded (mostly 0 or 1; the
+  emulator's side is known to a VBlank, the port's to the VBlank its first frame plays in). The
+  clocks are tied through the replay's polls; the credits have none (the game doesn't read the
+  pad while they play), so their two halves are lined up by their median offset and judged within
+  themselves.
+- **Fixed: gaps.** The port's CD input used to play a movie's audio from the moment the stream
+  first took a sector in, and took sectors in only when the game called a stream function: each
+  movie's first second had two gaps (13 and 7 ms), the credits more, and sectors read ahead of a
+  skip were still played after it. Now (`libcd.rs`, `Drive::play_xa`, `Drive::vblank`) the
+  stream takes in what has arrived at the end of every VBlank (it would at the game's next call
+  anyway, before anything that call does, so the game sees no difference: all replays identical),
+  each XA sector reaches the decoder at its arrival and not before (a sector read ahead of a stop
+  is never heard), and the CD input plays a VBlank of silence before a sector that finds it
+  empty, which keeps the later sectors (arriving up to a VBlank after their moment, at VBlank
+  resolution) on time. No gap remains within a movie, only at its end and at the credits' re-read
+  that the emulator has too.

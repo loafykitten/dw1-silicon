@@ -84,7 +84,36 @@ but not identical: about 50,000 of 76,800 differ in 24-bit colour, by at most 3-
 in a channel (about 10,000 at 15-bit depth). That is the IDCT and colour conversion rounding:
 `backend::mdec` (from DW2-PC) and Redux's MDEC model round differently, and neither is known to
 be the hardware's. Not chased now: it can't be seen, and matching Redux's rounding wouldn't
-make it hardware-exact. Revisit with hardware captures if they ever exist.
+make it hardware-exact. Revisit with hardware captures if they ever exist. (Measured again
+stage by stage in 2026-10-15's pass below, which fixed the colour conversion.)
+
+### Measured stage by stage (2026-10-15, Phase 9 sound stream)
+
+`oracle/capture-mdec.lua` (on a certified replay) records, for every 25th frame, the run-length
+codes `DecDCTin` is given and every slice MOV uploads with `LoadImage` (the MDEC's output);
+natively `DW1_MDEC_LOG` logs the same, and `tools/oracle/compare_mdec.py` pairs frames by their
+codes (`tools/sound-check.sh` runs it on `new-game`, the new-game movie, and `ending`, the credits
+and the movies around them):
+
+- **Codes: identical.** All 295 sampled frames (130 of the new-game movie, 165 of the credits and
+  the title and continue movies) have exactly the codes the SDK's `DecDCTvlc2` made on the
+  emulator, so the CPU half of the decoding (bitstream version 3, `backend::mdec::vlc`) is exact.
+- **Colour conversion: fixed.** The MDEC's YCbCr to RGB rounded its products down (DW2-PC's
+  `>> 10`), which made every channel lean half a level against the emulator (R and B -0.5, G
+  +0.5 on average). psx-spx gives real factors with no fixed point ("unknown"); rounding to the
+  nearest takes the lean to under 0.02 of a level and the bytes that differ from 49% to 36%.
+  And psx-spx's 9-bit limit ("Y AND 1FFh" before saturating, stated for monochrome, "probably"
+  for colour): three pixels of the credits whose blue sum was -264 came out 0 natively and 255
+  on the emulator; the sums are now cut to 9 bits first and those match.
+- **IDCT: within its rounding.** What still differs is the IDCT: Redux computes it with a fast
+  (AAN) factorisation of its own, the port with psx-spx's matrix form, and psx-spx says the
+  hardware's rounding "isn't perfect" in its own code. On the new-game movie 7.8 million of 22
+  million channel bytes differ, 95% by one level, at most 4 (5 in two corner pixels of the
+  credits), with no lean (mean signed difference under 0.02 per channel). Matching Redux here
+  would mean copying its factorisation and wouldn't be the hardware's either, so the check
+  allows 6 levels and no lean of more than 0.1.
+
+DW1 shows its movies in 24-bit mode, so no dithering is involved.
 
 ## Tests
 
