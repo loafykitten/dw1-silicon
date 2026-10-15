@@ -260,3 +260,13 @@ written down as accepted. That is the first release.
   to 9 bits (psx-spx), leaving only the IDCT's rounding (Redux's AAN against psx-spx's matrix: at
   most 5 levels, no lean). New checks in `tools/sound-check.sh` (`oracle/capture-xa.lua`,
   `oracle/capture-mdec.lua`, `compare_xa.py`, `compare_mdec.py`); 37 replays identical.
+- **Recruits, the other gyms, the egg and map 236** (rest stream, 2026-10-15;
+  `docs/phase9-routes.md`, "Recruits, the other gyms, the egg and the other ending map"). Six
+  recordings from moved saves, each certified by a fresh dense Redux replay and natively identical
+  at every standard and every-50-polls checkpoint: `rest-agumon` (Agumon's recruit battle in the
+  Native Forest), `rest-beetle` (Kuwagamon's recruit by dialogue; Beetle Land's 108: a Bonus Try
+  and a Normal session), `rest-trash` (Sukamon's recruit; Trash Mountain's MP gym), `rest-ice` (the
+  Ice Sanctuary's Defense and HP gyms), `rest-egg` (the post-game Digitamamon egg fight, won, and
+  his recruit) and `rest-ending236` (the other ending map: flag 214 and enough recruits cleared
+  that the prosperity, recalculated from the recruit flags on every load, stays under 50). No
+  native change was needed. Forty-three replays in `tools/replay-check.sh`.

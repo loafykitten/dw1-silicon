@@ -41,17 +41,18 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
   merged into phase0 by the coordinator):** the overlays no recording reached are now reached
   without Ember's saves: the game's debug room (`tools/oracle/debug_fixture.py`), downloaded
   GameFAQs saves (`captures/downloaded-saves/`) and saves moved to any spot
-  (`tools/oracle/place_fixture.py`) (`docs/phase9-routes.md`). **Thirty-seven certified replays** in
+  (`tools/oracle/place_fixture.py`) (`docs/phase9-routes.md`). **Forty-three certified replays** in
   `tools/replay-check.sh`, all identical: besides Phase 5's, Mr. Digivolution and death of old age
   (debug-evo, debug-death), Battle Mode, a tournament's first match and whole cups won and lost (battle-mode, arena-cup,
   cup, cup-lost; the port now gets past the frame after every cup that hangs Redux),
   Machinedramon, the ending, the credits and the clear save (ending), fishing and Seadramon
   (debug-fish, debug-seadramon), curling lost and won with Penguinmon's recruit (debug-curl,
   debug-curl-win), the Beetle Land gym (debug-gym), and a
-  tour of fifteen areas from Mr. Warp and the downloaded saves (tour-*). Every TMD kind sorts natively (render stream),
-  sanitizer runs found and fixed the native-layout bugs (`docs/phase9-sanitizers.md`). Still
-  running at the time of writing: sound/movie leftovers
-  (SsUtAutoVol, XA, MDEC) and the rest (recruits, two gyms, the post-game egg, ending map 236).
+  tour of fifteen areas from Mr. Warp and the downloaded saves (tour-*), four more recruits, the
+  Ice Sanctuary, Trash Mountain and Beetle Land gyms, the post-game egg and ending map 236 (rest-*). Every TMD kind sorts natively (render stream),
+  sanitizer runs found and fixed the native-layout bugs (`docs/phase9-sanitizers.md`). Phase 6's
+  leftovers are closed too: `SsUtAutoVol` exact, movie XA identical to Redux, MDEC colour per
+  psx-spx (`docs/phase6-plan.md`).
 - **Ember asked (2026-10-14) about switching to Bevy:** no (Answered, below).
 - **macOS sometimes reports the window hidden** ("occluded") while Ember's screen is in use
   elsewhere: wgpu then gives no frame and the app is throttled. Not a bug in the port.

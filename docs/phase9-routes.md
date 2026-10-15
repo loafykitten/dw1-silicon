@@ -281,9 +281,60 @@ direction with a short hold before walking blind.
   checkpoint identical), and a free native run from the fixture continues into the lobby, where
   Greymon gives the "Victory Reward / Victory Prize". Recordings stop just before that frame.
 
+## Recruits, the other gyms, the egg and the other ending map (stream rest, 2026-10-15)
+
+Six recordings, each from a save moved next to its scene with `tools/oracle/place_fixture.py`
+(flags cleared to undo what the save had already done), certified by a fresh dense Redux replay
+(every poll, VBlank and CD read matched) and natively identical at every standard and
+every-50-polls checkpoint. No native change was needed.
+
+- **How a recruit works.** Recruiting species `s` sets story flag `200 + s`; on every load
+  `recalculatePPandArena` (main.c) recomputes the prosperity (pstat 1) from those flags: each
+  recruited species of level 3 or more counts its level - 2 (rookie 1, champion 2, ultimate 3;
+  Numemon, Sukamon and Nanimon 1), so a save's stored prosperity is not what the game uses. The
+  map heads (`MAPHEAD.SCN`) load the waiting Digimon only while its flag is clear, so clearing it
+  in a fixture brings the scene back. Scripts were read with a small `DG.SCN` disassembler
+  (sections, `IF` conditions as `scriptIfInstruction` combines them, Shift-JIS text) and the map
+  files' warp spawns and tile triggers read from `MAP/MAPn/<name>.MAP` (`loadMap`'s offset table:
+  `MapWarps`, then the 100 x 100 collision grid), so each fixture lands on a real warp spawn.
+- **Recruits.** `rest-agumon` (Native Forest, screen 109, flag 203; BeelzemontZero's Piximon):
+  entering with 203 clear starts script 105's scene at once, a predefined battle, won, and Agumon
+  leaves for the city. `rest-beetle` (Beetle Land's screen 108, flag 251, Kuwagamon; Master99's
+  MetalGreymon): "I want to beat Kabuterimon", three answers; the second ("there is a sure fire
+  way") recruits him with no battle. `rest-trash` (Trash Mountain, screen 165, flag 239): one of
+  the three Sukamon recruits himself when talked to. `rest-egg` (below) recruits Digitamamon (256).
+- **The other gyms (TRN2).** `rest-beetle` also does 108's two signs: the treadmill (tile 85)
+  with a Bonus Try (the slot game) and the hammer machine (84, `TRN2_tickDefenseTrainingMap108`).
+  `rest-trash`: "Hide In Trash" (tile 82, MP). `rest-ice` (Ice Sanctuary, screen 99, camera turned
+  45 degrees: Up+Right walks north): "Icicle Fall" (84, Defense) and "Moving Ice" (81, HP).
+  Icicle Fall counts only the frames the icicles drop (about 200 per 600 VBlanks, to 1200, so some
+  10,000 VBlanks); Triangle (`CANCEL_BUTTON`) ends it with full-session gains, as the recording
+  does; Moving Ice runs to its end.
+- **The post-game egg** (`rest-egg`): with flag 50 set and 256 clear the top of Mt. Infinity
+  (script 184, section 0x33) shows an egg ("!!!"), a predefined battle (enemy slot 8); a win sets
+  256 and adds 3 prosperity, a loss is the usual MURD. BeelzemontZero's Piximon (all stats 999)
+  moved to the last corridor wins it; Master99's MetalGreymon at full HP won one exploration
+  narrowly and lost three recordings. The fight and the lines after it are played by a schedule
+  controller (Square whenever the finisher gauge is full, then Cross until the tamer is free).
+- **The other ending map** (`rest-ending236`): script 184 ends Machinedramon's scene with
+  `IF flag 220 | flag 214 | pstat 1 >= 50 THEN warp 237 ELSE warp 236`, after adding 7 to the
+  prosperity. Both maps run script 192 with the same Digimon. The fixture is the ending's
+  (Master99's 2001 save in the last corridor) with flag 214 and eleven recruit flags (213, 226,
+  227, 228, 242, 255, 248, 249, 250, 252, 258) cleared, so the recalculated prosperity is 40 and 47
+  after the boss: the ending's schedule up to the credits, on map 236.
+
+| Replay | Fixture (made from) | Polls | CD reads | Checkpoints |
+|---|---|---|---|---|
+| `rest-ending236` | `p9-rest-ending236` (`p9-ending-master99-2001`: 222 254 0 -400 -4100 326=1 214=0 and the eleven above =0) | 8,375 | 69 | 28 / 182 |
+| `rest-beetle` | `p9-rest-beetle` (`p9-arena-master99`: 108 106 0 603 -1853 251=0) | 4,211 | 30 | 13 / 90 |
+| `rest-egg` | `p9-rest-egg` (`p9-arena-vs-p1`: 222 254 0 -400 -4100 326=1 256=0) | 7,518 | 46 | 24 / 162 |
+| `rest-trash` | `p9-rest-trash` (`p9-arena-master99`: 165 164 0 189 -3428 239=0) | 3,362 | 32 | 11 / 73 |
+| `rest-ice` | `p9-rest-ice` (`p9-arena-master99`: 99 98 0 1529 -2524) | 5,394 | 28 | 14 / 113 |
+| `rest-agumon` | `p9-rest-agumon` (`p9-arena-vs-p1`: 109 112 0 264 3585 203=0) | 2,996 | 41 | 15 / 70 |
+
 ## Still to reach
 
-Other recruits, the Ice Sanctuary and Trash Mountain gyms (TRN2 on screens 99 and 165; Beetle
-Land's 108 is a short walk from the `debug-gym` route), the end of a cup back in the lobby (the
-prize; blocked on the emulator by the GPU list loop above), the other ending map (236: the same script and ENDI path), the post-game
-Digitamamon egg fight.
+The end of a cup back in the lobby (the prize; blocked on the emulator by the GPU list loop
+above). Recruits by other means than a battle, a talk or a choice (trades, item gifts, curling
+and the like beyond Penguinmon's), 107's other sign and Kabuterimon (flag 219) next to the
+`debug-gym` route, if wanted.
