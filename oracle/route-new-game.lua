@@ -98,6 +98,9 @@ local EXTRA = {
     ['debug-gym'] = { base = 'continue-save3',
                       file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
                                '/route-debug-gym-schedule.lua' } },
+    ['debug-seadramon'] = { base = 'continue-save3',
+                            file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
+                                     '/route-debug-seadramon-schedule.lua' } },
     ['debug-fish'] = { base = 'continue-save3',
                        file = { '/route-master99-yard-schedule.lua', '/route-debug-fish-schedule.lua' } },
 }
