@@ -1,12 +1,17 @@
-//! The window host: SDL3's 2D renderer shows the game's display, paced to the PS1's field
-//! rate, with the keyboard and gamepads as the pad. (The wgpu renderer is Phase 8.)
+//! The window host: the game's display shown through `render` (wgpu on Metal), paced to the
+//! PS1's field rate, with the keyboard and gamepads as the pad. SDL3 keeps the window, input and
+//! sound.
 //!
 //! Keys (physical positions, so other layouts work): arrows = D-pad, Z = Cross, X = Circle,
 //! A = Square, S = Triangle, Enter = Start, right Shift = Select, Q/W = L1/R1, 1/2 = L2/R2.
 //! Gamepads use SDL's standard layout (south = Cross, east = Circle, west = Square,
 //! north = Triangle), the D-pad or left stick for directions, the triggers for L2/R2.
-//! Closing the window or Cmd-Q exits 0. `DW1_WINDOW_LOG=1` logs frames presented and the
-//! display size (first frame, on size changes, then every 60 frames).
+//! Closing the window or Cmd-Q exits 0. F11 or Cmd-Ctrl-F toggles fullscreen.
+//! `DW1_WINDOW_LOG=1` logs frames presented and the display size (first frame, on size changes,
+//! then every 60 frames).
+//!
+//! The picture is the largest whole multiple of 320x240 that fits, on black (the original
+//! look, pixel for pixel); `DW1_FIT=fill` fills the window at 4:3 instead (an addition).
 //!
 //! Before the game starts, `Window::splash` shows a short text screen (about 2.8 s; any key,
 //! button or click skips it) saying this is the native Mac build. `DW1_NO_SPLASH=1` skips it;
@@ -15,14 +20,12 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+use render::{Fit, Picture, Renderer};
 use sdl3::EventPump;
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
-use sdl3::keyboard::Scancode;
-use sdl3::pixels::PixelFormat;
-use sdl3::render::{FRect, ScaleMode, Texture, TextureCreator, WindowCanvas};
-use sdl3::video::WindowContext;
+use sdl3::keyboard::{Mod, Scancode};
 
 mod splash;
 
@@ -187,9 +190,10 @@ impl PadState {
 }
 
 pub struct Window {
-    canvas: WindowCanvas,
-    creator: TextureCreator<WindowContext>,
-    texture: Option<(Texture, usize, usize)>,
+    /// Declared before `window`, so it goes first (it draws into the window's Metal layer).
+    renderer: Renderer,
+    window: sdl3::video::Window,
+    fit: Fit,
     pump: EventPump,
     gamepad_sys: sdl3::GamepadSubsystem,
     gamepads: Vec<Gamepad>,
@@ -209,6 +213,52 @@ pub struct Window {
     _audio: Option<AudioStreamOwner>,
     /// The title says a save failed.
     save_failed_shown: bool,
+    /// The display's refresh period (0 if unknown) and when a frame was last shown: on a
+    /// display slower than the field rate, frames are dropped rather than waited for.
+    refresh_ns: u64,
+    gate: ShowGate,
+}
+
+/// The display's refresh period in nanoseconds, 0 if SDL doesn't know it.
+fn refresh_ns(window: &sdl3::video::Window) -> u64 {
+    match window.get_display().and_then(|d| d.get_mode()) {
+        Ok(m) if m.refresh_rate > 1.0 => (1e9 / m.refresh_rate as f64) as u64,
+        _ => 0,
+    }
+}
+
+/// Lets frames through no faster than the display refreshes, so the window never waits on the
+/// display and the game keeps the field rate. On a display at 60 Hz or faster (or of unknown
+/// rate) every field is shown; at 30 Hz every other one.
+#[derive(Default)]
+pub struct ShowGate {
+    /// When the next frame may be shown, in nanoseconds on the caller's clock.
+    next_ns: Option<u64>,
+}
+
+/// Timer jitter allowed: a frame may come this much before its slot. The slots themselves
+/// advance by a whole refresh per frame shown, so over time no more frames are shown than the
+/// display refreshes.
+const SHOW_SLACK_NS: u64 = 1_000_000;
+
+impl ShowGate {
+    /// Whether a frame at `now_ns` may be shown on a display refreshing every `refresh_ns`
+    /// (0 = unknown: always).
+    pub fn admit(&mut self, now_ns: u64, refresh_ns: u64) -> bool {
+        if refresh_ns == 0 {
+            self.next_ns = None;
+            return true;
+        }
+        match self.next_ns {
+            Some(next) if now_ns + SHOW_SLACK_NS < next => false,
+            // Behind by more than a refresh (a stall, or the first frame): start again from now.
+            next => {
+                let slot = next.filter(|&n| now_ns < n + refresh_ns).unwrap_or(now_ns);
+                self.next_ns = Some(slot + refresh_ns);
+                true
+            }
+        }
+    }
 }
 
 /// The audio stream as libspu's sink holds it. SDL's stream calls are thread-safe [doc: SDL3
@@ -283,17 +333,23 @@ impl Window {
             .window("Digimon World (dw1-silicon)", 960, 720)
             .resizable()
             .high_pixel_density()
+            .metal_view()
             .build()
             .map_err(|e| e.to_string())?;
-        let canvas = window.into_canvas();
-        let creator = canvas.texture_creator();
+        let (pw, ph) = window.size_in_pixels();
+        // SAFETY: the renderer is dropped before the window (field order in `Window`).
+        let renderer = unsafe { Renderer::for_window(&window, pw, ph)? };
+        let fit = match std::env::var("DW1_FIT").as_deref() {
+            Ok("fill") => Fit::Fill,
+            _ => Fit::Integer,
+        };
         let gamepad_sys = sdl.gamepad().map_err(|e| e.to_string())?;
         let pump = sdl.event_pump().map_err(|e| e.to_string())?;
         let audio = open_audio(&sdl);
         let mut w = Window {
-            canvas,
-            creator,
-            texture: None,
+            renderer,
+            window,
+            fit,
             pump,
             gamepad_sys,
             gamepads: Vec::new(),
@@ -308,7 +364,10 @@ impl Window {
             held_over: 0,
             _audio: audio,
             save_failed_shown: false,
+            refresh_ns: 0,
+            gate: ShowGate::default(),
         };
+        w.refresh_ns = refresh_ns(&w.window);
         for id in w.gamepad_sys.gamepads().unwrap_or_default() {
             w.open_gamepad(id);
         }
@@ -338,12 +397,32 @@ impl Window {
             }
             Event::KeyDown {
                 scancode: Some(k),
+                keymod,
                 repeat: false,
                 ..
-            } => self.keys |= key_bit(k),
+            } => {
+                let cmd_ctrl = keymod.intersects(Mod::LGUIMOD | Mod::RGUIMOD)
+                    && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
+                if k == Scancode::F11 || (k == Scancode::F && cmd_ctrl) {
+                    self.toggle_fullscreen();
+                } else {
+                    self.keys |= key_bit(k);
+                }
+            }
             Event::KeyUp {
                 scancode: Some(k), ..
             } => self.keys &= !key_bit(k),
+            Event::Window {
+                win_event: sdl3::event::WindowEvent::DisplayChanged(_),
+                ..
+            } => self.refresh_ns = refresh_ns(&self.window),
+            // A display's mode changed (its refresh rate, say): ours may be the one.
+            Event::Display {
+                display_event:
+                    sdl3::event::DisplayEvent::CurrentModeChanged
+                    | sdl3::event::DisplayEvent::DesktopModeChanged,
+                ..
+            } => self.refresh_ns = refresh_ns(&self.window),
             Event::GamepadAdded { which, .. } => self.open_gamepad(which),
             Event::GamepadRemoved { which, .. } => {
                 self.gamepads.retain(|g| g.id().ok() != Some(which));
@@ -366,48 +445,60 @@ impl Window {
         self.pads.values().fold(self.keys, |a, p| a | p.bits())
     }
 
-    fn texture_for(&mut self, w: usize, h: usize) -> &mut Texture {
-        if !matches!(self.texture, Some((_, tw, th)) if tw == w && th == h) {
-            if let Some((old, ..)) = self.texture.take() {
-                // SAFETY: `unsafe_textures` frees nothing on drop; this one is no longer used.
-                unsafe { old.destroy() };
-            }
-            let mut t = self
-                .creator
-                .create_texture_streaming(PixelFormat::ARGB8888, w as u32, h as u32)
-                .expect("create texture");
-            t.set_scale_mode(ScaleMode::Nearest);
-            self.texture = Some((t, w, h));
+    /// Fullscreen on or off. SDL changes it asynchronously on macOS (an animation); waiting for
+    /// it to finish means a second press always sees where the first one ended. The field clock
+    /// resyncs after the wait.
+    fn toggle_fullscreen(&mut self) {
+        let on = !matches!(
+            self.window.fullscreen_state(),
+            sdl3::video::FullscreenType::True | sdl3::video::FullscreenType::Desktop
+        );
+        if let Err(e) = self.window.set_fullscreen(on) {
+            eprintln!("dw1: fullscreen: {e}");
         }
-        &mut self.texture.as_mut().unwrap().0
+        self.window.sync();
+        self.refresh_ns = refresh_ns(&self.window);
+    }
+
+    /// Shows `picture` (or black) and keeps the renderer at the window's pixel size. Returns the
+    /// window's size in pixels. (Takes the fields, so a picture may borrow another field.)
+    fn show(
+        renderer: &mut Renderer,
+        window: &sdl3::video::Window,
+        picture: Option<Picture>,
+        fit: Fit,
+    ) -> (u32, u32) {
+        let (pw, ph) = window.size_in_pixels();
+        renderer.resize(pw, ph);
+        renderer.present(picture, fit);
+        (pw, ph)
     }
 
     fn present(&mut self) {
         let shown = psyq::gpu::with(|g| g.read_display(&mut self.buf));
-        self.canvas.set_draw_color((0, 0, 0));
-        self.canvas.clear();
-        if let Some((w, h)) = shown {
-            let pixels: Vec<u8> = self.buf[..w * h]
-                .iter()
-                .flat_map(|p| (p | 0xff00_0000).to_le_bytes())
-                .collect();
-            self.texture_for(w, h)
-                .update(None, &pixels, w * 4)
-                .expect("texture update");
-            let (ow, oh) = self.canvas.output_size().unwrap_or((960, 720));
-            let (x, y, dw, dh) = letterbox(w as u32, h as u32, ow, oh);
-            let tex = &self.texture.as_ref().unwrap().0;
-            let _ = self.canvas.copy(tex, None, FRect::new(x, y, dw, dh));
+        let picture = shown.map(|(w, h)| Picture {
+            pixels: &self.buf[..w * h],
+            w: w as u32,
+            h: h as u32,
+        });
+        if !self
+            .gate
+            .admit(self.t0.elapsed().as_nanos() as u64, self.refresh_ns)
+        {
+            return;
         }
-        self.canvas.present();
+        let (pw, ph) = Self::show(&mut self.renderer, &self.window, picture, self.fit);
         self.frames += 1;
         if self.log
             && (self.frames == 1 || self.last_size != shown || self.frames.is_multiple_of(60))
         {
             match shown {
                 Some((w, h)) => eprintln!(
-                    "dw1: window: {} frames presented, display {w}x{h}",
-                    self.frames
+                    "dw1: window: {} frames presented, display {w}x{h}, window {pw}x{ph} \
+                     ({:?}, {} skipped)",
+                    self.frames,
+                    self.renderer.present_mode(),
+                    self.renderer.skipped
                 ),
                 None => eprintln!("dw1: window: {} frames presented, display off", self.frames),
             }
@@ -426,7 +517,7 @@ impl Window {
             } else {
                 "Digimon World (dw1-silicon)"
             };
-            let _ = self.canvas.window_mut().set_title(title);
+            let _ = self.window.set_title(title);
         }
     }
 
@@ -543,6 +634,36 @@ mod tests {
         assert_eq!(p.next(now), 0);
         let w = p.next(now);
         assert!((16_700_000..16_730_000).contains(&w));
+    }
+
+    /// Shows frames at the field rate (with up to 0.3 ms of jitter) for 10 s on a display
+    /// at `hz`; returns how many were shown.
+    fn shown_on(hz: f64) -> u64 {
+        let field = 1_000_000_000_000 / FIELD_MILLIHZ;
+        let refresh = if hz > 0.0 { (1e9 / hz) as u64 } else { 0 };
+        let mut gate = ShowGate::default();
+        let mut shown = 0;
+        for n in 0..598u64 {
+            let jitter = (n * 7919 % 7) * 50_000;
+            if gate.admit(n * field + jitter, refresh) {
+                shown += 1;
+            }
+        }
+        shown
+    }
+
+    #[test]
+    fn frames_drop_only_on_displays_slower_than_the_fields() {
+        // 60 Hz and faster, 59.94 Hz, unknown: every field.
+        for hz in [0.0, 59.94, 60.0, 75.0, 120.0, 240.0] {
+            assert_eq!(shown_on(hz), 598, "{hz} Hz");
+        }
+        // Slower: never more than the display shows (10 s), and close to it.
+        for hz in [58.0, 50.0, 30.0] {
+            let n = shown_on(hz);
+            let most = (hz * 10.0) as u64 + 1;
+            assert!(n <= most && n + 2 >= most - 1, "{hz} Hz: {n}");
+        }
     }
 
     #[test]

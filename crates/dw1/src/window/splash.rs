@@ -1,12 +1,16 @@
 //! The start-up splash: a few lines of text on a dark screen that say this is the native Mac
-//! build, so it can't be taken for the PS1 original. Drawn with SDL's debug font straight on
-//! the window's canvas before the game starts; it touches no GPU, clock, pad or game state.
-//! `DW1_SPLASH_SHOT=<file.png>` saves the canvas at full brightness (for documentation).
+//! build, so it can't be taken for the PS1 original. Drawn with SDL's debug font on a software
+//! canvas the window's size, shown through the renderer before the game starts; it touches no
+//! GPU, clock, pad or game state. `DW1_SPLASH_SHOT=<file.png>` saves it at full brightness
+//! (for documentation).
 
 use std::time::{Duration, Instant};
 
+use render::{Fit, Picture};
 use sdl3::event::Event;
 use sdl3::pixels::PixelFormat;
+use sdl3::render::Canvas;
+use sdl3::surface::Surface;
 
 use super::{Window, letterbox};
 
@@ -72,15 +76,33 @@ impl Window {
         let shot = std::env::var_os("DW1_SPLASH_SHOT");
         let start = Instant::now();
         let mut shot_pending = shot.is_some();
+        let mut pixels = Vec::new();
         loop {
             let t = start.elapsed();
-            // A screenshot request holds at full brightness for the frame it captures.
-            self.draw_splash(if shot_pending { 1.0 } else { brightness(t) });
-            if let (true, Some(path)) = (shot_pending, &shot) {
-                self.save_canvas(path.as_ref());
-                shot_pending = false;
+            let (w, h) = self.window.size_in_pixels();
+            let (w, h) = self.renderer.drawable_size(w, h);
+            // A screenshot request holds at full brightness for the frame it captures. A window
+            // with no area (in a transition) shows nothing this time.
+            let level = if shot_pending { 1.0 } else { brightness(t) };
+            match (w > 0 && h > 0).then(|| draw_splash(w, h, level, &mut pixels)) {
+                None => {}
+                Some(Ok(())) => {
+                    if let (true, Some(path)) = (shot_pending, &shot) {
+                        save_png(path.as_ref(), &pixels, w, h);
+                        shot_pending = false;
+                    }
+                    let picture = Picture {
+                        pixels: &pixels,
+                        w,
+                        h,
+                    };
+                    Self::show(&mut self.renderer, &self.window, Some(picture), Fit::Exact);
+                }
+                Some(Err(e)) => {
+                    eprintln!("dw1: splash: {e}");
+                    return;
+                }
             }
-            self.canvas.present();
             let events: Vec<Event> = self.pump.poll_iter().collect();
             let skip = events.iter().any(|ev| {
                 matches!(
@@ -100,48 +122,57 @@ impl Window {
             std::thread::sleep(Duration::from_millis(16));
         }
     }
+}
 
-    fn draw_splash(&mut self, brightness: f32) {
-        self.canvas.set_scale(1.0, 1.0).ok();
-        self.canvas.set_draw_color(BACKGROUND);
-        self.canvas.clear();
-        let (ow, oh) = self.canvas.output_size().unwrap_or((960, 720));
-        let (x, y, w, _) = letterbox(GRID.0, GRID.1, ow, oh);
-        // Output pixels per grid unit.
-        let unit = w / GRID.0 as f32;
-        for (text, size, gy, colour) in LINES {
-            let (glyph, (px, py)) = place(text.len(), size, gy, x, y, unit);
-            self.canvas
-                .set_draw_color(mix(BACKGROUND, colour, brightness));
-            self.canvas.set_scale(glyph, glyph).ok();
-            let _ = self.canvas.draw_debug_text(text, (px / glyph, py / glyph));
-        }
-        self.canvas.set_scale(1.0, 1.0).ok();
+/// Draws the splash at `brightness` on a `w x h` software canvas into `out` (0x00RRGGBB).
+fn draw_splash(w: u32, h: u32, brightness: f32, out: &mut Vec<u32>) -> Result<(), String> {
+    let surface = Surface::new(w, h, PixelFormat::XRGB8888).map_err(|e| e.to_string())?;
+    let mut canvas: Canvas<Surface> = surface.into_canvas().map_err(|e| e.to_string())?;
+    canvas.set_draw_color(BACKGROUND);
+    canvas.clear();
+    let (x, y, gw, _) = letterbox(GRID.0, GRID.1, w, h);
+    // Output pixels per grid unit.
+    let unit = gw / GRID.0 as f32;
+    for (text, size, gy, colour) in LINES {
+        let (glyph, (px, py)) = place(text.len(), size, gy, x, y, unit);
+        canvas.set_draw_color(mix(BACKGROUND, colour, brightness));
+        canvas.set_scale(glyph, glyph).ok();
+        let _ = canvas.draw_debug_text(text, (px / glyph, py / glyph));
     }
-
-    /// Writes the canvas to a PNG; a failure is reported and otherwise ignored.
-    fn save_canvas(&self, path: &std::path::Path) {
-        let result = (|| -> Result<(), String> {
-            let surface = self.canvas.read_pixels(None).map_err(|e| e.to_string())?;
-            let surface = surface
-                .convert_format(PixelFormat::RGB24)
-                .map_err(|e| e.to_string())?;
-            let (w, h, pitch) = (surface.width(), surface.height(), surface.pitch() as usize);
-            let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
-            let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
-            enc.set_color(png::ColorType::Rgb);
-            enc.set_depth(png::BitDepth::Eight);
-            let mut writer = enc.write_header().map_err(|e| e.to_string())?;
-            let rows = surface.with_lock(|px| {
-                (0..h as usize)
-                    .flat_map(|r| px[r * pitch..r * pitch + w as usize * 3].iter().copied())
-                    .collect::<Vec<u8>>()
-            });
-            writer.write_image_data(&rows).map_err(|e| e.to_string())
-        })();
-        if let Err(e) = result {
-            eprintln!("dw1: DW1_SPLASH_SHOT: {}: {e}", path.display());
+    canvas.present();
+    let surface = canvas.into_surface();
+    let pitch = surface.pitch() as usize;
+    out.clear();
+    surface.with_lock(|px| {
+        for row in 0..h as usize {
+            out.extend(
+                px[row * pitch..][..w as usize * 4]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&b| u32::from_ne_bytes(b) & 0x00ff_ffff),
+            );
         }
+    });
+    Ok(())
+}
+
+/// Writes `w x h` pixels of 0x00RRGGBB to a PNG; a failure is reported and otherwise ignored.
+fn save_png(path: &std::path::Path, pixels: &[u32], w: u32, h: u32) {
+    let result = (|| -> Result<(), String> {
+        let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().map_err(|e| e.to_string())?;
+        let rgb: Vec<u8> = pixels
+            .iter()
+            .flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8])
+            .collect();
+        writer.write_image_data(&rgb).map_err(|e| e.to_string())
+    })();
+    if let Err(e) = result {
+        eprintln!("dw1: DW1_SPLASH_SHOT: {}: {e}", path.display());
     }
 }
 
