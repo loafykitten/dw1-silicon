@@ -80,11 +80,53 @@ registered for tomorrow, so the route cancels that and enters today's Grade C (t
 match takes about 6,000 VBlanks and the cup starts at 12:00, so from a morning save only the first
 match and the second round's start fit under VBlank ~32700 (`oracle/replays/arena-cup.txt`).
 
+## Fishing, curling, the gyms and DGET (stream fishcurl, 2026-10-15)
+
+All three start from Master99's 2002 save made into debug fixtures (`tools/oracle/debug_fixture.py`
+gained `--keep N`, `--clear N` and `--item ID`): the save is the card's third (file DMR2) and
+loads in Jijimon's house (screen 205), so the routes use a `continue-save3` base, then
+`route-master99-yard-schedule.lua` (out of the house into the debug yard) and
+`route-master99-warp-schedule.lua` (to Mr. Warp, x -161 z -2451, and his "Unknown World" menu).
+
+- **Fishing** (`debug-fish`, fixture `p9-fishcurl-debug-master99-rods`: the debug flags' bytes also
+  hold the rod triggers 45 and 46, so `--keep 45 --keep 46`). FISH loads with the lake's map
+  (screens 6 and 8, `checkFishingMap`); FISH in the triangle menu needs a rod trigger and a food
+  item. The fight: Cross throws, Cross again releases (the frames between are the power), the bite
+  check runs every 20 frames for fish within 200 units of the bobber at the bait's chance
+  (`FISH_BITE_CHANCE`, per bait and kind: Chain melon gives Digicatfish 30%), Cross within
+  `catchingTime / 2` frames of the bite strikes, then Cross held raises the tension and reels.
+  Seadramon swims at hours 8 and 17 (`seadramonTime1/2` 1700 and 800 at Dragon Eye Lake) and
+  bites any bait at 20%; the route skips an hour first (the top debug Jijimon) so it fishes
+  without him. `oracle/explore.lua` gained `waitne ADDR VALUE N` (wait for the bite) and
+  `autoreel` (the tension rule, run in Lua with no stops).
+- **The PS1's VBlank counter:** FISH is the one place the game reads `VSync(-1)` (the bite and
+  Seadramon checks: `VSync(-1) / 3 % 20`). Natively the counter ran ahead of the PS1's (loading
+  takes no time), so fish bit at other frames; a replay now answers the PS1's count
+  (`Replay::ps1_vcount`: libetc's `Vcount` = the recorded VBlank − 1144, the polls' pairing [obs]).
+- **Curling** (`debug-curl`, fixture `p9-fishcurl-debug-master99-penguin`: `--clear 257 --clear
+  357`). Penguinmon waits outside the Curling Cave only while not recruited (trigger 257) and
+  offers the free first match while 357 is clear (map script 206, section 6; `DG.SCN` holds the
+  map scripts indexed by the script id `MAPHEAD.SCN` gives each screen). KAR loads on screen 136.
+  The match is played by a controller the schedule file returns (route-new-game.lua now calls it
+  each VBlank): turns don't come at fixed VBlanks, and inputs found with the explorer started one
+  VBlank apart from the route's and did not reproduce. Penguinmon wins 5 to 0.
+- **The gyms (TRN2)** (`debug-gym`, fixture `p9-fishcurl-debug-master99-flute`: `--item 115`, a
+  Blue Flute). TRN2 loads on screens 99 (Ice Sanctuary), 107 and 108 (Beetle Land) and 165 (Trash
+  Mountain) (`loadTrainingLibrary`). Beetle Land is reached from Dragon Eye Lake: Cross on the
+  shore tiles (81) with a Blue Flute calls the Lake Guardian, who carries you there. A Tentomon at
+  its entrance starts a battle; screen 106 east leads to the tree stump gym (107), whose signs are
+  Cross tiles 81 and 83 ("Training: Striking", offense).
+- **DGET is not recruiting:** it is the tournament schedule and registration window, loaded on
+  the Arena Lobby screens 208 and 223 (`checkArenaMap`, `initTournamentSchedule`). The arena
+  stream's `arena-cup` replay goes through it (screen 223, Greymon's ENTRY desk) and is certified.
+- **Explorer findings:** the pad reads stale while the game reads the CD synchronously (a script
+  file: the yard's step trigger 54), and a run that stopped mid-read diverged from its recording
+  (Redux's CD timing follows the host clock), so the explorer now never stops within 60 VBlanks
+  of a libcd call.
+
 ## Still to reach
 
-Fishing (Mr. Warp, Seadra fishing; needs a rod: the 2002 Master99 save has 99 of every item),
-curling (Mr. Warp, Curling Cave), recruiting (an early recruit, e.g. Agumon in the Native Forest,
-or a Frigimon), the other gyms, the boss buildup and the ending (a completed save near the end), a
-whole tournament (a save made in the arena lobby just before 12:00 would leave room for it).
-Fishing's Seadramon, curling's stones, the arenas and the result scenes also need the
-`GsTMDfast*` handlers the audit lists as missing (`docs/phase9-overlay-audit.md`, finding 9).
+Catching Seadramon (fishing at 08:00-08:59 or 17:00-17:59), a won curling match (Penguinmon
+joins the city: a recruit), recruiting in general, the Ice Sanctuary and Trash Mountain gyms, the
+boss buildup and the ending (a completed save near the end), a whole tournament (a save made in
+the arena lobby just before 12:00 would leave room for it).

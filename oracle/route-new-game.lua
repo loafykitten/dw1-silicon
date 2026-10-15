@@ -95,6 +95,9 @@ local EXTRA = {
                                 '/route-debug-curl-schedule.lua' } },
     ['debug-arena'] = { base = 'continue-save3',
                         file = { '/route-master99-yard-schedule.lua', '/route-debug-arena-schedule.lua' } },
+    ['debug-gym'] = { base = 'continue-save3',
+                      file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
+                               '/route-debug-gym-schedule.lua' } },
     ['debug-fish'] = { base = 'continue-save3',
                        file = { '/route-master99-yard-schedule.lua', '/route-debug-fish-schedule.lua' } },
 }
@@ -116,10 +119,16 @@ end
 if EXTRA[PROFILE] then
     local files = EXTRA[PROFILE].file
     if type(files) == 'string' then files = { files } end
+    CONTROLLERS = nil
     for _, file in ipairs(files) do
-        local morePresses, moreMilestones = dofile(HERE .. file)
+        local morePresses, moreMilestones, controller = dofile(HERE .. file)
         for _, p in ipairs(morePresses) do PRESSES[#PRESSES + 1] = p end
         for _, m in ipairs(moreMilestones) do MILESTONES[#MILESTONES + 1] = m end
+        -- A schedule file may also return a controller, function(vblank, pad, ram): called
+        -- after each VBlank's scheduled presses, it presses from the emulated RAM (no host
+        -- input, so as deterministic as a schedule) for minigames whose turns don't come at
+        -- fixed VBlanks. The recording keeps what the game read, so its replays don't need it.
+        if controller then CONTROLLERS = CONTROLLERS or {}; CONTROLLERS[#CONTROLLERS + 1] = controller end
     end
 end
 local TARGET = DW1ROUTE_TARGET or MILESTONES[#MILESTONES][2]
@@ -201,6 +210,9 @@ KEEP_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
     vblank = vblank + 1
     if releaseAt[vblank] then for _, b in ipairs(releaseAt[vblank]) do b[1].clearOverride(b[2]) end end
     if pressAt[vblank] then for _, b in ipairs(pressAt[vblank]) do b[1].setOverride(b[2]) end end
+    if CONTROLLERS then
+        for _, c in ipairs(CONTROLLERS) do c(vblank, pad, PCSX.getMemPtr()) end
+    end
 
     local m = milestoneAt[vblank]
     if m then

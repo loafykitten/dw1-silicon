@@ -4,7 +4,10 @@
 -- save: Penguinmon not recruited and his free match not used, so he waits outside the Curling
 -- Cave, map script 206 section 6). Mr. Warp to the Curling Cave, Penguinmon's offer ("Digimon
 -- Curling! ... Nothing the first time"), "Let's go inside", the rink (screen 136, the KAR
--- overlay), the match, which Penguinmon wins, and back outside. Derived with oracle/explore.lua.
+-- overlay), the match, and back outside. The walk and the talk were derived with oracle/explore.lua;
+-- the match is played by the controller below (explorer-derived match inputs did not reproduce in
+-- recordings: the opponent's turns take varying time), from the emulated RAM: KAR's match state
+-- (0x80135244), whose turn (0x8013523C) and the power gauge (0x8013523E).
 local PRESSES = {
     { 5740, 5740, 1, 4, 'CROSS' },    -- Mr. Warp: In front of Curling Cave (screen 134)
     -- to Penguinmon, by the cave mouth (x 1792, z 1185), and through his offer
@@ -21,52 +24,6 @@ local PRESSES = {
     { 7566, 7566, 1, 4, 'CROSS' },
     { 7656, 7656, 1, 4, 'CROSS' },
     { 7746, 7746, 1, 4, 'CROSS' },
-    -- the match (oracle/explore.lua autocurl): Start Game, then for each of our five stones Cross
-    -- (stone), Cross (straight aim) and Cross at power 1900; Cross through his lines; his throws
-    -- are the game's (KAR_chooseOpponentShot). Penguinmon wins.
-    { 8238, 8238, 1, 4, 'CROSS' },
-    { 8578, 8578, 1, 4, 'CROSS' },
-    { 8608, 8608, 1, 4, 'CROSS' },
-    { 8680, 8680, 1, 4, 'CROSS' },
-    { 9235, 9235, 1, 4, 'CROSS' },
-    { 9304, 9304, 1, 4, 'CROSS' },
-    { 9334, 9334, 1, 4, 'CROSS' },
-    { 10291, 10291, 1, 4, 'CROSS' },
-    { 10357, 10357, 1, 4, 'CROSS' },
-    { 10387, 10387, 1, 4, 'CROSS' },
-    { 10459, 10459, 1, 4, 'CROSS' },
-    { 11017, 11017, 1, 4, 'CROSS' },
-    { 11086, 11086, 1, 4, 'CROSS' },
-    { 11116, 11116, 1, 4, 'CROSS' },
-    { 11812, 11812, 1, 4, 'CROSS' },
-    { 11878, 11878, 1, 4, 'CROSS' },
-    { 11908, 11908, 1, 4, 'CROSS' },
-    { 11980, 11980, 1, 4, 'CROSS' },
-    { 12697, 12697, 1, 4, 'CROSS' },
-    { 12766, 12766, 1, 4, 'CROSS' },
-    { 12796, 12796, 1, 4, 'CROSS' },
-    { 13489, 13489, 1, 4, 'CROSS' },
-    { 13558, 13558, 1, 4, 'CROSS' },
-    { 13588, 13588, 1, 4, 'CROSS' },
-    { 14458, 14458, 1, 4, 'CROSS' },
-    { 14524, 14524, 1, 4, 'CROSS' },
-    { 14554, 14554, 1, 4, 'CROSS' },
-    { 14626, 14626, 1, 4, 'CROSS' },
-    { 15256, 15256, 1, 4, 'CROSS' },
-    { 15325, 15325, 1, 4, 'CROSS' },
-    { 15355, 15355, 1, 4, 'CROSS' },
-    { 16225, 16225, 1, 4, 'CROSS' },
-    { 16291, 16291, 1, 4, 'CROSS' },
-    { 16321, 16321, 1, 4, 'CROSS' },
-    { 16393, 16393, 1, 4, 'CROSS' },
-    { 16801, 16801, 1, 4, 'CROSS' },
-    { 16867, 16867, 1, 4, 'CROSS' },
-    { 16897, 16897, 1, 4, 'CROSS' },
-    { 16927, 16927, 1, 4, 'CROSS' },
-    { 16957, 16957, 1, 4, 'CROSS' },
-    { 16987, 16987, 1, 4, 'CROSS' },
-    -- back outside: "Sorry bro. Come back again to challenge me..." closed
-    { 20297, 20297, 1, 4, 'CROSS' },
 }
 local MILESTONES = {
     { 6800, 'cave_front' },
@@ -74,8 +31,46 @@ local MILESTONES = {
     { 8236, 'rink' },
     { 9000, 'first_throw' },
     { 13000, 'mid_match' },
-    { 17200, 'match_over' },
-    { 20297, 'penguinmon_won' },
-    { 20450, 'curl_done' },
+    { 17000, 'late_match' },     -- the last scores: us 0, Penguinmon 5
+    { 17500, 'back_outside' },   -- screen 134 again from VBlank 17356
+    { 18600, 'curl_done' },
 }
-return PRESSES, MILESTONES
+
+-- From the rink on: a 4-VBlank Cross, at least 30 VBlanks apart, whenever the match wants one:
+-- Start Game (state 1), Penguinmon's lines (15, 19), our stone and straight aim (5, 6, our
+-- turn), the power gauge (8) at 1900 or more; then, back outside, up to three more while his
+-- closing lines' script runs. Cross is pad bit 14.
+local FROM, CROSS = 8237, 14
+-- The power at which each of our throws stops the gauge (DW1CURL_POWERS=a,b,... overrides it
+-- for trying other matches; the recording used the default).
+local POWERS = {}
+for p in (os.getenv('DW1CURL_POWERS') or '1900'):gmatch('%d+') do POWERS[#POWERS + 1] = tonumber(p) end
+local throws = 0
+local releaseAt, nextTap, closes, wasInRink = nil, 0, 0, false
+local function controller(vblank, pad, ram)
+    if vblank < FROM then return end
+    if releaseAt and vblank >= releaseAt then pad.clearOverride(CROSS); releaseAt = nil end
+    if releaseAt or vblank < nextTap then return end
+    local u8 = ffi.cast('uint8_t*', ram)
+    local i8 = ffi.cast('int8_t*', ram)
+    local i16 = ffi.cast('int16_t*', ram)
+    local screen = u8[0x134DA8]
+    local tap = false
+    if screen == 136 then
+        wasInRink = true
+        local state, ours, power = i8[0x135244], i8[0x13523C] == 0, i16[0x13523E / 2]
+        local want = POWERS[math.min(throws + 1, #POWERS)]
+        tap = state == 1 or state == 15 or state == 19 or (ours and (state == 5 or state == 6))
+            or (ours and state == 8 and power >= want)
+        if ours and state == 8 and tap then throws = throws + 1 end
+    elseif screen == 134 and wasInRink and closes < 3 and u8[0x134FF4] == 0 then
+        -- a map script is running (IS_SCRIPT_PAUSED 0): his lines are up
+        closes = closes + 1
+        tap = true
+    end
+    if tap then
+        pad.setOverride(CROSS)
+        releaseAt, nextTap = vblank + 4, vblank + (screen == 136 and 30 or 120)
+    end
+end
+return PRESSES, MILESTONES, controller
