@@ -12,16 +12,21 @@ bit for bit:
 
 - every sector the emulator decoded (its save state's read position says which: the latest
   audio sector at or below it) has exactly the samples the port decoded for that sector;
-- every sector of a movie the port decoded and the emulator was never seen decoding (its samples
-  changed between two VBlanks only when the sector's did) has the same samples as the sector
-  before it (silence repeats), so nothing was skipped or added;
+- every audio sector between the first and last the emulator showed in one of its reads was
+  decoded by the port, and one the emulator was never seen decoding (its samples changed between
+  two VBlanks only when the sector's did) has the same samples as the sector before it (silence
+  repeats), so nothing was skipped or added;
 - the VBlank the port starts playing a sector (its first 44.1 kHz frame leaves the CD input
   FIFO), placed on the emulator's clock through the replay's polls (a movie played without
-  polls, the credits, is lined up by its median offset and judged within itself), is within --slack VBlanks
-  (default 2) of the VBlank at whose end the emulator's save state first shows it: a save state
+  polls, the credits, is lined up by its median offset and judged within itself), is within
+  --slack VBlanks (default 2) of the VBlank at whose end the emulator's save state first shows it: a save state
   is taken once a VBlank, the port's sector starts somewhere in its VBlank, and a movie's polls
   are 2 VBlanks apart, so each side is known to about a VBlank (on the new-game replay's movie
-  1,044 of 1,627 sectors land on the same VBlank, 581 one apart, 2 two apart).
+  1,044 of 1,627 sectors land on the same VBlank, 581 one apart, 2 two apart);
+- every audio sector the emulator read (its read position, VBlank by VBlank, passed through it
+  in one read) was decoded by the port, and the port's CD input never runs dry except after the
+  last audio sector of one of the emulator's reads (a movie's end, a re-read): reads are taken
+  from the emulator's side, not from what the port decoded.
 
 Exits non-zero on any difference. Levels after the decoder aren't compared: Redux plays XA on
 its own audio stream without the SPU's CD volume, which the port applies as psx-spx documents.
@@ -76,6 +81,7 @@ def main():
         best = min((c for c in (prev, nxt) if c is not None), default=None)
         return (best[1], best[2]) if best else None
 
+    report, stats = [], collections.Counter()
     npcm = open(a.native_prefix + '.bin', 'rb').read()
     nat = collections.defaultdict(list)  # lba -> [((heard on the oracle's clock, anchor), pcm)]
     sectors, pops = [], []
@@ -83,10 +89,13 @@ def main():
         f = line.split()
         if f[0] == 'sector':
             vb, np_, since, lba, _arr, frames, off, pushed = map(int, f[1:])
+            if off < 0 or frames <= 0 or off + frames * 4 > len(npcm):
+                stats['bad log records'] += 1
+                continue
             sectors.append((lba, npcm[off:off + frames * 4], pushed, vb,
                             on_oracle_clock(np_, since, vb)))
         elif f[0] == 'pop':
-            pops.append((int(f[4]), int(f[1])))
+            pops.append((int(f[4]), int(f[1]), int(f[5])))
     popped = [p[0] for p in pops]
     for lba, pcm, pushed, vb, placed in sectors:
         # Heard from the first VBlank whose pops pass the frames queued before it: placed on the
@@ -98,18 +107,10 @@ def main():
             heard = (placed[0] + pops[k][1] - vb, placed[1])
         nat[lba].append((heard, pcm))
     audio_lbas = sorted(nat)
-    # The port's reads: audio sectors come every 8 sectors in a movie, so a larger step starts
-    # another movie (or another stretch of one).
-    run_of, run = {}, 0
-    for i, lba in enumerate(audio_lbas):
-        if i and lba - audio_lbas[i - 1] != 8:
-            run += 1
-        run_of[lba] = run
-
     opcm = open(os.path.join(a.oracle_dir, 'xa-pcm.bin'), 'rb').read()
-    report, stats = [], collections.Counter()
     seen = []
     timed = []  # (lba, emulator VBlank, port heard VBlank, the port's poll count then)
+    trace = []  # the emulator's read position, VBlank by VBlank (the last sector read)
     first = last = None
     for line in open(os.path.join(a.oracle_dir, 'xa-log.txt')):
         f = line.split()
@@ -117,6 +118,8 @@ def main():
         at_start = first is None
         first = vb if first is None else first
         last = vb
+        if not at_start and f[1] in ('xa', 'pos'):
+            trace.append((vb, int(f[2])))
         if f[1] != 'xa' or at_start:
             # The first VBlank's save state shows whatever was decoded before the capture began.
             continue
@@ -144,6 +147,23 @@ def main():
             stats['never played by the port'] += 1
             continue
         timed.append((lba, vb, heard[0], heard[1]))
+    # The emulator's reads, from its own read position (not from what the port decoded): a step
+    # of 1-8 sectors from one VBlank to the next is the same read going on; anything else (a seek,
+    # a stop, a re-read) ends one.
+    segments = []  # [first LBA, last LBA, first VBlank, last VBlank] of each emulator read
+    for (_, p0), (v1, p1) in zip([(None, None)] + trace, trace):
+        if p0 is not None and 0 < p1 - p0 <= 8:
+            segments[-1][1], segments[-1][3] = p1, v1
+        elif p0 != p1:
+            segments.append([p1, p1, v1, v1])
+
+    def seg_of(lba, t=None):
+        """The emulator read holding `lba` (the one nearest VBlank `t` on its clock if given)."""
+        hits = [i for i, (lo, hi, _, _) in enumerate(segments) if lo - 7 <= lba <= hi]
+        if t is None or not hits:
+            return hits[0] if hits else None
+        return min(hits, key=lambda i: max(segments[i][2] - t, t - segments[i][3], 0))
+
     # Timing. The two clocks are tied at the pad polls; a movie the game plays without reading the
     # pad (the credits) has none, and the port's VBlanks from the poll before or after it include
     # loading the port does in no time. So a stretch of sectors placed from the same poll and
@@ -153,7 +173,7 @@ def main():
     shifts = []
     groups = []
     for t in timed:
-        if groups and groups[-1][-1][3] == t[3] and run_of[groups[-1][-1][0]] == run_of[t[0]]:
+        if groups and groups[-1][-1][3] == t[3] and seg_of(groups[-1][-1][0]) == seg_of(t[0]):
             groups[-1].append(t)
         else:
             groups.append([t])
@@ -173,27 +193,61 @@ def main():
                 if len(report) < a.show:
                     report.append(f'LBA {lba}: emulator decoded by VBlank {vb}, port heard at {h}'
                                   + (f' (stretch lined up by {shift})' if shift else ''))
-    # Within each of the port's reads, the sectors between the first and last the emulator showed:
-    # an unseen one must repeat the one before it (its decode changed nothing the emulator could
-    # see).
     seen_set = set(seen)
-    runs = {}
-    for lba in seen_set:
-        lo, hi = runs.get(run_of[lba], (lba, lba))
-        runs[run_of[lba]] = (min(lo, lba), max(hi, lba))
-    runs = sorted(runs.values())
-    for lo, hi in runs:
+    # Every audio sector the emulator read through must have been decoded by the port, and one the
+    # emulator never showed decoding must repeat the sector before it (silence), between the first
+    # and last the emulator showed in that read.
+    runs = []
+    for lo, hi, _, _ in segments:
+        shown = [x for x in seen_set if lo - 7 <= x <= hi]
+        # (two reads of the same sectors share them; each is checked over the same span)
+        if not shown:
+            continue
+        runs.append((min(shown), max(shown)))
         prev = None
-        for lba in audio_lbas[bisect.bisect_left(audio_lbas, lo):bisect.bisect_right(audio_lbas, hi)]:
-            pcm = nat[lba][-1][1]
-            if lba not in seen_set:
+        for x in range(min(shown), max(shown) + 1, 8):
+            if x not in nat:
+                stats['read by the emulator, never decoded by the port'] += 1
+                if len(report) < a.show:
+                    report.append(f'LBA {x}: read by the emulator, never decoded by the port')
+                prev = None
+                continue
+            pcm = nat[x][-1][1]
+            if x not in seen_set:
                 if prev is not None and pcm == prev:
                     stats['unseen, repeats the sector before'] += 1
                 else:
                     stats['unseen and different'] += 1
                     if len(report) < a.show:
-                        report.append(f'LBA {lba}: decoded by the port, never seen on the emulator')
+                        report.append(f'LBA {x}: decoded by the port, never seen on the emulator')
             prev = pcm
+    # Gaps in the port's playback: the CD input found its FIFO empty (the decoder's underrun count
+    # rose) between two pop lines (written every VBlank while it plays, so between movies one
+    # spans the whole wait). That's allowed only where the emulator's read ended too: the last
+    # sector the port decoded before the gap is the last audio sector of an emulator read. A gap
+    # after a sector inside one of the emulator's reads is a dropout the PS1 doesn't have, and
+    # one where the emulator's reads can't tell (outside the capture) isn't excused either.
+    sector_vbs = [vb for _, _, _, vb, _ in sectors]
+    for (_, vb0, u0), (_, vb, u) in zip(pops, pops[1:]):
+        if u <= u0:
+            continue
+        k = bisect.bisect_right(sector_vbs, vb0)
+        before, placed = (sectors[k - 1][0], sectors[k - 1][4]) if k > 0 else (None, None)
+        t = placed[0] if placed else None
+        if before is None or t is None or not first - 30 <= t <= last + 30:
+            stats['gaps outside the capture'] += 1
+            continue
+        i = seg_of(before, t)
+        if i is None:
+            stats['gaps the emulator can\'t vouch for'] += 1
+        elif before + 8 > segments[i][1]:  # the emulator's read stopped before the next one
+            stats['gaps where the emulator\'s read ended'] += 1
+            continue
+        else:
+            stats['gaps inside a read'] += 1
+        if len(report) < a.show:
+            report.append(f'the port\'s CD input ran dry for {u - u0} frames by its VBlank {vb}, '
+                          f'after LBA {before}')
     for r in report:
         print(r)
     print(f'emulator VBlanks {first}-{last}, movie stretches seen (LBAs) {runs}')
@@ -203,7 +257,9 @@ def main():
         print(f'emulator VBlanks {lo}-{hi} have no poll natively: lined up by {shift} VBlanks')
     bad = (stats['samples differ'] + stats['emulator sector the port never decoded']
            + stats['heard late/early'] + stats['never played by the port']
-           + stats['unseen and different'] + stats['emulator ATV not unity'])
+           + stats['unseen and different'] + stats['emulator ATV not unity']
+           + stats['gaps inside a read'] + stats['gaps the emulator can\'t vouch for']
+           + stats['read by the emulator, never decoded by the port'] + stats['bad log records'])
     if stats['samples same'] == 0:
         print('no sector compared')
         bad += 1

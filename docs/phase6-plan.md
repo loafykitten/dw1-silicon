@@ -320,3 +320,13 @@ and the continue movie). What "identical" means, and what was measured:
   empty, which keeps the later sectors (arriving up to a VBlank after their moment, at VBlank
   resolution) on time. No gap remains within a movie, only at its end and at the credits' re-read
   that the emulator has too.
+  `compare_xa.py` takes the reads from the emulator's side (its read position, VBlank by VBlank:
+  steps of 1-8 sectors are one read), not from what the port decoded: every audio sector the
+  emulator read through must have been decoded by the port, and the port's CD input may run dry
+  (its underrun count rising) only after the last sector of one of the emulator's reads. The logs
+  show 3 such gaps on new-game and 5 on ending (plus 2 from the boot, before the ending capture
+  starts), none inside a read. `tools/oracle/test_sound_checks.py` (run first by
+  `tools/sound-check.sh`) feeds both movie checks synthetic logs and requires them to fail on
+  each bad case: a picture leaning 0.25 in one channel, pixel data cut short, missing or of the
+  wrong size, a gap in the XA audio inside a read, and a sector the port skipped inside a read
+  where the emulator showed only its position (it repeated the one before).

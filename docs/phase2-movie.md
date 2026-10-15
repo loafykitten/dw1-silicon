@@ -101,7 +101,9 @@ and the movies around them):
 - **Colour conversion: fixed.** The MDEC's YCbCr to RGB rounded its products down (DW2-PC's
   `>> 10`), which made every channel lean half a level against the emulator (R and B -0.5, G
   +0.5 on average). psx-spx gives real factors with no fixed point ("unknown"); rounding to the
-  nearest takes the lean to under 0.02 of a level and the bytes that differ from 49% to 36%.
+  nearest takes the lean to under 0.04 of a level (each channel's mean over its own samples:
+  -0.008, +0.005, +0.039 for R, G, B on the new-game movie; +0.019, -0.008, +0.002 around the
+  credits) and the bytes that differ from 49% to 36%.
   And psx-spx's 9-bit limit ("Y AND 1FFh" before saturating, stated for monochrome, "probably"
   for colour): three pixels of the credits whose blue sum was -264 came out 0 natively and 255
   on the emulator; the sums are now cut to 9 bits first and those match.
@@ -109,7 +111,7 @@ and the movies around them):
   (AAN) factorisation of its own, the port with psx-spx's matrix form, and psx-spx says the
   hardware's rounding "isn't perfect" in its own code. On the new-game movie 7.8 million of 22
   million channel bytes differ, 95% by one level, at most 4 (5 in two corner pixels of the
-  credits), with no lean (mean signed difference under 0.02 per channel). Matching Redux here
+  credits), with no lean (mean signed difference under 0.04 per channel). Matching Redux here
   would mean copying its factorisation and wouldn't be the hardware's either, so the check
   allows 6 levels and no lean of more than 0.1.
 
