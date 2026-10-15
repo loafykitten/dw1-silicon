@@ -12,12 +12,21 @@
 --   hold BTN[+BTN...] N   hold the buttons for N VBlanks
 --   wait N                no input for N VBlanks
 --   tap BTN               hold BTN for 4 VBlanks, then wait 26 more (the route's usual tap)
+--   autoreel N [HI [RUN]] FISH only: reel a hooked fish for at most N VBlanks with no stops,
+--                         deciding every 3 VBlanks from RAM (FISHING_DATA at 0x8007AC58: the rod's
+--                         state, the hooked fish's state and the tension): hold Cross unless the
+--                         tension is above HI (7500), or above RUN (5000) while the fish runs
+--                         (state 50); the line snaps at 10000 held for a while
 --   shot NAME             screenshot NAME.raw/.txt now
 --   dump NAME             main RAM (2 MB) to NAME.bin
 --   waitne ADDR VALUE N   no input until the 32-bit word at ADDR (hex) is not VALUE (hex), at
 --                         most N VBlanks (for waiting on game state, e.g. a fish biting)
 --   state                 print the state line again
 --   quit                  end the run
+-- It never stops for commands while the game is using the CD (a CdRead, CdReadSync or
+-- CdSearchFile call in the last 60 VBlanks): runs that paused mid-read diverged from their
+-- recordings (Redux's CD timing follows the host clock), so it runs on with no input until the
+-- drive has been quiet that long, and the state line shows where it stopped.
 -- After each batch it prints "EXPLORE state ..." and takes a screenshot s_<vblank>. Every
 -- executed press is appended to ./inputs.log as a route-schedule line
 -- "{ vblank, vblank, 1, hold, 'BTN' }," ready for PRESSES.
@@ -79,6 +88,26 @@ local active = nil      -- { buttons = {bits}, last = vblank at which to release
 local waitUntil = nil
 local waitWord = nil    -- { index into ram32, value, last vblank } for waitne
 local ram32 = ffi.cast('uint32_t*', PCSX.getMemPtr())
+local reel = nil        -- { start, last, pressed } for autoreel
+local function ramI32(addr)
+    local v = ram32[bit.rshift(bit.band(addr, 0x1FFFFF), 2)]
+    return v >= 0x80000000 and v - 0x100000000 or v
+end
+-- CD activity (see the header): the VBlank of the last libcd call the game made.
+-- Before the takeover the route's VBlanks are counted here too, so a read in flight at the target
+-- still holds the first stop back.
+local lastCd = -1000
+local takenOver, preCount = false, 0
+KEEP_EXPLORE_COUNT = PCSX.Events.createEventListener('GPU::Vsync', function()
+    if not takenOver then preCount = preCount + 1 end
+end)
+local function cdTouch() lastCd = takenOver and vblank or preCount end
+PCSX.settings.emulator.Debug.Debug = true
+KEEP_EXPLORE_CD = {
+    PCSX.addBreakpoint(0x800B2BB4, 'Exec', 4, 'explore CdRead', cdTouch),
+    PCSX.addBreakpoint(0x800B2CB4, 'Exec', 4, 'explore CdReadSync', cdTouch),
+    PCSX.addBreakpoint(0x800B23C0, 'Exec', 4, 'explore CdSearchFile', cdTouch),
+}
 local needState = true
 local log = assert(io.open('inputs.log', 'ab'))
 
@@ -105,7 +134,26 @@ local function tick()
     if waitWord and (ram32[waitWord[1]] ~= waitWord[2] or vblank >= waitWord[3]) then
         waitWord = nil
     end
-    while not active and not waitUntil and not waitWord do
+    if reel then
+        local rodState = ramI32(0x8007B41C)
+        if vblank >= reel.last or rodState ~= 0xB then
+            if reel.pressed then pad.clearOverride(B.CROSS) end
+            reel = nil
+        elseif (vblank - reel.start) % 3 == 0 then
+            local fish, level = ramI32(0x8007B488), ramI32(0x8007B504)
+            local press = level <= reel.hi and not (fish == 50 and level > reel.run)
+            if press then
+                pad.setOverride(B.CROSS)
+                log:write(string.format("    { %d, %d, 1, 3, 'CROSS' },\n", vblank, vblank))
+                log:flush()
+            elseif reel.pressed then
+                pad.clearOverride(B.CROSS)
+            end
+            reel.pressed = press
+        end
+    end
+    while not active and not waitUntil and not waitWord and not reel do
+        if #queue == 0 and vblank - lastCd < 60 then return end
         if #queue == 0 then
             if needState then
                 print(string.format('EXPLORE state vblank=%d %s', vblank, status()))
@@ -140,6 +188,10 @@ local function tick()
             local addr, value = tonumber(a1, 16), tonumber(a2, 16)
             local n = tonumber(line:match('%S+%s+%S+%s+%S+%s+(%S+)'))
             waitWord = { bit.rshift(bit.band(addr, 0x1FFFFF), 2), value, vblank + n }
+        elseif cmd == 'autoreel' then
+            local hi, run = line:match('^%S+%s+%S+%s+(%S+)%s*(%S*)')
+            reel = { start = vblank, last = vblank + tonumber(a1), pressed = false,
+                     hi = tonumber(hi) or 7500, run = tonumber(run) or 5000 }
         elseif cmd == 'shot' then
             shot(a1)
         elseif cmd == 'dump' then
@@ -161,6 +213,8 @@ end
 
 DW1ROUTE_TARGET = DW1ROUTE_TARGET or os.getenv('DW1EXPLORE_TARGET')
 DW1ROUTE_ON_TARGET = function(v)
+    lastCd = v - (preCount - lastCd)
+    takenOver = true
     vblank = v
     print('EXPLORE start vblank=' .. v)
     -- Detach the route: its listener must not fire its remaining scheduled presses (they would

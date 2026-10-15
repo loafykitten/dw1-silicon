@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Makes a fixture card whose Digimon World (USA) saves open the game's debug room.
 
-    python3 tools/oracle/debug_fixture.py [--keep TRIGGER]... IN.mcd OUT.mcd
+    python3 tools/oracle/debug_fixture.py [--keep TRIGGER]... [--clear TRIGGER]... IN.mcd OUT.mcd
 
 The debug room (TCRF, "Digimon World": the area with Jijimon's house, with debug Jijimon and
 Tokomon actors: Mr. Warp, time skips, Mr. Digivolution, a shop) appears when four story-flag
@@ -17,7 +17,9 @@ The flag bytes are whole bytes of the trigger bitfield (ScriptState.triggers, at
 0xF5: triggers 40-63 and 200-207), so they also hold flags the debug room doesn't need, among them
 the fishing rods (TRIGGER_HAVE_OLD_FISHROD 45, TRIGGER_HAVE_AMAZING_ROD 46, decomp
 include/dw/trigger.h). `--keep N` leaves trigger N as the input had it (the debug room still
-appears with 45 and 46 set: measured 2026-10-15 on Master99's 2002 save).
+appears with 45 and 46 set: measured 2026-10-15 on Master99's 2002 save). `--clear N` also
+clears trigger N anywhere in the bitfield (e.g. 257, Penguinmon recruited, so that he is back in
+front of the Curling Cave with his free first match: map script 206, section 6).
 
 The card stays a fixture for the oracle: a recording starts from it on both sides, so nothing
 is poked into RAM during a run. Only reads IN; never overwrites an existing OUT.
@@ -46,11 +48,11 @@ def valid(save):
 
 
 def main():
-    args, keep = sys.argv[1:], []
-    while args and args[0] == "--keep":
-        if len(args) < 2 or not args[1].isdigit():
+    args, keep, clear = sys.argv[1:], [], []
+    while args and args[0] in ("--keep", "--clear"):
+        if len(args) < 2 or not args[1].isdigit() or int(args[1]) >= 800:
             sys.exit(__doc__)
-        keep.append(int(args[1]))
+        (keep if args[0] == "--keep" else clear).append(int(args[1]))
         args = args[2:]
     if len(args) != 2:
         sys.exit(__doc__)
@@ -79,6 +81,8 @@ def main():
                     if SCRIPT_STATE_AT + TRIGGERS_AT + t // 8 == o:
                         kept |= save[o] & (1 << (t % 8))
                 save[o] = kept
+            for t in clear:
+                save[SCRIPT_STATE_AT + TRIGGERS_AT + t // 8] &= ~(1 << (t % 8)) & 0xFF
             struct.pack_into("<I", save, CHECKSUM_AT, checksum(save))
             card[at:at + PAYLOAD] = save
             changed += 1

@@ -86,6 +86,9 @@ local EXTRA = {
     -- Phase 9, stream fishcurl: Master99's save (debug fixture with the rods kept), Mr. Warp
     ['master99-warp'] = { base = 'continue-save3',
                           file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua' } },
+    ['debug-curl'] = { base = 'continue-save3',
+                       file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
+                                '/route-debug-curl-schedule.lua' } },
     ['debug-fish'] = { base = 'continue-save3',
                        file = { '/route-master99-yard-schedule.lua', '/route-debug-fish-schedule.lua' } },
 }
