@@ -146,3 +146,27 @@ Ember has looked at them; the widescreen report is written. Then Phase 9.
 ## Progress
 
 - 2026-10-14: plan written from Sol's survey of the drawing code and DW2-PC's HD renderer.
+- **8.1 done** (c68a300): `crates/render`, wgpu 30 on Metal. The picture is a Bgra8Unorm texture
+  drawn with a sharp-bilinear shader into a non-sRGB window: whole-number scales are the picture
+  pixel for pixel (offscreen readback tests at 1-4x). Fifo, one frame of latency; `ShowGate`
+  drops frames rather than wait on displays slower than the field rate. The splash draws on an
+  SDL software canvas through the same renderer. Sol reviewed it three times. Windows were
+  "occluded" for part of the session (macOS reports them hidden; the S0.6 spike couldn't draw
+  either), so frames went unshown then; when visible, 1 skipped frame in 545.
+- **8.2 done** (aa4c969, Sonnet subagent): `backend::hd`. `DW1_SCALE=n`, `DW1_HD_THREADS`,
+  `DW1_SHOTS` at scale with `DW1_SHOTS_1X=1`, `tools/hd_compare.py`. All ten replays identical
+  at scale 4. Timing (release, new-game replay): 9.6 s at 1x, 14.8 s at 4x, 21.9 s at 8x; per
+  field at 4x a 0.25 ms mean, 6.2 ms worst. Astra found eight issues (UVs on 2D quads such as map
+  tiles floored instead of the 1x rounding, lines, odd-row tails, wrapped transfers, overflow,
+  `vram_mut`, overlapping surfaces); being fixed.
+- **8.3 done** (cfada45, c5afad7, 5b920a3): `backend::pgxp` and the GTE's report. Each corner is
+  precise on its own (shared edges stay closed) and sprite-like mappings keep integer corners.
+  The table is cleared after each drawn ordering table (DW1 projects everything, then draws once
+  per frame; menu OTs are spliced into the main one). All ten replays identical with
+  `DW1_SCALE=4 DW1_PGXP=1`. Astra's review fixed: per-vertex saturation in RTPT, the divider's
+  own overflow test, depth in the duplicate test.
+- **8.4 done** (d975a06): `settings.txt` with render_scale (auto from the window's size), no_wobble,
+  fit, fullscreen; F2/F3/F4/F11 with a note in the corner. Defaults: auto, no wobble on, integer
+  fit. "Full colour" is not built yet.
+- **8.5 not needed** so far: software HD holds the field rate at 4x and mostly at 8x.
+- **8.6 done:** `docs/phase8-widescreen.md` (selective, not now).
