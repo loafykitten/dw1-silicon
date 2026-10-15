@@ -119,7 +119,11 @@ local EXTRA = {
                       file = { '/route-arena-start-schedule.lua', '/route-arena-cup-schedule.lua' } },
     -- Phase 9, stream cup: a whole Grade C cup from the Arena Lobby (fixture p9-cup-lobby)
     ['cup'] = { base = 'title',
-                file = { '/route-arena-start-schedule.lua', '/route-cup-schedule.lua' } },
+                file = { '/route-arena-start-schedule.lua', '/route-cup-lobby-schedule.lua',
+                         '/route-cup-schedule.lua' } },
+    ['cup-lost'] = { base = 'title',
+                     file = { '/route-arena-start-schedule.lua', '/route-cup-lobby-schedule.lua',
+                              '/route-cup-lost-schedule.lua' } },
     ['ending-continue'] = { base = 'title', file = '/route-ending-continue-schedule.lua' },
     ['ending'] = { base = 'title',
                    file = { '/route-ending-continue-schedule.lua', '/route-ending-schedule.lua' } },
