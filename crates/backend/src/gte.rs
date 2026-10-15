@@ -410,18 +410,26 @@ impl Gte {
 
     /// The no-wobble option (`pgxp`): the float projection of the point just transformed, from
     /// the unshifted MAC1..3 (x = view x * H / z + OFX, before the 11-bit cut; z = view depth),
-    /// next to its integer result `sx`, `sy`. Reads the registers only: what the game sees is
-    /// unchanged. `flag_before`: FLAG before this vertex's transform, so only this point's
-    /// saturations count, not those of an earlier RTPT vertex.
-    fn report_precise(&self, m: &[i64; 3], sf: bool, sx: i32, sy: i32, flag_before: u32) {
+    /// next to its integer result `sx`, `sy` (`raw`: the same before saturation). Reads the
+    /// registers only: what the game sees is unchanged. Saturation is judged for this point
+    /// alone (FLAG accumulates over an RTPT's three vertices).
+    #[allow(clippy::too_many_arguments)]
+    fn report_precise(&self, m: &[i64; 3], sf: bool, lm: bool, sx: i32, sy: i32, raw: (i32, i32)) {
         let z = m[2] as f64 / 4096.0;
-        let h = f64::from(self.c[creg::H] as u16);
-        if 2.0 * z <= h {
+        let h = self.c[creg::H] as u16 as u32;
+        // The divider's own overflow test (`unr_divide`): the float isn't the point.
+        if h >= (self.d[dreg::SZ3] as u32).wrapping_mul(2) {
             crate::pgxp::record(sx, sy, 0.0, 0.0, z, crate::pgxp::NEAR);
             return;
         }
+        let shift = if sf { 12 } else { 0 };
+        let lo = if lm { 0 } else { -0x8000 };
+        let ir_saturated = m[..2]
+            .iter()
+            .any(|&mac| !(lo..=0x7FFF).contains(&(mac >> shift)));
+        let saturated = ir_saturated || raw != (sx, sy);
         let div = if sf { 4096.0 } else { 1.0 };
-        let saturated = self.flag & !flag_before & (f_ir(1) | f_ir(2) | F_SX2 | F_SY2) != 0;
+        let h = f64::from(h);
         crate::pgxp::record(
             sx,
             sy,
@@ -438,7 +446,6 @@ impl Gte {
     /// MAC0/IR0 depth-cue step; RTPT does it for V2 only, so V0/V1 can't leave its flags.
     fn rtps_vertex(&mut self, v: usize, sf: bool, lm: bool, depth_cue: bool) {
         let shift = if sf { 12 } else { 0 };
-        let flag_before = self.flag;
         let (vx, vy, vz) = (self.vx(v), self.vy(v), self.vz(v));
         let mut m = [0i64; 3];
         for (i, mi) in m.iter_mut().enumerate() {
@@ -472,13 +479,15 @@ impl Gte {
         let q = i64::from(q);
         let mut s = q * i64::from(self.d[dreg::IR1] as i16) + i64::from(self.c[creg::OFX]);
         self.set_mac0(s);
-        let x = self.sat_sxy((s >> 16) as i32, F_SX2);
+        let raw_x = (s >> 16) as i32;
+        let x = self.sat_sxy(raw_x, F_SX2);
         s = q * i64::from(self.d[dreg::IR2] as i16) + i64::from(self.c[creg::OFY]);
         self.set_mac0(s);
-        let y = self.sat_sxy((s >> 16) as i32, F_SY2);
+        let raw_y = (s >> 16) as i32;
+        let y = self.sat_sxy(raw_y, F_SY2);
         self.push_sxy(x, y);
         if crate::pgxp::enabled() {
-            self.report_precise(&m, sf, x, y, flag_before);
+            self.report_precise(&m, sf, lm, x, y, (raw_x, raw_y));
         }
         if !depth_cue {
             return;

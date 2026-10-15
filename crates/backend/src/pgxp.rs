@@ -121,10 +121,11 @@ pub fn record(sx: i32, sy: i32, x: f64, y: f64, z: f64, flags: u32) {
                 if e.n > CANDIDATES {
                     return;
                 }
-                // The same point again (a shared vertex projected twice).
+                // The same point again (a shared vertex projected twice): the same place and
+                // depth. A point at another depth stays a separate candidate.
                 if e.c[..e.n].iter().any(|c| {
                     let (dx, dy) = (c.x - fx, c.y - fy);
-                    dx * dx + dy * dy <= 1.0 / 4096.0
+                    dx * dx + dy * dy <= 1.0 / 4096.0 && zdist(c.z, z as f32) <= 1.0 / 256.0
                 }) {
                     return;
                 }
@@ -327,6 +328,17 @@ mod tests {
     }
 
     #[test]
+    fn the_same_place_at_another_depth_is_another_point() {
+        let _g = serial();
+        set_enabled(true);
+        end_frame();
+        record(10, 20, 10.25, 20.25, 500.0, 0);
+        record(10, 20, 10.25, 20.25, 100.0, 0);
+        record(10, 20, 10.25, 20.25, 100.2, 0); // the same point again
+        assert_eq!(table(|t| find(t, 10, 20).map(|e| e.n)), Some(2));
+    }
+
+    #[test]
     fn corners_with_several_points_agree_in_depth() {
         let _g = serial();
         set_enabled(true);
@@ -382,6 +394,46 @@ mod gte_tests {
         let regs: [u32; 32] = std::array::from_fn(|r| g.mfc2(r));
         let sxy = regs[14];
         (regs, sxy as i16 as i32, (sxy >> 16) as i16 as i32)
+    }
+
+    #[test]
+    fn each_rtpt_vertex_is_judged_on_its_own() {
+        let _g = serial();
+        set_enabled(true);
+        end_frame();
+        let mut g = gte();
+        // Two vertices far right (both saturate SX to 1023) and one near the centre.
+        let v = [(5000i16, 0i16, 1000i16), (6000, 10, 1000), (10, 0, 1000)];
+        for (k, (x, y, z)) in v.into_iter().enumerate() {
+            g.mtc2(2 * k, (y as u16 as u32) << 16 | x as u16 as u32);
+            g.mtc2(2 * k + 1, z as u16 as u32);
+        }
+        g.execute(0x0028_0030); // RTPT, sf
+        let sxy: Vec<(i32, i32)> = (12..15)
+            .map(|r| {
+                let w = g.mfc2(r);
+                (w as i16 as i32, (w >> 16) as i16 as i32)
+            })
+            .collect();
+        assert_eq!(sxy[0].0, 1023);
+        // Both saturated points are kept, at their true positions (and each under its own key,
+        // which here is shared: two candidates).
+        assert_eq!(table(|t| find(t, sxy[0].0, sxy[0].1).map(|e| e.n)), Some(1));
+        assert_eq!(table(|t| find(t, sxy[1].0, sxy[1].1).map(|e| e.n)), Some(1));
+        assert!(table(|t| find(t, sxy[2].0, sxy[2].1).is_some()));
+    }
+
+    #[test]
+    fn a_divide_overflow_records_nothing() {
+        let _g = serial();
+        set_enabled(true);
+        end_frame();
+        // z = 257 * 0.5 = 128.5 after the transform: SZ3 = 128 and H = 256 >= 2 * 128, so the
+        // divide saturates, though 2 * 128.5 > H.
+        let mut g = gte();
+        g.ctc2(4, 0x0800); // RT33 = 0.5
+        let (_, sx, sy) = rtps(&mut g, 10, 0, 257);
+        assert!(table(|t| find(t, sx, sy).is_none()));
     }
 
     #[test]
