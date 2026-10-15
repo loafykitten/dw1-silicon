@@ -111,8 +111,31 @@ local EXTRA = {
     ['arena-start'] = { base = 'title', file = '/route-arena-start-schedule.lua' },
     ['arena-cup'] = { base = 'title',
                       file = { '/route-arena-start-schedule.lua', '/route-arena-cup-schedule.lua' } },
+    ['ending-continue'] = { base = 'title', file = '/route-ending-continue-schedule.lua' },
+    ['ending'] = { base = 'title',
+                   file = { '/route-ending-continue-schedule.lua', '/route-ending-schedule.lua' } },
     ['battle-twice'] = { base = 'continue-save2',
                          file = { '/route-battle-schedule.lua', '/route-battle-twice-schedule.lua' } },
+    -- Phase 9, stream fishcurl: Master99's save (debug fixture with the rods kept), Mr. Warp
+    ['master99-warp'] = { base = 'continue-save3',
+                          file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua' } },
+    ['debug-curl'] = { base = 'continue-save3',
+                       file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
+                                '/route-debug-curl-schedule.lua' } },
+    ['debug-curl-win'] = { base = 'continue-save3',
+                           file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
+                                    '/route-debug-curl-win-schedule.lua', '/route-debug-curl-schedule.lua',
+                                    '/route-debug-curl-win-tail-schedule.lua' } },
+    ['debug-arena'] = { base = 'continue-save3',
+                        file = { '/route-master99-yard-schedule.lua', '/route-debug-arena-schedule.lua' } },
+    ['debug-gym'] = { base = 'continue-save3',
+                      file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
+                               '/route-debug-gym-schedule.lua' } },
+    ['debug-seadramon'] = { base = 'continue-save3',
+                            file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
+                                     '/route-debug-seadramon-schedule.lua' } },
+    ['debug-fish'] = { base = 'continue-save3',
+                       file = { '/route-master99-yard-schedule.lua', '/route-debug-fish-schedule.lua' } },
 }
 local base = PROFILE
 if EXTRA[PROFILE] then base = EXTRA[PROFILE].base end
@@ -124,16 +147,24 @@ elseif base == 'continue' then
     PRESSES, MILESTONES = dofile(CONTINUE_SCHEDULE_FILE or (HERE .. '/route-continue-schedule.lua'))
 elseif base == 'continue-save2' then
     PRESSES, MILESTONES = dofile(HERE .. '/route-continue-save2-schedule.lua')
+elseif base == 'continue-save3' then
+    PRESSES, MILESTONES = dofile(HERE .. '/route-continue-save3-schedule.lua')
 elseif base ~= 'new-game' then
     error('unknown DW1ROUTE_PROFILE ' .. tostring(PROFILE))
 end
 if EXTRA[PROFILE] then
     local files = EXTRA[PROFILE].file
     if type(files) == 'string' then files = { files } end
+    CONTROLLERS = nil
     for _, file in ipairs(files) do
-        local morePresses, moreMilestones = dofile(HERE .. file)
+        local morePresses, moreMilestones, controller = dofile(HERE .. file)
         for _, p in ipairs(morePresses) do PRESSES[#PRESSES + 1] = p end
         for _, m in ipairs(moreMilestones) do MILESTONES[#MILESTONES + 1] = m end
+        -- A schedule file may also return a controller, function(vblank, pad, ram): called
+        -- after each VBlank's scheduled presses, it presses from the emulated RAM (no host
+        -- input, so as deterministic as a schedule) for minigames whose turns don't come at
+        -- fixed VBlanks. The recording keeps what the game read, so its replays don't need it.
+        if controller then CONTROLLERS = CONTROLLERS or {}; CONTROLLERS[#CONTROLLERS + 1] = controller end
     end
 end
 local TARGET = DW1ROUTE_TARGET or MILESTONES[#MILESTONES][2]
@@ -215,6 +246,9 @@ KEEP_VSYNC = PCSX.Events.createEventListener('GPU::Vsync', function()
     vblank = vblank + 1
     if releaseAt[vblank] then for _, b in ipairs(releaseAt[vblank]) do b[1].clearOverride(b[2]) end end
     if pressAt[vblank] then for _, b in ipairs(pressAt[vblank]) do b[1].setOverride(b[2]) end end
+    if CONTROLLERS then
+        for _, c in ipairs(CONTROLLERS) do c(vblank, pad, PCSX.getMemPtr()) end
+    end
 
     local m = milestoneAt[vblank]
     if m then

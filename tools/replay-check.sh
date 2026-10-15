@@ -6,10 +6,12 @@
 #                                                 battle-fixture battle-twice training-fixture
 #                                                 training-bonus training-six keeper-fixture
 #                                                 register-save debug-evo debug-death
-#                                                 battle-mode arena-cup tour-panorama
-#                                                 tour-jungle tour-drill tour-savanna
-#                                                 tour-mansion tour-canyon tour-dino
-#                                                 tour-dino-back tour-lava tour-freezeland
+#                                                 battle-mode arena-cup ending debug-fish
+#                                                 debug-curl debug-gym debug-curl-win
+#                                                 debug-seadramon tour-panorama tour-jungle
+#                                                 tour-drill tour-savanna tour-mansion
+#                                                 tour-canyon tour-dino tour-dino-back
+#                                                 tour-lava tour-freezeland
 #
 # Needs the local, gitignored oracle dumps (captures/oracle-runs/) and fixture cards
 # (captures/fixtures/); a replay whose dumps or card are missing is reported and skipped.
@@ -46,6 +48,12 @@ debug-evo p9-debug-evo-record debug-day2-gabumon
 debug-death p9-debug-death-record debug-day2-gabumon
 battle-mode p9-arena-vs-record p9-arena-vs-p1 p9-arena-vs-p2
 arena-cup p9-arena-std-record p9-arena-master99
+ending p9-ending-record2 p9-ending-mt-infinity
+debug-fish p9-fishcurl-fish-record p9-fishcurl-debug-master99-rods
+debug-curl p9-fishcurl-curl-record p9-fishcurl-debug-master99-penguin
+debug-gym p9-fishcurl-gym-record p9-fishcurl-debug-master99-flute
+debug-curl-win p9-fishcurl-curlwin-record p9-fishcurl-debug-master99-penguin
+debug-seadramon p9-fishcurl-sea-record p9-fishcurl-debug-master99-rods
 tour-panorama p9-tour-panorama-record debug-day2-gabumon
 tour-jungle p9-tour-jungle-record debug-day2-gabumon
 tour-drill p9-tour-drill-record debug-day2-gabumon

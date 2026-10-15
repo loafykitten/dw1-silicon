@@ -430,6 +430,10 @@ impl psyq::libetc::Host for Headless {
         }
     }
 
+    fn vsync_count(&mut self, native: u32) -> u32 {
+        self.replay.as_ref().and_then(|r| r.ps1_vcount(native)).unwrap_or(native)
+    }
+
     fn pad(&mut self, caller: usize) -> u32 {
         let Some(replay) = self.replay.as_mut() else {
             let vblank = psyq::libetc::vblank_count();
