@@ -10,6 +10,7 @@ mod headless;
 mod pc_text;
 mod replay;
 mod saves;
+mod settings;
 mod window;
 
 /// The disc's `.cue`: `DW1_DISC`, else `<workspace>/disc/Digimon World (USA).cue`.

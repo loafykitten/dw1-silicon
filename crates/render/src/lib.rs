@@ -103,16 +103,30 @@ struct Out {
 /// The picture format: 0x00RRGGBB little-endian is B, G, R, X in memory.
 const PICTURE_FORMAT: TextureFormat = TextureFormat::Bgra8Unorm;
 
+/// One picture drawn into the target: its placement (a uniform buffer of its own, so two
+/// layers in one pass don't share it) and its texture (remade when the size changes).
+struct Layer {
+    uniform: Buffer,
+    texture: Option<(Texture, BindGroup, u32, u32)>,
+}
+
+/// Which layer.
+#[derive(Clone, Copy)]
+enum Which {
+    Picture,
+    Note,
+}
+
 /// What draws pictures, with or without a window: the device, the pipeline for one target
-/// format, and the picture texture (remade when the picture's size changes).
+/// format, and two layers: the game's picture and a note drawn over it.
 struct Painter {
     device: Device,
     queue: Queue,
     pipeline: RenderPipeline,
     layout: BindGroupLayout,
     sampler: Sampler,
-    uniform: Buffer,
-    picture: Option<(Texture, BindGroup, u32, u32)>,
+    picture: Layer,
+    note: Layer,
 }
 
 impl Painter {
@@ -186,29 +200,41 @@ impl Painter {
             min_filter: FilterMode::Linear,
             ..Default::default()
         });
-        let uniform = device.create_buffer(&BufferDescriptor {
-            label: Some("place"),
-            size: 32,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let layer = || Layer {
+            uniform: device.create_buffer(&BufferDescriptor {
+                label: Some("place"),
+                size: 32,
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            texture: None,
+        };
+        let (picture, note) = (layer(), layer());
         Painter {
             device,
             queue,
             pipeline,
             layout,
             sampler,
-            uniform,
-            picture: None,
+            picture,
+            note,
         }
     }
 
-    /// Uploads a `w x h` picture (0x00RRGGBB per pixel, row after row).
-    fn upload(&mut self, pixels: &[u32], w: u32, h: u32) {
+    fn layer(&self, which: Which) -> &Layer {
+        match which {
+            Which::Picture => &self.picture,
+            Which::Note => &self.note,
+        }
+    }
+
+    /// Uploads a `w x h` picture (0x00RRGGBB per pixel, row after row) into a layer.
+    fn upload(&mut self, which: Which, pixels: &[u32], w: u32, h: u32) {
         if w == 0 || h == 0 || pixels.len() < (w as usize * h as usize) {
             return;
         }
-        if !matches!(self.picture, Some((_, _, pw, ph)) if pw == w && ph == h) {
+        let layer = self.layer(which);
+        if !matches!(layer.texture, Some((_, _, pw, ph)) if pw == w && ph == h) {
             let texture = self.device.create_texture(&TextureDescriptor {
                 label: Some("picture"),
                 size: Extent3d {
@@ -230,7 +256,7 @@ impl Painter {
                 entries: &[
                     BindGroupEntry {
                         binding: 0,
-                        resource: self.uniform.as_entire_binding(),
+                        resource: layer.uniform.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 1,
@@ -242,9 +268,13 @@ impl Painter {
                     },
                 ],
             });
-            self.picture = Some((texture, bind, w, h));
+            let layer = match which {
+                Which::Picture => &mut self.picture,
+                Which::Note => &mut self.note,
+            };
+            layer.texture = Some((texture, bind, w, h));
         }
-        let (texture, ..) = self.picture.as_ref().unwrap();
+        let (texture, ..) = self.layer(which).texture.as_ref().unwrap();
         let bytes: &[u8] = bytemuck_u32(&pixels[..(w * h) as usize]);
         self.queue.write_texture(
             TexelCopyTextureInfo {
@@ -268,8 +298,17 @@ impl Painter {
     }
 
     /// Clears `view` (a `tw x th` target) to black and draws the uploaded picture placed by
-    /// `fit` (nothing but black when there's no picture).
-    fn draw(&self, view: &TextureView, tw: u32, th: u32, fit: Fit, show: bool) -> CommandBuffer {
+    /// `fit` (nothing but black when `show` is false), then the note one to one at `note`'s
+    /// top left, if any.
+    fn draw(
+        &self,
+        view: &TextureView,
+        tw: u32,
+        th: u32,
+        fit: Fit,
+        show: bool,
+        note: Option<(u32, u32)>,
+    ) -> CommandBuffer {
         let mut enc = self.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
@@ -288,18 +327,34 @@ impl Painter {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if let (true, Some((_, bind, pw, ph))) = (show, &self.picture) {
-                let (x, y, w, h) = place(fit, *pw, *ph, tw, th);
+            let mut layer = |l: &Layer, rect: &dyn Fn(u32, u32) -> (u32, u32, u32, u32)| {
+                let Some((_, bind, pw, ph)) = &l.texture else {
+                    return;
+                };
+                let (x, y, w, h) = rect(*pw, *ph);
                 if w > 0 && h > 0 {
                     let u: [f32; 8] = [
                         x as f32, y as f32, w as f32, h as f32, tw as f32, th as f32, *pw as f32,
                         *ph as f32,
                     ];
-                    self.queue.write_buffer(&self.uniform, 0, bytemuck_f32(&u));
+                    self.queue.write_buffer(&l.uniform, 0, bytemuck_f32(&u));
                     pass.set_pipeline(&self.pipeline);
                     pass.set_bind_group(0, bind, &[]);
                     pass.draw(0..6, 0..1);
                 }
+            };
+            if show {
+                layer(&self.picture, &|pw, ph| place(fit, pw, ph, tw, th));
+            }
+            if let Some((nx, ny)) = note {
+                layer(&self.note, &|pw, ph| {
+                    (
+                        nx,
+                        ny,
+                        pw.min(tw.saturating_sub(nx)),
+                        ph.min(th.saturating_sub(ny)),
+                    )
+                });
             }
         }
         enc.finish()
@@ -425,9 +480,15 @@ impl Renderer {
         }
     }
 
-    /// Shows `picture` placed by `fit` on black (black only if `None`). False if the window had
-    /// no texture to draw into this time (hidden, minimised); the frame is then dropped.
-    pub fn present(&mut self, picture: Option<Picture>, fit: Fit) -> bool {
+    /// Shows `picture` placed by `fit` on black (black only if `None`), and `note` over it one
+    /// to one with its top left at the given window pixel. False if the window had no texture
+    /// to draw into this time (hidden, minimised); the frame is then dropped.
+    pub fn present(
+        &mut self,
+        picture: Option<Picture>,
+        fit: Fit,
+        note: Option<(Picture, u32, u32)>,
+    ) -> bool {
         let picture = picture
             .filter(|p| (1..=self.max_size).contains(&p.w) && (1..=self.max_size).contains(&p.h));
         let texture = match self.surface.get_current_texture() {
@@ -449,7 +510,13 @@ impl Renderer {
             }
         };
         if let Some(p) = &picture {
-            self.painter.upload(p.pixels, p.w, p.h);
+            self.painter.upload(Which::Picture, p.pixels, p.w, p.h);
+        }
+        let note = note.filter(|(n, ..)| {
+            (1..=self.max_size).contains(&n.w) && (1..=self.max_size).contains(&n.h)
+        });
+        if let Some((n, ..)) = &note {
+            self.painter.upload(Which::Note, n.pixels, n.w, n.h);
         }
         let view = texture.texture.create_view(&Default::default());
         let cmd = self.painter.draw(
@@ -458,6 +525,7 @@ impl Renderer {
             self.config.height,
             fit,
             picture.is_some(),
+            note.map(|(_, x, y)| (x, y)),
         );
         self.painter.queue.submit([cmd]);
         self.painter.queue.present(texture);
@@ -509,10 +577,21 @@ impl Offscreen {
         })
     }
 
-    /// `picture` placed by `fit` in a `tw x th` target, read back as 0x00RRGGBB.
-    pub fn render(&mut self, picture: Picture, fit: Fit, tw: u32, th: u32) -> Vec<u32> {
+    /// `picture` placed by `fit` in a `tw x th` target, with `note` over it at its top-left
+    /// pixel, read back as 0x00RRGGBB.
+    pub fn render(
+        &mut self,
+        picture: Picture,
+        fit: Fit,
+        note: Option<(Picture, u32, u32)>,
+        tw: u32,
+        th: u32,
+    ) -> Vec<u32> {
         let p = &mut self.painter;
-        p.upload(picture.pixels, picture.w, picture.h);
+        p.upload(Which::Picture, picture.pixels, picture.w, picture.h);
+        if let Some((n, ..)) = &note {
+            p.upload(Which::Note, n.pixels, n.w, n.h);
+        }
         let target = p.device.create_texture(&TextureDescriptor {
             label: Some("offscreen"),
             size: Extent3d {
@@ -528,7 +607,7 @@ impl Offscreen {
             view_formats: &[],
         });
         let view = target.create_view(&Default::default());
-        let draw = p.draw(&view, tw, th, fit, true);
+        let draw = p.draw(&view, tw, th, fit, true, note.map(|(_, x, y)| (x, y)));
         // Rows padded to 256 bytes for the copy.
         let row = (tw * 4).div_ceil(COPY_BYTES_PER_ROW_ALIGNMENT) * COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = p.device.create_buffer(&BufferDescriptor {
@@ -635,7 +714,7 @@ mod tests {
         let pic = test_picture(w, h);
         for k in 1..=4 {
             let (tw, th) = (w * k, h * k);
-            let out = off.render(Picture { pixels: &pic, w, h }, Fit::Integer, tw, th);
+            let out = off.render(Picture { pixels: &pic, w, h }, Fit::Integer, None, tw, th);
             for y in 0..th {
                 for x in 0..tw {
                     let want = pic[((y / k) * w + x / k) as usize];
@@ -659,6 +738,7 @@ mod tests {
                 h: 240,
             },
             Fit::Integer,
+            None,
             700,
             500,
         );
@@ -668,6 +748,36 @@ mod tests {
         assert_eq!(out[10 * 700 + 30], 0x00ff_8040);
         assert_eq!(out[489 * 700 + 669], 0x00ff_8040);
         assert_eq!(out[490 * 700 + 669], 0);
+    }
+
+    #[test]
+    fn a_note_goes_over_the_picture_one_to_one() {
+        let Some(mut off) = Offscreen::new() else {
+            return;
+        };
+        let pic = vec![0x0000_00ff; 320 * 240];
+        let note: Vec<u32> = (0..10 * 4).map(|i| 0x0001_0000 * (i + 1)).collect();
+        let note_pic = Picture {
+            pixels: &note,
+            w: 10,
+            h: 4,
+        };
+        let pic = Picture {
+            pixels: &pic,
+            w: 320,
+            h: 240,
+        };
+        let out = off.render(pic, Fit::Integer, Some((note_pic, 5, 7)), 640, 480);
+        for y in 0..4u32 {
+            for x in 0..10u32 {
+                assert_eq!(
+                    out[((7 + y) * 640 + 5 + x) as usize],
+                    note[(y * 10 + x) as usize]
+                );
+            }
+        }
+        assert_eq!(out[7 * 640 + 4], 0xff);
+        assert_eq!(out[11 * 640 + 5], 0xff);
     }
 
     #[test]
@@ -684,6 +794,7 @@ mod tests {
                 h: 240,
             },
             Fit::Fill,
+            None,
             800,
             600,
         );

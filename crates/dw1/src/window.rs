@@ -6,12 +6,12 @@
 //! A = Square, S = Triangle, Enter = Start, right Shift = Select, Q/W = L1/R1, 1/2 = L2/R2.
 //! Gamepads use SDL's standard layout (south = Cross, east = Circle, west = Square,
 //! north = Triangle), the D-pad or left stick for directions, the triggers for L2/R2.
-//! Closing the window or Cmd-Q exits 0. F11 or Cmd-Ctrl-F toggles fullscreen.
-//! `DW1_WINDOW_LOG=1` logs frames presented and the display size (first frame, on size changes,
-//! then every 60 frames).
+//! Closing the window or Cmd-Q exits 0. `DW1_WINDOW_LOG=1` logs frames presented and the
+//! display size (first frame, on size changes, then every 60 frames).
 //!
-//! The picture is the largest whole multiple of 320x240 that fits, on black (the original
-//! look, pixel for pixel); `DW1_FIT=fill` fills the window at 4:3 instead (an addition).
+//! Picture settings (`settings.rs`, kept between runs; a note in the corner says what changed
+//! and whether it's original or an addition): F2 render scale (auto, 1, 2, 3, 4, 6, 8), F3 no
+//! wobble, F4 fit (integer, the original look, or fill at 4:3), F11 or Cmd-Ctrl-F fullscreen.
 //!
 //! Before the game starts, `Window::splash` shows a short text screen (about 2.8 s; any key,
 //! button or click skips it) saying this is the native Mac build. `DW1_NO_SPLASH=1` skips it;
@@ -21,6 +21,11 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use render::{Fit, Picture, Renderer};
+use sdl3::pixels::PixelFormat;
+use sdl3::render::Canvas;
+use sdl3::surface::Surface;
+
+use crate::settings::{Scale, Settings};
 use sdl3::EventPump;
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::Event;
@@ -193,7 +198,13 @@ pub struct Window {
     /// Declared before `window`, so it goes first (it draws into the window's Metal layer).
     renderer: Renderer,
     window: sdl3::video::Window,
-    fit: Fit,
+    /// The settings in use, and as kept in the file (without one run's environment overrides).
+    settings: Settings,
+    kept: Settings,
+    settings_path: Option<std::path::PathBuf>,
+    /// What the corner note says and until when.
+    note: Option<(Note, Instant)>,
+    note_buf: Vec<u32>,
     pump: EventPump,
     gamepad_sys: sdl3::GamepadSubsystem,
     gamepads: Vec<Gamepad>,
@@ -259,6 +270,75 @@ impl ShowGate {
             }
         }
     }
+}
+
+/// How long a note stays in the corner.
+const NOTE_TIME: Duration = Duration::from_millis(2500);
+
+/// What a hotkey changed.
+#[derive(Clone, Copy)]
+enum Note {
+    Scale,
+    Wobble,
+    Fit,
+    Fullscreen,
+}
+
+impl Note {
+    /// The note's line, with whether the setting is the original or an addition. `scale`: the
+    /// render scale in use.
+    fn text(self, s: &Settings, scale: u32) -> String {
+        let label = |original: bool| if original { "original" } else { "addition" };
+        match self {
+            Note::Scale => {
+                let auto = if s.scale == Scale::Auto {
+                    " (auto)"
+                } else {
+                    ""
+                };
+                format!("Render scale {scale}x{auto} - {}", label(scale == 1))
+            }
+            Note::Wobble if s.no_wobble && scale > 1 => "No wobble: on - addition".into(),
+            Note::Wobble if s.no_wobble => "No wobble: on (needs render scale 2x+)".into(),
+            Note::Wobble => "No wobble: off - original".into(),
+            Note::Fit if s.fit == Fit::Fill => "Fit: fill window - addition".into(),
+            Note::Fit => "Fit: whole multiples - original".into(),
+            Note::Fullscreen if s.fullscreen => "Fullscreen (F11 for a window)".into(),
+            Note::Fullscreen => "Window (F11 for fullscreen)".into(),
+        }
+    }
+}
+
+/// Draws `text` in SDL's 8x8 debug font at `k` window pixels per font pixel, light on dark
+/// with a margin, into `out`; returns its size.
+fn draw_note(text: &str, k: u32, out: &mut Vec<u32>) -> Result<(u32, u32), String> {
+    let pad = 4 * k;
+    let (w, h) = (text.len() as u32 * 8 * k + 2 * pad, 8 * k + 2 * pad);
+    let surface = Surface::new(w, h, PixelFormat::XRGB8888).map_err(|e| e.to_string())?;
+    let mut canvas: Canvas<Surface> = surface.into_canvas().map_err(|e| e.to_string())?;
+    canvas.set_draw_color((16, 18, 26));
+    canvas.clear();
+    canvas.set_draw_color((235, 238, 245));
+    canvas.set_scale(k as f32, k as f32).ok();
+    canvas
+        .draw_debug_text(text, ((pad / k) as f32, (pad / k) as f32))
+        .map_err(|e| e.to_string())?;
+    canvas.present();
+    let surface = canvas.into_surface();
+    let pitch = surface.pitch() as usize;
+    out.clear();
+    surface.with_lock(|px| {
+        for row in 0..h as usize {
+            out.extend(
+                px[row * pitch..][..w as usize * 4]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&b| u32::from_ne_bytes(b) & 0x00ff_ffff),
+            );
+        }
+    });
+    Ok((w, h))
 }
 
 /// The audio stream as libspu's sink holds it. SDL's stream calls are thread-safe [doc: SDL3
@@ -339,17 +419,19 @@ impl Window {
         let (pw, ph) = window.size_in_pixels();
         // SAFETY: the renderer is dropped before the window (field order in `Window`).
         let renderer = unsafe { Renderer::for_window(&window, pw, ph)? };
-        let fit = match std::env::var("DW1_FIT").as_deref() {
-            Ok("fill") => Fit::Fill,
-            _ => Fit::Integer,
-        };
+        let settings_path = Settings::path();
+        let (kept, settings) = Settings::load(settings_path.as_deref());
         let gamepad_sys = sdl.gamepad().map_err(|e| e.to_string())?;
         let pump = sdl.event_pump().map_err(|e| e.to_string())?;
         let audio = open_audio(&sdl);
         let mut w = Window {
             renderer,
             window,
-            fit,
+            settings,
+            kept,
+            settings_path,
+            note: None,
+            note_buf: Vec::new(),
             pump,
             gamepad_sys,
             gamepads: Vec::new(),
@@ -368,6 +450,9 @@ impl Window {
             gate: ShowGate::default(),
         };
         w.refresh_ns = refresh_ns(&w.window);
+        if w.settings.fullscreen {
+            w.set_fullscreen(true);
+        }
         for id in w.gamepad_sys.gamepads().unwrap_or_default() {
             w.open_gamepad(id);
         }
@@ -403,10 +488,19 @@ impl Window {
             } => {
                 let cmd_ctrl = keymod.intersects(Mod::LGUIMOD | Mod::RGUIMOD)
                     && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
-                if k == Scancode::F11 || (k == Scancode::F && cmd_ctrl) {
-                    self.toggle_fullscreen();
-                } else {
-                    self.keys |= key_bit(k);
+                match k {
+                    Scancode::F2 => self.change(Note::Scale, |s| s.next_scale()),
+                    Scancode::F3 => self.change(Note::Wobble, |s| s.no_wobble = !s.no_wobble),
+                    Scancode::F4 => self.change(Note::Fit, |s| {
+                        s.fit = if s.fit == Fit::Fill {
+                            Fit::Integer
+                        } else {
+                            Fit::Fill
+                        }
+                    }),
+                    Scancode::F11 => self.toggle_fullscreen(),
+                    Scancode::F if cmd_ctrl => self.toggle_fullscreen(),
+                    _ => self.keys |= key_bit(k),
                 }
             }
             Event::KeyUp {
@@ -445,19 +539,56 @@ impl Window {
         self.pads.values().fold(self.keys, |a, p| a | p.bits())
     }
 
-    /// Fullscreen on or off. SDL changes it asynchronously on macOS (an animation); waiting for
-    /// it to finish means a second press always sees where the first one ended. The field clock
-    /// resyncs after the wait.
+    /// A hotkey changed a setting: keep it (that setting only: the others keep what the file
+    /// says, whatever this run's environment overrides) and say so in the corner.
+    fn change(&mut self, note: Note, f: impl FnOnce(&mut Settings)) {
+        f(&mut self.settings);
+        let (s, k) = (&self.settings, &mut self.kept);
+        match note {
+            Note::Scale => k.scale = s.scale,
+            Note::Wobble => k.no_wobble = s.no_wobble,
+            Note::Fit => k.fit = s.fit,
+            Note::Fullscreen => k.fullscreen = s.fullscreen,
+        }
+        self.kept.save(self.settings_path.as_deref());
+        self.note = Some((note, Instant::now() + NOTE_TIME));
+    }
+
     fn toggle_fullscreen(&mut self) {
         let on = !matches!(
             self.window.fullscreen_state(),
             sdl3::video::FullscreenType::True | sdl3::video::FullscreenType::Desktop
         );
+        self.set_fullscreen(on);
+        self.change(Note::Fullscreen, |s| s.fullscreen = on);
+    }
+
+    /// Fullscreen on or off. SDL changes it asynchronously on macOS (an animation); waiting for
+    /// it to finish means a second press always sees where the first one ended. The field clock
+    /// resyncs after the wait.
+    fn set_fullscreen(&mut self, on: bool) {
         if let Err(e) = self.window.set_fullscreen(on) {
             eprintln!("dw1: fullscreen: {e}");
         }
         self.window.sync();
         self.refresh_ns = refresh_ns(&self.window);
+    }
+
+    /// Sets the GPU's render scale (and no wobble) for a window `pw x ph` pixels: changes only
+    /// when the settings or the window's size call for another scale.
+    fn apply_scale(&self, pw: u32, ph: u32) -> u32 {
+        let (_, _, _, shown_h) = render::place(self.settings.fit, 320, 240, pw, ph);
+        let scale = self.settings.scale_for(shown_h);
+        let wobble_off = scale > 1 && self.settings.no_wobble;
+        psyq::gpu::with(|g| {
+            if g.scale() != scale {
+                g.set_scale(scale);
+            }
+        });
+        if backend::pgxp::enabled() != wobble_off {
+            backend::pgxp::set_enabled(wobble_off);
+        }
+        scale
     }
 
     /// Shows `picture` (or black) and keeps the renderer at the window's pixel size. Returns the
@@ -467,15 +598,27 @@ impl Window {
         window: &sdl3::video::Window,
         picture: Option<Picture>,
         fit: Fit,
+        note: Option<(Picture, u32, u32)>,
     ) -> (u32, u32) {
         let (pw, ph) = window.size_in_pixels();
         renderer.resize(pw, ph);
-        renderer.present(picture, fit);
+        renderer.present(picture, fit, note);
         (pw, ph)
     }
 
     fn present(&mut self) {
-        // At a render scale above 1 (`DW1_SCALE`), the HD surface's picture.
+        if !self
+            .gate
+            .admit(self.t0.elapsed().as_nanos() as u64, self.refresh_ns)
+        {
+            return;
+        }
+        let (pw, ph) = self.renderer.drawable_size(
+            self.window.size_in_pixels().0,
+            self.window.size_in_pixels().1,
+        );
+        let scale = self.apply_scale(pw, ph);
+        // At a render scale above 1, the HD surface's picture.
         let shown = psyq::gpu::with(|g| {
             if g.scale() > 1 {
                 g.read_display_hd(&mut self.buf)
@@ -488,13 +631,46 @@ impl Window {
             w: w as u32,
             h: h as u32,
         });
-        if !self
-            .gate
-            .admit(self.t0.elapsed().as_nanos() as u64, self.refresh_ns)
-        {
-            return;
-        }
-        let (pw, ph) = Self::show(&mut self.renderer, &self.window, picture, self.fit);
+        let note = match self.note {
+            Some((n, until)) if Instant::now() < until => {
+                let text = n.text(&self.settings, scale);
+                // Glyphs of 8 window pixels at 360 lines, smaller if the line wouldn't fit across;
+                // cut short if it doesn't at the smallest. A margin of one glyph.
+                let width_for = |k: u32| (text.len() as u32 + 3) * 8 * k;
+                let k = (1..=(ph / 360).max(1))
+                    .rev()
+                    .find(|&k| width_for(k) <= pw)
+                    .unwrap_or(1);
+                let fits = (pw / 8).saturating_sub(3) as usize;
+                let text: String = text.chars().take(fits).collect();
+                draw_note(&text, k, &mut self.note_buf)
+                    .map(|(w, h)| (w, h, 8 * k, 8 * k))
+                    .map_err(|e| eprintln!("dw1: note: {e}"))
+                    .ok()
+            }
+            _ => {
+                self.note = None;
+                None
+            }
+        };
+        let note = note.map(|(w, h, x, y)| {
+            (
+                Picture {
+                    pixels: &self.note_buf,
+                    w,
+                    h,
+                },
+                x,
+                y,
+            )
+        });
+        let (pw, ph) = Self::show(
+            &mut self.renderer,
+            &self.window,
+            picture,
+            self.settings.fit,
+            note,
+        );
         self.frames += 1;
         if self.log
             && (self.frames == 1 || self.last_size != shown || self.frames.is_multiple_of(60))

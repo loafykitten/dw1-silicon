@@ -96,7 +96,13 @@ impl Window {
                         w,
                         h,
                     };
-                    Self::show(&mut self.renderer, &self.window, Some(picture), Fit::Exact);
+                    Self::show(
+                        &mut self.renderer,
+                        &self.window,
+                        Some(picture),
+                        Fit::Exact,
+                        None,
+                    );
                 }
                 Some(Err(e)) => {
                     eprintln!("dw1: splash: {e}");
