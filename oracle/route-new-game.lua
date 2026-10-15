@@ -89,6 +89,8 @@ local EXTRA = {
     ['debug-curl'] = { base = 'continue-save3',
                        file = { '/route-master99-yard-schedule.lua', '/route-master99-warp-schedule.lua',
                                 '/route-debug-curl-schedule.lua' } },
+    ['debug-arena'] = { base = 'continue-save3',
+                        file = { '/route-master99-yard-schedule.lua', '/route-debug-arena-schedule.lua' } },
     ['debug-fish'] = { base = 'continue-save3',
                        file = { '/route-master99-yard-schedule.lua', '/route-debug-fish-schedule.lua' } },
 }
