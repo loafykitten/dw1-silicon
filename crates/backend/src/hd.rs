@@ -26,7 +26,7 @@
 //! Surfaces are made when registered, not at first use. Precise positions (`precise`, slice 8.3)
 //! are ported but always off for now.
 
-use crate::gpu::{DITHER_TBL, H_MASK, State, Tex, VRAM_W, Vtx, W_MASK, to5};
+use crate::gpu::{DITHER_TBL, H_MASK, State, Tex, VRAM_H, VRAM_W, Vtx, W_MASK, line_walk, to5};
 
 /// Fraction bits of the fixed-point surface positions.
 const SUB: u32 = 4;
@@ -45,12 +45,48 @@ struct Surf {
     w: i32,
     h: i32,
     px: Vec<u16>,
+    /// False when the pixels can't be trusted (the 1x VRAM was written behind our back, or a
+    /// draw went elsewhere over this rect): the display falls back to the 1x picture, and the
+    /// surface is rebuilt from the VRAM when it is registered again or at the next primitive.
+    valid: bool,
 }
 
 impl Surf {
     fn contains(&self, x: i32, y: i32, w: i32, h: i32) -> bool {
-        x >= self.x && y >= self.y && x + w <= self.x + self.w && y + h <= self.y + self.h
+        let (x, y, w, h) = (x as i64, y as i64, w as i64, h as i64);
+        let (sx, sy, sw, sh) = (self.x as i64, self.y as i64, self.w as i64, self.h as i64);
+        x >= sx && y >= sy && x + w <= sx + sw && y + h <= sy + sh
     }
+
+    fn overlaps(&self, x: i32, y: i32, w: i32, h: i32) -> bool {
+        let (x, y, w, h) = (x as i64, y as i64, w as i64, h as i64);
+        let (sx, sy, sw, sh) = (self.x as i64, self.y as i64, self.w as i64, self.h as i64);
+        x < sx + sw && sx < x + w && y < sy + sh && sy < y + h
+    }
+}
+
+/// A VRAM rect (origin and size as the 1x GPU takes them: coordinates wrap at the VRAM edges)
+/// split into pieces that don't wrap, all inside VRAM.
+fn pieces(x: i32, y: i32, w: i32, h: i32) -> Vec<(i32, i32, i32, i32)> {
+    if w <= 0 || h <= 0 {
+        return Vec::new();
+    }
+    let (w, h) = (w.min(VRAM_W as i32), h.min(VRAM_H as i32));
+    let (x, y) = (x & W_MASK, y & H_MASK);
+    let split = |o: i32, n: i32, max: i32| -> Vec<(i32, i32)> {
+        if o + n > max {
+            vec![(o, max - o), (0, o + n - max)]
+        } else {
+            vec![(o, n)]
+        }
+    };
+    let mut out = Vec::new();
+    for (py, ph) in split(y, h, VRAM_H as i32) {
+        for (px, pw) in split(x, w, VRAM_W as i32) {
+            out.push((px, py, pw, ph));
+        }
+    }
+    out
 }
 
 /// The part of a surface a command needs.
@@ -119,6 +155,11 @@ pub struct Hd {
     work: u64,
     /// Time spent drawing the queue so far, nanoseconds (for `DW1_HD_STATS`).
     pub(crate) flush_ns: u64,
+    /// Some surface is invalid because the VRAM was written directly (`invalidate`).
+    dirty: bool,
+    /// Debug guard: the texture page and CLUT rects of the queued commands, and whether it fired.
+    tex_seen: Vec<[i32; 4]>,
+    warned: bool,
 }
 
 /// The default number of drawing threads: one per logical core, at most 8.
@@ -144,6 +185,9 @@ impl Hd {
             missed: false,
             flush_ns: 0,
             work: 0,
+            dirty: false,
+            tex_seen: Vec::new(),
+            warned: false,
         }
     }
 
@@ -190,28 +234,59 @@ impl Hd {
         }
     }
 
-    /// Forgets the surface pixels (the 1x VRAM was written behind our back); they are rebuilt
-    /// from it at the next use.
+    /// The 1x VRAM is about to be written behind our back (call after `flush`): every surface
+    /// is rebuilt from it by `revalidate`, which `Gpu` calls before the next command.
     pub fn invalidate(&mut self) {
         self.queue.clear();
         self.work = 0;
         for s in &mut self.surfs {
-            s.px = Vec::new();
+            s.valid = false;
         }
+        self.dirty = true;
+    }
+
+    /// Rebuilds the surfaces `invalidate` dropped from the 1x VRAM (a cheap check when none).
+    pub fn revalidate(&mut self, vram: &[u16]) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+        for si in 0..self.surfs.len() {
+            self.rebuild(si, vram);
+        }
+    }
+
+    fn rebuild(&mut self, si: usize, vram: &[u16]) {
+        let scale = self.scale;
+        let s = &mut self.surfs[si];
+        if !s.px.is_empty() {
+            let (x, y, w, h) = (s.x, s.y, s.w, s.h);
+            Self::copy_from_vram(s, scale, vram, x, y, w, h);
+        }
+        s.valid = true;
     }
 
     /// A draw or display buffer rect (PutDrawEnv clip, PutDispEnv area). Kept when an existing
     /// surface holds it; otherwise the surfaces it overlaps are dropped and it becomes one.
     pub fn register(&mut self, vram: &[u16], x: i32, y: i32, w: i32, h: i32) {
-        if w <= 0 || h <= 0 {
+        // (a buffer is inside the VRAM: an area that wraps or lies outside gets no surface)
+        if w <= 0
+            || h <= 0
+            || x < 0
+            || y < 0
+            || x as i64 + w as i64 > VRAM_W as i64
+            || y as i64 + h as i64 > VRAM_H as i64
+        {
             return;
         }
         self.flush(vram);
-        if self.surfs.iter().any(|s| s.contains(x, y, w, h)) {
+        if let Some(si) = self.surfs.iter().position(|s| s.contains(x, y, w, h)) {
+            if !self.surfs[si].valid {
+                self.rebuild(si, vram);
+            }
             return;
         }
-        self.surfs
-            .retain(|s| !(x < s.x + s.w && s.x < x + w && y < s.y + s.h && s.y < y + h));
+        self.surfs.retain(|s| !s.overlaps(x, y, w, h));
         if self.surfs.len() == MAX_SURF {
             self.surfs.remove(0);
         }
@@ -221,6 +296,7 @@ impl Hd {
             w,
             h,
             px: Vec::new(),
+            valid: true,
         });
         self.ensure(self.surfs.len() - 1, vram);
     }
@@ -231,8 +307,15 @@ impl Hd {
         let si = self
             .surfs
             .iter()
-            .position(|s| s.contains(st.clip_x0, st.clip_y0, w, h));
+            .position(|s| s.valid && s.contains(st.clip_x0, st.clip_y0, w, h));
         let Some(si) = si else {
+            // The 1x picture changed where some surface is and we can't follow: the surface
+            // is stale until it is registered again.
+            for s in &mut self.surfs {
+                if s.overlaps(st.clip_x0, st.clip_y0, w, h) {
+                    s.valid = false;
+                }
+            }
             if !self.missed {
                 self.missed = true;
                 eprintln!(
@@ -256,6 +339,9 @@ impl Hd {
     fn push(&mut self, vram: &[u16], geo: Geo, st: &State, kind: Kind) {
         if self.queue.len() >= MAX_QUEUE {
             self.flush(vram);
+        }
+        if cfg!(debug_assertions) {
+            self.check_texture_overlap(st, &kind);
         }
         let (cx0, cy0, cx1, cy1) = (st.clip_x0, st.clip_y0, st.clip_x1, st.clip_y1);
         let clipped = |x0: i32, y0: i32, x1: i32, y1: i32| {
@@ -284,10 +370,48 @@ impl Hd {
         self.queue.push(Cmd { geo, st: *st, kind });
     }
 
+    /// Debug guard (docs/phase8-survey.md section 1: DW1 never does this): queued commands sample
+    /// the 1x VRAM when they are drawn, so a primitive drawing into the texture page or CLUT an
+    /// earlier queued one uses would make that one see the new texels. Logs once.
+    fn check_texture_overlap(&mut self, st: &State, kind: &Kind) {
+        let (x0, y0) = (st.clip_x0, st.clip_y0);
+        let (x1, y1) = (st.clip_x1, st.clip_y1);
+        if !self.warned
+            && self
+                .tex_seen
+                .iter()
+                .any(|r| x0 <= r[2] && r[0] <= x1 && y0 <= r[3] && r[1] <= y1)
+        {
+            self.warned = true;
+            eprintln!(
+                "[gpu] HD: a primitive draws into a texture page or CLUT a queued primitive samples \
+                 (draw area {x0},{y0}..{x1},{y1}); the HD picture may differ from 1x (logged once)"
+            );
+        }
+        let tex = match kind {
+            Kind::Tri(t) => t.tex,
+            Kind::Rect(r) => r.tex,
+            Kind::Line(_) => None,
+        };
+        if let Some(t) = tex {
+            let tw = [64, 128, 256][t.mode.clamp(0, 2) as usize];
+            let cw = [16, 256, 0][t.mode.clamp(0, 2) as usize];
+            for r in [
+                [t.tx, t.ty, t.tx + tw - 1, t.ty + 255],
+                [t.cx, t.cy, t.cx + cw - 1, t.cy],
+            ] {
+                if r[2] >= r[0] && !self.tex_seen.contains(&r) {
+                    self.tex_seen.push(r);
+                }
+            }
+        }
+    }
+
     // ---- queue ----
 
     /// Draws the queue into the surfaces.
     pub fn flush(&mut self, vram: &[u16]) {
+        self.revalidate(vram);
         if self.queue.is_empty() {
             return;
         }
@@ -330,6 +454,7 @@ impl Hd {
             });
         }
         self.queue.clear();
+        self.tex_seen.clear();
         self.flush_ns += started.elapsed().as_nanos() as u64;
     }
 
@@ -365,7 +490,31 @@ impl Hd {
             return;
         }
         // wholly outside the draw area: nothing to draw (the 1x path drops it the same way)
-        if maxx < st.clip_x0 || minx > st.clip_x1 || maxy < st.clip_y0 || miny > st.clip_y1 {
+        // (a precise polygon's corners can sit up to a pixel off the integer ones, so its
+        // bounds come from the precise positions; draw_tri clips exactly)
+        let (fx0, fx1, fy0, fy1) = if precise {
+            let f = |g: fn(&Vtx) -> f32, lo: bool| {
+                let it = v.iter().map(|p| g(p));
+                if lo {
+                    it.fold(f32::INFINITY, f32::min)
+                } else {
+                    it.fold(f32::NEG_INFINITY, f32::max)
+                }
+            };
+            (
+                f(|p| p.px, true).floor() as i64,
+                f(|p| p.px, false).ceil() as i64,
+                f(|p| p.py, true).floor() as i64,
+                f(|p| p.py, false).ceil() as i64,
+            )
+        } else {
+            (minx as i64, maxx as i64, miny as i64, maxy as i64)
+        };
+        if fx1 < st.clip_x0 as i64
+            || fx0 > st.clip_x1 as i64 + precise as i64
+            || fy1 < st.clip_y0 as i64
+            || fy0 > st.clip_y1 as i64 + precise as i64
+        {
             return;
         }
         let Some(geo) = self.target(vram, st) else {
@@ -425,6 +574,7 @@ impl Hd {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn line(
         &mut self,
         vram: &[u16],
@@ -458,8 +608,7 @@ impl Hd {
 
     // ---- transfers ----
 
-    /// Intersection of a VRAM rect with a surface (no wrap: the game's transfers stay inside
-    /// VRAM).
+    /// Intersection of a VRAM rect (no wrap: see `pieces`) with a surface.
     fn clip_rect(s: &Surf, x: i32, y: i32, w: i32, h: i32) -> Option<(i32, i32, i32, i32)> {
         let x0 = x.max(s.x);
         let y0 = y.max(s.y);
@@ -468,38 +617,42 @@ impl Hd {
         (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
     }
 
-    /// A fill (colour `c` in VRAM format). The queue is drawn first, so call this after the 1x
-    /// fill only if `flush` ran before it (`Gpu` does).
+    /// A fill (colour `c` in VRAM format; the rect wraps at the VRAM edges like the 1x one). The
+    /// queue must have been drawn first (`Gpu` does).
     pub fn fill(&mut self, x: i32, y: i32, w: i32, h: i32, c: u16) {
         let sc = self.scale as usize;
-        for s in &mut self.surfs {
-            let Some((fx, fy, fw, fh)) = Self::clip_rect(s, x, y, w, h) else {
-                continue;
-            };
-            if s.px.is_empty() {
-                continue;
-            }
-            let pitch = s.w as usize * sc;
-            let k0 = (fx - s.x) as usize * sc;
-            let k1 = k0 + fw as usize * sc;
-            for j in (fy - s.y) as usize * sc..(fy + fh - s.y) as usize * sc {
-                s.px[j * pitch + k0..j * pitch + k1].fill(c);
+        for (px, py, pw, ph) in pieces(x, y, w, h) {
+            for s in &mut self.surfs {
+                let Some((fx, fy, fw, fh)) = Self::clip_rect(s, px, py, pw, ph) else {
+                    continue;
+                };
+                if s.px.is_empty() || !s.valid {
+                    continue;
+                }
+                let pitch = s.w as usize * sc;
+                let k0 = (fx - s.x) as usize * sc;
+                let k1 = k0 + fw as usize * sc;
+                for j in (fy - s.y) as usize * sc..(fy + fh - s.y) as usize * sc {
+                    s.px[j * pitch + k0..j * pitch + k1].fill(c);
+                }
             }
         }
     }
 
-    /// A rect the 1x VRAM just got from the CPU or a VRAM copy: copied into the surfaces.
-    /// Call `flush` before the 1x write.
+    /// A rect the 1x VRAM just got from the CPU or a VRAM copy (it wraps at the VRAM edges):
+    /// copied into the surfaces. Call `flush` before the 1x write.
     pub fn refresh(&mut self, vram: &[u16], x: i32, y: i32, w: i32, h: i32) {
         let scale = self.scale;
-        for s in &mut self.surfs {
-            let Some((fx, fy, fw, fh)) = Self::clip_rect(s, x, y, w, h) else {
-                continue;
-            };
-            if s.px.is_empty() {
-                continue;
+        for (px, py, pw, ph) in pieces(x, y, w, h) {
+            for s in &mut self.surfs {
+                let Some((fx, fy, fw, fh)) = Self::clip_rect(s, px, py, pw, ph) else {
+                    continue;
+                };
+                if s.px.is_empty() || !s.valid {
+                    continue;
+                }
+                Self::copy_from_vram(s, scale, vram, fx, fy, fw, fh);
             }
-            Self::copy_from_vram(s, scale, vram, fx, fy, fw, fh);
         }
     }
 
@@ -517,7 +670,10 @@ impl Hd {
         out: &mut Vec<u32>,
     ) -> Option<(usize, usize)> {
         self.flush(vram);
-        let si = self.surfs.iter().position(|s| s.contains(x, y, w, h))?;
+        let si = self
+            .surfs
+            .iter()
+            .position(|s| s.valid && s.contains(x, y, w, h))?;
         self.ensure(si, vram);
         let sc = self.scale as usize;
         let s = &self.surfs[si];
@@ -736,6 +892,7 @@ fn direct_value(
     Some(Some((or | (og << 5) | (ob << 10) | m) as u16))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn hshade(
     st: &State,
     p: &mut u16,
@@ -746,6 +903,7 @@ fn hshade(
     dith: bool,
     d: i32,
     poly: bool,
+    tail: bool,
 ) {
     let Some((t, c)) = tc else {
         if dith && semi {
@@ -780,6 +938,10 @@ fn hshade(
         for k in 0..3 {
             let sv = if t.raw {
                 t5[k] >> 2
+            } else if tail && k > 0 {
+                // [obs] at the last pixel of an odd row green and blue are modulated first,
+                // then quartered
+                (t5[k] * m[k]) >> 9
             } else {
                 (((t5[k] >> 2) * m[k]) >> 4) >> 3
             };
@@ -796,8 +958,14 @@ fn hshade(
         let blend = poly && tsemi && !dith;
         let cut = |v: i32| if blend { v >> 3 } else { to5(v, d) };
         tr = cut((tr * r) >> 4);
-        tg = cut((tg * g) >> 4);
-        tb = cut((tb * b) >> 4);
+        if tail && tsemi && !dith && abr == 2 {
+            // [obs] the last pixel of an odd row subtracts green and blue rounded up
+            tg = ((((c >> 5) & 31) * g + 127) >> 7).min(31);
+            tb = ((((c >> 10) & 31) * b + 127) >> 7).min(31);
+        } else {
+            tg = cut((tg * g) >> 4);
+            tb = cut((tb * b) >> 4);
+        }
     }
     hput(st, p, tr, tg, tb, tsemi, abr, c & 0x8000 != 0);
 }
@@ -850,49 +1018,109 @@ impl Edge {
     }
 }
 
-/// The 1x rasterizer's colour interpolation (`Gpu::triangle`): the vertices taken top to
-/// bottom, the step per pixel from the widest row, the row's start from its left edge.
-struct Col1x {
+/// The 1x rasterizer's interpolation (`Gpu::triangle`), evaluated at 1x pixels: a polygon that
+/// is not precise takes its colours and texture coordinates from it, so each 1x pixel's S x S
+/// block holds what the 1x picture holds there (a gradient, a map tile stretched by a texel, the
+/// rounding of exact halves are the 1x ones at every scale; only the edges get finer).
+struct Tri1x {
     tv: Vtx,
     mv: Vtx,
     bv: Vtx,
-    gx: [i64; 3],
+    /// the vertices after the orientation swap, and their edges' top / left flags
+    v: [Vtx; 3],
+    tl: [bool; 3],
+    gx: [i64; 5],
+    used: [bool; 5],
+    bminx: i32,
+    bmaxx: i32,
     minx: i32,
     /// a textured Gouraud polygon without dither takes its colour once per pair of pixels
     pairs: bool,
+    /// the odd-row-tail rule applies (semi-transparent, modulated, textured, abr 2 or 3)
+    need_tail: bool,
+    /// the first vertex's colour, for a flat polygon
+    flat: (i32, i32, i32),
 }
 
-/// Where a 1x row starts: the left edge's x in 16.16 and the three colours there.
-struct Col1xRow {
+/// A 1x row: the left edge's x in 16.16, the attributes there, the covered pixels.
+struct Row1x {
     xe: i64,
-    base: [i64; 3],
+    base: [i64; 5],
     xs0: i64,
+    last: i32,
+    /// the row has an odd number of pixels and `need_tail` holds
+    odd: bool,
 }
 
-impl Col1x {
-    fn new(v: [&Vtx; 3], st: &State, pairs: bool) -> Option<Col1x> {
+impl Tri1x {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        v: [&Vtx; 3],
+        st: &State,
+        gouraud: bool,
+        tex: Option<&Tex>,
+        semi: bool,
+        abr: i32,
+    ) -> Option<Tri1x> {
+        fn edge(a: &Vtx, b: &Vtx, px: i32, py: i32) -> i64 {
+            (b.x - a.x) as i64 * (py - a.y) as i64 - (b.y - a.y) as i64 * (px - a.x) as i64
+        }
+        fn top_left(a: &Vtx, b: &Vtx) -> bool {
+            let (dx, dy) = (b.x - a.x, b.y - a.y);
+            dy < 0 || (dy == 0 && dx > 0)
+        }
+        let dith = st.dither && gouraud;
+        let area = edge(v[0], v[1], v[2].x, v[2].y);
+        if area == 0 {
+            return None;
+        }
+        let (v0, mut v1, mut v2) = (*v[0], *v[1], *v[2]);
+        if area < 0 {
+            std::mem::swap(&mut v1, &mut v2);
+        }
         let mut sv = [*v[0], *v[1], *v[2]];
         sv.sort_by_key(|p| (p.y, p.x));
         let (tv, mv, bv) = (sv[0], sv[1], sv[2]);
         if bv.y == tv.y {
             return None;
         }
+        let textured = tex.is_some();
+        let mut used = [false; 5];
+        if gouraud {
+            used[..3].fill(true);
+        }
+        if textured {
+            used[3] = true;
+            used[4] = true;
+        }
         let ratio = (((mv.y - tv.y) as i64) << 16) / (bv.y - tv.y) as i64;
         let width = ratio * (bv.x - tv.x) as i64 + (((tv.x - mv.x) as i64) << 16);
-        let mut gx = [0i64; 3];
-        for (i, g) in gx.iter_mut().enumerate() {
+        let mut gx = [0i64; 5];
+        for i in 0..5 {
+            if !used[i] {
+                continue;
+            }
             let da = ratio * (Self::attr(&bv, i) - Self::attr(&tv, i))
                 + ((Self::attr(&tv, i) - Self::attr(&mv, i)) << 16);
-            *g = if width == 0 { 0 } else { (da << 16) / width };
+            gx[i] = if width == 0 { 0 } else { (da << 16) / width };
         }
-        let minx = v.iter().map(|p| p.x).min().unwrap().max(st.clip_x0);
-        Some(Col1x {
+        let bminx = v[0].x.min(v[1].x).min(v[2].x);
+        let bmaxx = v[0].x.max(v[1].x).max(v[2].x);
+        let raw = tex.is_some_and(|t| t.raw);
+        Some(Tri1x {
             tv,
             mv,
             bv,
+            v: [v0, v1, v2],
+            tl: [top_left(&v1, &v2), top_left(&v2, &v0), top_left(&v0, &v1)],
             gx,
-            minx,
-            pairs,
+            used,
+            bminx,
+            bmaxx,
+            minx: bminx.max(st.clip_x0),
+            pairs: gouraud && textured && !dith && !semi,
+            need_tail: semi && !dith && textured && !raw && (abr == 2 || abr == 3),
+            flat: (v0.r, v0.g, v0.b),
         })
     }
 
@@ -900,11 +1128,13 @@ impl Col1x {
         (match i {
             0 => p.r,
             1 => p.g,
-            _ => p.b,
+            2 => p.b,
+            3 => p.u,
+            _ => p.v,
         }) as i64
     }
 
-    fn row(&self, y: i32) -> Col1xRow {
+    fn row(&self, y: i32) -> Row1x {
         let (tv, mv, bv) = (self.tv, self.mv, self.bv);
         let short = if y < mv.y { (tv, mv) } else { (mv, bv) };
         let xnum = |p: &Vtx, q: &Vtx| p.x as i64 * (q.y - y) as i64 + q.x as i64 * (y - p.y) as i64;
@@ -918,28 +1148,68 @@ impl Col1x {
         let den = (eq.y - ep.y) as i64;
         let xe = ((ep.x as i64) << 16) + (((eq.x - ep.x) as i64 * (y - ep.y) as i64) << 16) / den;
         let xs0 = ((xe + 0xFFFF) >> 16).max(self.minx as i64);
-        let mut base = [0i64; 3];
+        let mut base = [0i64; 5];
         for (i, b) in base.iter_mut().enumerate() {
+            if !self.used[i] {
+                continue;
+            }
             let da = Self::attr(&eq, i) - Self::attr(&ep, i);
-            *b = (Self::attr(&ep, i) << 16) + ((da * (y - ep.y) as i64) << 16) / den;
+            *b = (Self::attr(&ep, i) << 16)
+                + if i < 3 {
+                    ((da * (y - ep.y) as i64) << 16) / den
+                } else {
+                    ((da << 16) / den) * (y - ep.y) as i64
+                };
         }
-        Col1xRow { xe, base, xs0 }
+        // the covered pixels of the row: each edge function is linear in x
+        let [v0, v1, v2] = self.v;
+        let (mut first, mut last) = (self.bminx, self.bmaxx);
+        for ((a, b), tl) in [(v1, v2), (v2, v0), (v0, v1)].into_iter().zip(self.tl) {
+            let c = -((b.y - a.y) as i64);
+            let k = (b.x - a.x) as i64 * (y - a.y) as i64 + (b.y - a.y) as i64 * a.x as i64;
+            let (lo, hi) = if c == 0 {
+                if k > 0 || (k == 0 && tl) {
+                    (i64::MIN, i64::MAX)
+                } else {
+                    (i64::MAX, i64::MIN)
+                }
+            } else if c > 0 {
+                let n = if tl { -k } else { -k + 1 };
+                ((n + c - 1).div_euclid(c), i64::MAX)
+            } else {
+                let n = if tl { k } else { k - 1 };
+                (i64::MIN, n.div_euclid(-c))
+            };
+            first = first.max(lo.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+            last = last.min(hi.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+        }
+        Row1x {
+            xe,
+            base,
+            xs0,
+            last,
+            odd: self.need_tail && first <= last && (last - first) % 2 == 0,
+        }
     }
 
-    /// The colour at 1x pixel `x` of a row.
-    fn value(&self, r: &Col1xRow, x: i32) -> (i32, i32, i32) {
-        let xi = if self.pairs {
-            r.xs0 + 2 * (x as i64 - r.xs0).div_euclid(2)
-        } else {
-            x as i64
-        };
-        let mut out = [0i32; 3];
-        for i in 0..3 {
+    /// Colour (r, g, b) and texture coordinate (u, v) at 1x pixel `x` of a row.
+    fn value(&self, r: &Row1x, x: i32) -> [i32; 5] {
+        let mut out = [self.flat.0, self.flat.1, self.flat.2, 0, 0];
+        for (i, o) in out.iter_mut().enumerate() {
+            if !self.used[i] {
+                continue;
+            }
+            let xi = if i < 3 && self.pairs {
+                r.xs0 + 2 * (x as i64 - r.xs0).div_euclid(2)
+            } else {
+                x as i64
+            };
             let d = (self.gx[i] as i128 * ((xi << 16) - r.xe) as i128) >> 16;
             let q = r.base[i] as i128 + d + 0x8000;
-            out[i] = ((q >> 16).clamp(i32::MIN.into(), i32::MAX.into()) as i32).clamp(0, 255);
+            let v = (q >> 16).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
+            *o = if i < 3 { v.clamp(0, 255) } else { v };
         }
-        (out[0], out[1], out[2])
+        out
     }
 }
 
@@ -953,6 +1223,17 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
     // [obs] only Gouraud polygons are dithered (as in gpu.rs)
     let dith = st.dither && gouraud;
     let mut v = [&t.v[0], &t.v[1], &t.v[2]];
+    // A polygon that is not precise takes colours and texture coordinates from the 1x
+    // rasterizer's arithmetic at the 1x pixel (constant over its S x S block, as the dither
+    // is); a precise one interpolates across the surface pixels (smooth, perspective-correct).
+    let tri1x = if t.precise {
+        None
+    } else {
+        match Tri1x::new([&t.v[0], &t.v[1], &t.v[2]], st, gouraud, tex, semi, abr) {
+            Some(t1) => Some(t1),
+            None => return,
+        }
+    };
 
     // fixed-point positions; the orientation from them
     let mut px = [0i64; 3];
@@ -988,7 +1269,7 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
     }
     let step = [e[0].step(), e[1].step(), e[2].step()];
 
-    // attributes: 0 r, 1 g, 2 b, 3 u, 4 v
+    // attributes of a precise polygon: 0 r, 1 g, 2 b, 3 u, 4 v
     let mut att = [[0i64; 3]; 5];
     for i in 0..3 {
         att[0][i] = v[i].r as i64;
@@ -1001,46 +1282,22 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
     for k in 0..5 {
         dn[k] = att[k][0] * step[0] + att[k][1] * step[1] + att[k][2] * step[2];
     }
-    let mut block = false;
-    let mut persp = false;
-    let (mut umin, mut umax) = (0, 0);
+    // PG.2: perspective-correct mapping from the precise depths (1 / z interpolates linearly on
+    // screen, so do u / z, v / z)
+    let persp = t.precise && tex.is_some() && v.iter().all(|p| p.pz > 0.0);
     let mut pw = [0f64; 3];
     let mut puw = [0f64; 3];
     let mut pvw = [0f64; 3];
-    if tex.is_some() {
-        // No cross terms (du / dy = dv / dx = 0): a 2D sprite-like mapping. Its texels are read
-        // at the 1x pixel's position so pixel art stays exact at any scale.
-        let dudy = att[3][0] * e[0].dx + att[3][1] * e[1].dx + att[3][2] * e[2].dx;
-        block = !t.precise && dudy == 0 && dn[4] == 0;
-        // PG.2: perspective-correct mapping from the precise depths (1 / z interpolates
-        // linearly on screen, so do u / z, v / z)
-        persp = t.precise && v.iter().all(|p| p.pz > 0.0);
-        if persp {
-            for i in 0..3 {
-                pw[i] = 1.0 / v[i].pz as f64;
-                puw[i] = v[i].u as f64 * pw[i];
-                pvw[i] = v[i].v as f64 * pw[i];
-            }
+    if persp {
+        for i in 0..3 {
+            pw[i] = 1.0 / v[i].pz as f64;
+            puw[i] = v[i].u as f64 * pw[i];
+            pvw[i] = v[i].v as f64 * pw[i];
         }
-        umin = v[0].u.min(v[1].u).min(v[2].u);
-        umax = v[0].u.max(v[1].u).max(v[2].u);
     }
-    // A polygon that is not precise takes its colours from the 1x rasterizer's arithmetic at
-    // the 1x pixel (constant over its S x S block, as the dither is), so a gradient is the 1x
-    // one at every scale; a precise one interpolates smoothly across the surface pixels.
-    let col1x = (gouraud && !t.precise)
-        .then(|| {
-            Col1x::new(
-                [&t.v[0], &t.v[1], &t.v[2]],
-                st,
-                tex.is_some() && !dith && !semi,
-            )
-        })
-        .flatten();
-    let natt = if gouraud && col1x.is_none() { 3 } else { 0 };
-    // flat or per-1x-pixel colour and a texel read at the 1x pixel: constant over each 1x
-    // pixel's S columns
-    let uniform = natt == 0 && (tex.is_none() || block);
+    let natt = if gouraud && tri1x.is_none() { 3 } else { 0 };
+    // flat colour, or the 1x values at the 1x pixel: constant over each 1x pixel's S columns
+    let uniform = tri1x.is_some() || (natt == 0 && tex.is_none());
 
     let (cx0, cy0, cx1, cy1) = hd_clip(st, &g, scale);
     let ymin = *py.iter().min().unwrap();
@@ -1085,7 +1342,6 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
         let (mut u24, mut v24, mut du24, mut dv24) = (0i64, 0i64, 0i64, 0i64);
         let (mut qw, mut qu, mut qv, mut dqw, mut dqu, mut dqv) =
             (0f64, 0f64, 0f64, 0f64, 0f64, 0f64);
-        let mut vv = 0i32;
         if persp {
             let e0 = (nr[0] + step[0] * xl) as f64;
             let e1 = (nr[1] + step[1] * xl) as f64;
@@ -1098,26 +1354,21 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
             dqw = (pw[0] * s[0] + pw[1] * s[1] + pw[2] * s[2]) / a;
             dqu = (puw[0] * s[0] + puw[1] * s[1] + puw[2] * s[2]) / a;
             dqv = (pvw[0] * s[0] + pvw[1] * s[1] + pvw[2] * s[2]) / a;
-        } else if tex.is_some() && !block {
+        } else if tex.is_some() && tri1x.is_none() {
             u24 = (fdiv(num(3) << 16, area) << 8) + 0x80;
             v24 = (fdiv(num(4) << 16, area) << 8) + 0x80;
             du24 = fdiv(dn[3] << 24, area);
             dv24 = fdiv(dn[4] << 24, area);
-        } else if tex.is_some() {
-            // v from the row of the 1x pixel (constant along the row)
-            let yb = (row_y - row_y % scale) as i64;
-            let n: i64 = (0..3).map(|i| att[4][i] * e[i].row(yb)).sum();
-            vv = fdiv(n, area) as i32;
         }
         let dy = ((row_y / scale + g.y) & 3) as usize;
         let mut bx = (xl / sc) as i32;
         let mut sub = (xl % sc) as i32;
-        let mut u = -1i32;
+        let (mut u, mut vv);
         let mut texel_c = 0i32;
-        let mut have_c = false;
+        let mut tail = false;
         let (mut r, mut gr, mut b) = (v[0].r, v[0].g, v[0].b);
         let row = p.row(g.si, row_y);
-        let rc1x = col1x.as_ref().map(|c| c.row(row_y / scale + g.y));
+        let row1x = tri1x.as_ref().map(|t1| t1.row(row_y / scale + g.y));
         let mut x = xl;
         while x <= xr {
             let d = if dith {
@@ -1125,40 +1376,38 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
             } else {
                 0
             };
-            if let (Some(c), Some(rc)) = (&col1x, &rc1x) {
+            if let (Some(t1), Some(r1)) = (&tri1x, &row1x) {
                 if sub == 0 || x == xl {
-                    (r, gr, b) = c.value(rc, bx + g.x);
-                }
-            } else if natt != 0 {
-                r = ((c24[0] >> 24) as i32).clamp(0, 255);
-                gr = ((c24[1] >> 24) as i32).clamp(0, 255);
-                b = ((c24[2] >> 24) as i32).clamp(0, 255);
-            }
-            if tex.is_some() {
-                if block {
-                    if sub == 0 || u < 0 {
-                        let xb = bx as i64 * sc;
-                        let n: i64 = (0..3).map(|i| att[3][i] * (nr[i] + step[i] * xb)).sum();
-                        u = (fdiv(n, area) as i32).clamp(umin, umax);
+                    let x1 = bx + g.x;
+                    let val = t1.value(r1, x1);
+                    (r, gr, b) = (val[0], val[1], val[2]);
+                    (u, vv) = (val[3], val[4]);
+                    tail = r1.odd && x1 == r1.last;
+                    if let Some(t) = tex {
+                        texel_c = texel(st, vram, t, u, vv) as i32;
                     }
-                } else if persp {
-                    let iw = 1.0 / qw;
-                    u = (qu * iw + 1.0 / 512.0).floor() as i32;
-                    vv = (qv * iw + 1.0 / 512.0).floor() as i32;
-                } else {
-                    u = (u24 >> 24) as i32;
-                    vv = (v24 >> 24) as i32;
                 }
-            }
-            if let Some(t) = tex
-                && (!block || sub == 0 || !have_c)
-            {
-                texel_c = texel(st, vram, t, u, vv) as i32;
-                have_c = true;
+            } else {
+                if natt != 0 {
+                    r = ((c24[0] >> 24) as i32).clamp(0, 255);
+                    gr = ((c24[1] >> 24) as i32).clamp(0, 255);
+                    b = ((c24[2] >> 24) as i32).clamp(0, 255);
+                }
+                if let Some(t) = tex {
+                    if persp {
+                        let iw = 1.0 / qw;
+                        u = (qu * iw + 1.0 / 512.0).floor() as i32;
+                        vv = (qv * iw + 1.0 / 512.0).floor() as i32;
+                    } else {
+                        u = (u24 >> 24) as i32;
+                        vv = (v24 >> 24) as i32;
+                    }
+                    texel_c = texel(st, vram, t, u, vv) as i32;
+                }
             }
             if uniform {
                 // the colour is the same over the rest of this 1x pixel (the whole row when
-                // untextured): write it as a run
+                // flat and untextured): write it as a run
                 let run = if tex.is_none() && !gouraud {
                     xr - x + 1
                 } else {
@@ -1181,6 +1430,7 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
                                 dith,
                                 d,
                                 true,
+                                tail,
                             );
                         }
                     }
@@ -1201,6 +1451,7 @@ fn draw_tri(p: &mut Part, vram: &[u16], c: &Cmd, t: &TriCmd) {
                 dith,
                 d,
                 true,
+                false,
             );
             x += 1;
             for k in 0..natt {
@@ -1272,6 +1523,7 @@ fn draw_rect(p: &mut Part, vram: &[u16], c: &Cmd, r: &RectCmd) {
                             false,
                             0,
                             false,
+                            false,
                         );
                     }
                 }
@@ -1283,76 +1535,33 @@ fn draw_rect(p: &mut Part, vram: &[u16], c: &Cmd, r: &RectCmd) {
 
 // ---- lines ----
 
-/// A line S pixels thick: along the longer axis every surface column (or row) from the first 1x
-/// end pixel's block to the last one's, the other axis interpolated between the block centres.
-/// Colour interpolated the same way, dithered by the 1x pixel.
+/// A line is the 1x line scaled: every pixel the 1x rasterizer draws (`line_walk`, so its
+/// coverage, end points, colour order and dither are the 1x ones) fills its S x S block.
 fn draw_line(p: &mut Part, c: &Cmd, l: &LineCmd) {
     let st = &c.st;
     let g = c.geo;
     let scale = p.scale;
-    let sc = scale as i64;
-    let (a, b) = (&l.a, &l.b);
-    let (dx, dy) = (b.x - a.x, b.y - a.y);
-    let xmajor = dx.abs() >= dy.abs();
-    let dith = st.dither && l.gouraud;
-    let (cx0, cy0, cx1, cy1) = hd_clip(st, &g, scale);
-    // major axis centres ac -> bc, minor axis centres aw -> bw (surface pixels)
-    let cen = |v: i32, o: i32| (v - o) as i64 * sc + sc / 2;
-    let (ac, bc, aw, bw) = if xmajor {
-        (cen(a.x, g.x), cen(b.x, g.x), cen(a.y, g.y), cen(b.y, g.y))
-    } else {
-        (cen(a.y, g.y), cen(b.y, g.y), cen(a.x, g.x), cen(b.x, g.x))
-    };
-    let len = bc - ac;
-    let m0 = ac.min(bc) - sc / 2;
-    let m1 = ac.max(bc) - sc / 2 + sc - 1;
-    for m in m0..=m1 {
-        let mut tn = if len == 0 { 0 } else { m - ac };
-        let (mut r, mut gr, mut bl) = (a.r, a.g, a.b);
-        let w;
-        if len != 0 {
-            let l2 = len.abs();
-            if len < 0 {
-                tn = -tn;
-            }
-            tn = tn.clamp(0, l2);
-            w = aw + fdiv((bw - aw) * tn * 2 + l2, 2 * l2);
-            if l.gouraud {
-                r = a.r + ((b.r - a.r) as i64 * tn / l2) as i32;
-                gr = a.g + ((b.g - a.g) as i64 * tn / l2) as i32;
-                bl = a.b + ((b.b - a.b) as i64 * tn / l2) as i32;
-            }
-        } else {
-            w = aw;
-        }
-        for j in 0..sc {
-            let q = w - sc / 2 + j;
-            let (x, y) = if xmajor { (m, q) } else { (q, m) };
-            if x < cx0 as i64 || x > cx1 as i64 || y < cy0 as i64 || y > cy1 as i64 {
+    line_walk(st, &l.a, &l.b, l.gouraud, |x, y, r, gr, bl, d| {
+        let (bx, by) = ((x - g.x) * scale, (y - g.y) * scale);
+        for yy in by..by + scale {
+            if yy % p.parts != p.part {
                 continue;
             }
-            let (x, y) = (x as i32, y as i32);
-            if y % p.parts != p.part {
-                continue;
+            let row = p.row(g.si, yy);
+            for px in &mut row[bx as usize..(bx + scale) as usize] {
+                hput(
+                    st,
+                    px,
+                    to5(r, d),
+                    to5(gr, d),
+                    to5(bl, d),
+                    l.semi,
+                    l.abr,
+                    false,
+                );
             }
-            let d = if dith {
-                DITHER_TBL[((y / scale + g.y) & 3) as usize][((x / scale + g.x) & 3) as usize]
-            } else {
-                0
-            };
-            let row = p.row(g.si, y);
-            hput(
-                st,
-                &mut row[x as usize],
-                to5(r, d),
-                to5(gr, d),
-                to5(bl, d),
-                l.semi,
-                l.abr,
-                false,
-            );
         }
-    }
+    });
 }
 
 #[cfg(test)]
@@ -1406,7 +1615,7 @@ mod tests {
             60 << 16 | 70,
         ]);
         // flat semi-transparent quad (average)
-        g.gp0(&[0xE100_0000 | (0 << 5)]);
+        g.gp0(&[0xE100_0000]);
         g.gp0(&[
             0x2A60_C020,
             40 << 16 | 50,
@@ -1428,7 +1637,7 @@ mod tests {
             0x1010,
         ]);
         // sprite (rectangle) textured with the 4-bit page at (384, 0) via CLUT at (0, 480)
-        g.gp0(&[0xE100_0000 | 6 | (0 << 7)]);
+        g.gp0(&[0xE100_0000 | 6]);
         g.gp0(&[0x7480_8080, 150 << 16 | 150, (480 << 6) << 16]);
         // a plain rectangle with an odd offset and a 1x1
         g.gp0(&[0x6000_00FF, 200 << 16 | 33, 17 << 16 | 21]);
@@ -1580,5 +1789,199 @@ mod tests {
         let (w, _) = g.read_display_hd(&mut out).unwrap();
         assert_eq!(out[0], 0xFF0000);
         assert_eq!(out[50 * 2 * w + 100 * 2], 0x00FF00);
+    }
+
+    // ---- review fixes: each compares the first pixel of every block with the 1x picture ----
+
+    fn setup(g: &mut Gpu, bg: u32) {
+        g.gp0(&[
+            0xE300_0000,
+            0xE400_0000 | (239 << 10) | 319,
+            0xE500_0000,
+            0xE100_0000,
+        ]);
+        g.set_display(0, 0, 320, 240, false);
+        g.set_display_enable(true);
+        g.fill(0, 0, 320, 240, bg);
+    }
+
+    /// Runs `f` on a 1x GPU and on a scale-3 one; the VRAMs and the pictures must agree.
+    fn same(f: impl Fn(&mut Gpu)) {
+        let mut g1 = Gpu::new();
+        let mut gs = Gpu::new();
+        gs.set_scale(S as u32);
+        f(&mut g1);
+        f(&mut gs);
+        assert!(g1.vram() == gs.vram());
+        compare(&mut g1, &mut gs);
+    }
+
+    #[test]
+    fn map_tile_uvs_are_the_1x_ones() {
+        // a 128 px quad spanning 127 texels from texel 1 (the map tiles do this)
+        same(|g| {
+            setup(g, 0x30_20_10);
+            let tex: Vec<u16> = (0..65536u32)
+                .map(|i| (i.wrapping_mul(2654435761) >> 12) as u16 | 0x8000)
+                .collect();
+            g.load_image(320, 0, 256, 256, &tex);
+            let tpage = 5 | (2 << 7);
+            g.gp0(&[
+                0x2C80_8080,
+                20 << 16 | 20,
+                0x0101,
+                148 << 16 | 20,
+                tpage << 16 | 0x8001,
+                20 << 16 | 148,
+                0x0180,
+                148 << 16 | 148,
+                0x8080,
+            ]);
+        });
+    }
+
+    #[test]
+    fn odd_row_tails_are_the_1x_ones() {
+        same(|g| {
+            setup(g, 0xFF_FF_FF);
+            g.load_image(320, 0, 16, 16, &[0x8421; 256]);
+            let tpage = 5 | (2 << 7) | (2 << 5); // 15-bit, subtract
+            g.gp0(&[
+                0x2640_4040,
+                10 << 16 | 10,
+                0,
+                10 << 16 | 13,
+                tpage << 16 | 3,
+                13 << 16 | 10,
+                0x0300,
+            ]);
+            // blend mode B + F/4 as well
+            let tpage = 5 | (2 << 7) | (3 << 5);
+            g.gp0(&[
+                0x2640_4040,
+                30 << 16 | 10,
+                0,
+                30 << 16 | 15,
+                tpage << 16 | 5,
+                35 << 16 | 10,
+                0x0500,
+            ]);
+        });
+    }
+
+    #[test]
+    fn lines_are_the_1x_ones_scaled() {
+        same(|g| {
+            setup(g, 0x10_10_10);
+            g.gp0(&[0xE100_0200]); // dither on
+            g.gp0(&[0x40FF_FFFF, 10 << 16 | 10, 11 << 16 | 14]);
+            // a Gouraud line given right to left
+            g.gp0(&[0x5000_00FF, 30 << 16 | 60, 0x0000_FF00, 32 << 16 | 40]);
+            g.gp0(&[0x5200_FF00, 50 << 16 | 20, 0x00FF_0000, 90 << 16 | 33]);
+            g.gp0(&[0x4000_80FF, 100 << 16 | 100, 100 << 16 | 100]);
+            g.gp0(&[0x4A80_80FF, 100 << 16 | 120, 140 << 16 | 160]);
+        });
+    }
+
+    #[test]
+    fn wrapped_fills_and_uploads_reach_the_surface() {
+        same(|g| {
+            setup(g, 0x20_40_60);
+            g.fill(1016, 100, 16, 8, 0x00_FF_00); // wraps in x: 0..7 of the buffer
+            g.fill(10, 508, 8, 8, 0xFF_00_00); // and in y: rows 0..3
+            let px: Vec<u16> = (0..64).map(|i| 0x4000 + i as u16).collect();
+            g.load_image(1020, 508, 8, 8, &px);
+            g.move_image(1020, 508, 40, 40, 8, 8);
+            g.move_image(10, 10, 1022, 510, 8, 8); // a copy that wraps
+            g.move_image(1022, 510, 100, 100, 8, 8);
+        });
+    }
+
+    #[test]
+    fn extreme_coordinates_do_not_overflow() {
+        let mut g = Gpu::new();
+        g.set_scale(4);
+        g.set_display(i32::MAX, i32::MAX, 320, 240, false);
+        g.set_display(i32::MIN, 0, i32::MAX, i32::MAX, false);
+        g.set_display_enable(true);
+        g.fill(i32::MAX, i32::MAX, 2000, 700, 0x123456);
+        g.fill(i32::MIN, i32::MIN + 5, 3000, 600, 0x123456);
+        g.load_image(i32::MAX, i32::MAX, 2, 2, &[1, 2, 3, 4]);
+        g.move_image(i32::MAX, i32::MAX, i32::MIN, i32::MIN, 2, 2);
+        let mut out = Vec::new();
+        assert!(g.read_display_hd(&mut out).is_some());
+    }
+
+    #[test]
+    fn vram_mut_then_blended_primitives_blend_once() {
+        same(|g| {
+            setup(g, 0x30_20_10);
+            // a queued blended quad, then a direct write, then another over the written pixels
+            g.gp0(&[0xE100_0000]);
+            g.gp0(&[
+                0x2A60_C020,
+                20 << 16 | 20,
+                20 << 16 | 80,
+                60 << 16 | 20,
+                60 << 16 | 80,
+            ]);
+            for i in 0..64 {
+                g.vram_mut()[50 * VRAM_W + 40 + i] = 0x2D6B;
+            }
+            g.gp0(&[
+                0x2A60_C020,
+                40 << 16 | 40,
+                40 << 16 | 100,
+                90 << 16 | 40,
+                90 << 16 | 100,
+            ]);
+        });
+    }
+
+    #[test]
+    fn a_draw_area_outside_every_surface_never_shows_stale_pixels() {
+        same(|g| {
+            setup(g, 0x30_20_10);
+            // the display moves over the draw surface's rect: the old surface goes
+            g.set_display(100, 0, 320, 240, false);
+            g.gp0(&[0x60FF_0000, 120 << 16 | 120, 30 << 16 | 30]);
+            g.gp0(&[
+                0x2A60_C020,
+                20 << 16 | 20,
+                20 << 16 | 80,
+                60 << 16 | 20,
+                60 << 16 | 80,
+            ]);
+        });
+    }
+
+    #[test]
+    fn a_precise_triangle_is_clipped_by_its_precise_corners() {
+        use crate::gpu::{State, Vtx};
+        let vram = vec![0u16; VRAM_W * 512];
+        let mut hd = super::Hd::new(4, 1);
+        hd.register(&vram, 0, 0, 320, 240);
+        let st = State {
+            clip_x1: 319,
+            clip_y1: 239,
+            ..State::default()
+        };
+        let v = |x: i32, y: i32, px: f32| Vtx {
+            x,
+            y,
+            r: 255,
+            g: 255,
+            b: 255,
+            px,
+            py: y as f32,
+            pz: 1.0,
+            ..Vtx::default()
+        };
+        // integer corners are all outside x 0..319; the precise ones are half a pixel left
+        let (a, b, c) = (v(320, 10, 319.5), v(321, 10, 320.5), v(320, 20, 319.5));
+        hd.triangle(&vram, &st, [&a, &b, &c], false, None, false, 0, true);
+        let mut out = Vec::new();
+        hd.read_display(&vram, 0, 0, 320, 240, &mut out).unwrap();
+        assert_ne!(out[48 * 1280 + 1279], 0);
     }
 }
