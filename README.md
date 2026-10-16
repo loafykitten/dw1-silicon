@@ -13,10 +13,11 @@ The long-term goal is the whole game in Rust, migrated one module at a time and 
 against the original at every step.
 
 **Status:** playable, being checked. The game runs natively with sound,
-saves (as 15 save slots) and a sharper picture; new games, File City, raising your partner,
-battles, training, the Item Keeper and saving are checked against the original game step by
-step, and the rest (tournaments, Battle Mode, fishing, digivolving and so on) runs the game's own
-code but isn't checked yet. A first full playthrough is under way. See [PLAN.md](PLAN.md).
+saves (as 15 save slots) and a sharper picture. New games, File City, raising your partner,
+battles, training, the Item Keeper and saving, tournaments, Battle Mode, fishing, curling,
+digivolving, death and rebirth, recruiting, the gyms, the ending and the credits are all checked
+against the original game step by step. A first full playthrough is under way. See
+[PLAN.md](PLAN.md).
 
 ## Building and playing
 
