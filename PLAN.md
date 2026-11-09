@@ -7,6 +7,13 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-15, session 6): start here
 
+- **Proposed Techsheet fix (2026-11-09):** the skill grid's `GsSortBoxFill` attribute
+  `0x60000000` previously trapped. This branch maps the documented blend-rate bits to
+  GP0(E1h) while preserving rate-0 packets and rejecting unrelated bits. A player has
+  confirmed the skill grid with SpitFire equipped works after the fix. Synthetic packet/pixel
+  and trap regressions are included; original-SDK captures and full oracle replays have not
+  been run for this contribution. See `docs/bugs.md`; this does not change phase certification.
+
 - **Phase 8 (renderer and extras) is done** (Ember: "Looks good to me!", 2026-10-14;
   `docs/phase8-plan.md`, its Progress section
   has the commits). The window now shows the picture through wgpu on Metal (`crates/render`),

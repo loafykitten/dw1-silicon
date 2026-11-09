@@ -3,7 +3,7 @@
 //! again, with `DW1_TRAP_CASE` set) because the stop is an abort.
 
 use psyq::globals::Matrix;
-use psyq::libgs::{GsCoordinate2, GsFLight, GsGetLw, GsSetFlatLight};
+use psyq::libgs::{GsBoxf, GsCoordinate2, GsFLight, GsGetLw, GsSetFlatLight, GsSortBoxFill};
 
 fn coord(sup: *mut GsCoordinate2) -> GsCoordinate2 {
     let mut c: GsCoordinate2 = unsafe { std::mem::zeroed() };
@@ -16,6 +16,20 @@ fn run_case(name: &str) {
     // Not 0: a node with flg 0 would then carry the current stamp, and the walk up stops there.
     unsafe { psyq::globals::PSDCNT = 5 };
     match name {
+        "boxfill_unknown_attribute" => {
+            let b = GsBoxf {
+                attribute: 1,
+                x: 0,
+                y: 0,
+                w: 12,
+                h: 12,
+                r: 104,
+                g: 104,
+                b: 104,
+            };
+            // Unsupported bits must stop before touching the ordering table/work base.
+            unsafe { GsSortBoxFill(&b, std::ptr::null_mut(), 0) };
+        }
         "screen_super" => {
             // A `super` of SCREEN (1): the real code dereferences it and faults.
             let mut c = coord(std::ptr::without_provenance_mut(1));
@@ -53,7 +67,12 @@ fn unmodelled_inputs_stop_the_program() {
         run_case(&case);
         return;
     }
-    for case in ["screen_super", "deep_chain", "negative_sum"] {
+    for case in [
+        "boxfill_unknown_attribute",
+        "screen_super",
+        "deep_chain",
+        "negative_sum",
+    ] {
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",

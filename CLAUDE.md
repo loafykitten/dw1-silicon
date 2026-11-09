@@ -6,6 +6,10 @@ written in Rust (DW2-PC is the reference). **Read `PLAN.md` before doing anythin
 it's the handoff, with the goal, ground rules, sources, architecture, oracle, phases
 and open questions.
 
+- **Proposed Techsheet fix (2026-11-09):** documented `GsSortBoxFill` blend rates are supported
+  with synthetic regression tests and player verification of the skill grid. Original-SDK
+  capture/full-replay verification is still outstanding; see PLAN.md and `docs/bugs.md`.
+
 - **Current status (2026-10-15, session 6):** Phases 1-4, 6 and 7 done; Phase 5
   (overlays) has battles, training and the Item Keeper certified; Phase 9's streams reached the
   rest without Ember's saves (debug room, downloaded saves, moved saves): forty-three replays

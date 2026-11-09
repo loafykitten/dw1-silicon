@@ -57,6 +57,8 @@ pub struct GsSprite {
 
 /// `GsALON`: semi-transparency on [hdr: libgs.h `GsALON` (1 << 30)].
 const ATTR_ALPHA_ON: u32 = 1 << 30;
+/// `GsAZERO` through `GsATHREE`: semi-transparency rate [hdr: libgs.h].
+const ATTR_ALPHA_RATE: u32 = 3 << 28;
 
 /// Checks the ordering table is a plain one and returns the entry for `pri`.
 ///
@@ -100,8 +102,10 @@ unsafe fn read_arg<T: Copy>(p: *const T) -> T {
 ///
 /// [obs] The packet is five words, a draw-mode word then a flat TILE: `[len 4 | link]`,
 /// `E1000200`, `60BBGGRR` (`62BBGGRR` with `GsALON`), `yyyyxxxx`, `hhhhwwww`. The draw-mode word
-/// is 0x200 (dither on, texture page 0) in every captured call, `GsALON` or not; the blend mode
-/// bits 28-29 of the attribute were 0 in all of them, so any other attribute stops the program.
+/// is 0x200 (dither on, texture page 0) for the captured rate-0 calls, `GsALON` or not.
+/// [hdr/doc] The attribute's rate in bits 28-29 maps to GP0(E1h)'s ABR bits 5-6, as for
+/// sprites below (psx-spx GPU "Draw Mode setting"). Techsheet uses 0x60000000: GsALON plus
+/// GsATWO, subtractive blending. Other attribute bits remain unsupported and stop the program.
 ///
 /// # Safety
 /// `bp` must be valid, `ot` an ordering table in the link window, and the work base a packet area
@@ -110,8 +114,11 @@ unsafe fn read_arg<T: Copy>(p: *const T) -> T {
 pub unsafe extern "C" fn GsSortBoxFill(bp: *const GsBoxf, ot: *mut GsOt, pri: u16) {
     unsafe {
         let b = read_arg(bp);
-        if b.attribute & !ATTR_ALPHA_ON != 0 {
-            unimplemented("GsSortBoxFill with an unobserved attribute bit (not GsALON)");
+        if b.attribute & !(ATTR_ALPHA_ON | ATTR_ALPHA_RATE) != 0 {
+            unimplemented(&format!(
+                "GsSortBoxFill with unsupported attribute bits ({:#010x})",
+                b.attribute
+            ));
         }
         let slot = entry("GsSortBoxFill", ot, pri);
         let pk = GsGetWorkBase().cast::<u32>();
@@ -120,7 +127,8 @@ pub unsafe extern "C" fn GsSortBoxFill(bp: *const GsBoxf, ot: *mut GsOt, pri: u1
         } else {
             0x60
         };
-        pk.add(1).write(0xE100_0200);
+        let rate = (b.attribute & ATTR_ALPHA_RATE) >> 28;
+        pk.add(1).write(0xE100_0200 | rate << 5);
         pk.add(2)
             .write(code << 24 | u32::from(b.b) << 16 | u32::from(b.g) << 8 | u32::from(b.r));
         pk.add(3)
@@ -175,7 +183,6 @@ pub unsafe extern "C" fn GsSortPoly(pp: *const u32, ot: *mut GsOt, pri: u16) {
 /// display off.
 const ATTR_BRIGHT_OFF: u32 = 1 << 6;
 const ATTR_COLOR_MODE: u32 = 3 << 24;
-const ATTR_ALPHA_RATE: u32 = 3 << 28;
 const ATTR_DISPLAY_OFF: u32 = 1 << 31;
 
 /// The attribute's draw-mode bits for a sprite's packets: the command's flags and the texture
