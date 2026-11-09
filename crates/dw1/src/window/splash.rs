@@ -109,7 +109,7 @@ impl Window {
                     return;
                 }
             }
-            let events: Vec<Event> = self.pump.poll_iter().collect();
+            let events: Vec<Event> = self.poll_events();
             let skip = events.iter().any(|ev| {
                 matches!(
                     ev,

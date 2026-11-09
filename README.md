@@ -38,6 +38,15 @@ The first start asks for your disc image. **[The guide](docs/guide.html)** (open
 covers installing the tools, controls, the picture settings, saves and moving them to and from
 DuckStation, and what to do when something goes wrong.
 
+## Keyboard mapping
+
+While playing, choose **Controls → Keyboard Mapping…** from the macOS menu bar.
+Click a key field beside the unbranded controller diagram, then press its replacement.
+The game pauses while the editor is open. Changes are saved immediately and used when you
+close it, without restarting. Each button has one physical key; duplicate assignments swap.
+**Restore defaults** brings back Z/X/A/S and the other original keyboard defaults.
+Gamepad mapping is unchanged. See [the guide](docs/guide.html#controls).
+
 ## You need your own copy of the game
 
 This repository contains no game data: no disc image, no assets, no text, no music. The

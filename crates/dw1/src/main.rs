@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 mod applog;
 mod canon;
+mod controls;
 mod disc;
 mod headless;
 mod pc_text;
@@ -423,6 +424,10 @@ fn main() {
     } else {
         match window::Window::new() {
             Ok(mut w) => {
+                if args == ["--controls-preview"] {
+                    w.controls_preview();
+                    return;
+                }
                 if let Some(log) = crashed_before {
                     applog::report_earlier_crash(&log);
                 }

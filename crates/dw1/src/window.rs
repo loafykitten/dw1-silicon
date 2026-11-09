@@ -4,6 +4,7 @@
 //!
 //! Keys (physical positions, so other layouts work): arrows = D-pad, Z = Cross, X = Circle,
 //! A = Square, S = Triangle, Enter = Start, right Shift = Select, Q/W = L1/R1, 1/2 = L2/R2.
+//! Controls > Keyboard Mapping… changes these physical keys live and keeps them between runs.
 //! Gamepads use SDL's standard layout (south = Cross, east = Circle, west = Square,
 //! north = Triangle), the D-pad or left stick for directions, the triggers for L2/R2.
 //! Closing the window or Cmd-Q exits 0. `DW1_WINDOW_LOG=1` logs frames presented and the
@@ -26,12 +27,14 @@ use sdl3::pixels::PixelFormat;
 use sdl3::render::Canvas;
 use sdl3::surface::Surface;
 
+use crate::controls::{EditorState, KeyboardState, macos::MenuController};
 use crate::settings::{Scale, Settings};
 use sdl3::EventPump;
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button, Gamepad};
 use sdl3::keyboard::{Mod, Scancode};
+use std::{cell::RefCell, rc::Rc};
 
 mod disc_picker;
 mod snapshot;
@@ -105,24 +108,9 @@ const RIGHT: u32 = 1 << 13;
 const DOWN: u32 = 1 << 14;
 const LEFT: u32 = 1 << 15;
 
+#[cfg(test)]
 pub fn key_bit(key: Scancode) -> u32 {
-    match key {
-        Scancode::Up => UP,
-        Scancode::Down => DOWN,
-        Scancode::Left => LEFT,
-        Scancode::Right => RIGHT,
-        Scancode::Z => CROSS,
-        Scancode::X => CIRCLE,
-        Scancode::A => SQUARE,
-        Scancode::S => TRIANGLE,
-        Scancode::Return | Scancode::KpEnter => START,
-        Scancode::RShift => SELECT,
-        Scancode::Q => L1,
-        Scancode::W => R1,
-        Scancode::_1 => L2,
-        Scancode::_2 => R2,
-        _ => 0,
-    }
+    crate::controls::Bindings::default().bit(key)
 }
 
 pub fn button_bit(button: Button) -> u32 {
@@ -197,6 +185,22 @@ impl PadState {
     }
 }
 
+/// Keep non-input lifecycle events (Quit, device removal, focus, etc.), and never discard
+/// a new press just because SDL delivered it in the same poll that closed the editor.
+fn input_after_editor(ev: &Event, closed_at_ns: u64) -> bool {
+    let input = matches!(
+        ev,
+        Event::KeyDown { .. }
+            | Event::KeyUp { .. }
+            | Event::MouseButtonDown { .. }
+            | Event::MouseButtonUp { .. }
+            | Event::GamepadButtonDown { .. }
+            | Event::GamepadButtonUp { .. }
+            | Event::GamepadAxisMotion { .. }
+    );
+    !input || closed_at_ns == 0 || ev.get_timestamp() > closed_at_ns
+}
+
 pub struct Window {
     /// Declared before `window`, so it goes first (it draws into the window's Metal layer).
     renderer: Renderer,
@@ -214,7 +218,12 @@ pub struct Window {
     pump: EventPump,
     gamepad_sys: sdl3::GamepadSubsystem,
     gamepads: Vec<Gamepad>,
-    keys: u32,
+    keys: KeyboardState,
+    controls: Rc<RefCell<EditorState>>,
+    controls_revision: u64,
+    input_cutoff_ns: u64,
+    // Keeps the native menu target alive until the host exits.
+    _controls_menu: crate::controls::macos::ControlsMenu,
     /// Per gamepad, by joystick id.
     pads: BTreeMap<sdl3::joystick::JoystickId, PadState>,
     buf: Vec<u32>,
@@ -437,6 +446,8 @@ impl Window {
         let gamepad_sys = sdl.gamepad().map_err(|e| e.to_string())?;
         let pump = sdl.event_pump().map_err(|e| e.to_string())?;
         let audio = open_audio(&sdl);
+        let controls = Rc::new(RefCell::new(EditorState::load()));
+        let controls_menu = MenuController::install(controls.clone())?;
         let mut w = Window {
             renderer,
             window,
@@ -450,7 +461,11 @@ impl Window {
             pump,
             gamepad_sys,
             gamepads: Vec::new(),
-            keys: 0,
+            keys: KeyboardState::default(),
+            controls,
+            controls_revision: 0,
+            input_cutoff_ns: 0,
+            _controls_menu: controls_menu,
             pads: BTreeMap::new(),
             buf: vec![0; 640 * 480],
             pacer: None,
@@ -474,6 +489,47 @@ impl Window {
         Ok(w)
     }
 
+    /// A disc-free manual UI/input smoke test. It never initializes the game or saves.
+    pub fn controls_preview(&mut self) {
+        let mut pixels = Vec::new();
+        let mut last = 0;
+        loop {
+            self.events();
+            let bits = self.held_pad();
+            if bits != 0 {
+                last = bits;
+            }
+            let label = format!("PadRead: {bits:04X}   Last: {last:04X}");
+            let lines = [
+                ("Keyboard controls preview", 1.5, 72., (235, 238, 245)),
+                ("Controls > Keyboard Mapping...", 1., 109., (170, 205, 255)),
+                (label.as_str(), 1., 145., (170, 235, 220)),
+                (
+                    "No disc, game state or saves loaded",
+                    1.,
+                    199.,
+                    (140, 148, 168),
+                ),
+            ];
+            let (w, h) = self.window.size_in_pixels();
+            let (w, h) = self.renderer.drawable_size(w, h);
+            if w > 0 && h > 0 && splash::draw_lines(w, h, &lines, 1., &mut pixels).is_ok() {
+                Self::show(
+                    &mut self.renderer,
+                    &self.window,
+                    Some(Picture {
+                        pixels: &pixels,
+                        w,
+                        h,
+                    }),
+                    Fit::Exact,
+                    None,
+                );
+            }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    }
+
     fn open_gamepad(&mut self, id: sdl3::joystick::JoystickId) {
         if let Ok(g) = self.gamepad_sys.open(id) {
             self.gamepads.push(g);
@@ -481,10 +537,33 @@ impl Window {
     }
 
     fn events(&mut self) {
-        let events: Vec<Event> = self.pump.poll_iter().collect();
-        for ev in events {
+        for ev in self.poll_events() {
             self.handle(ev);
         }
+    }
+
+    /// All window loops use this so the splash/disc picker cannot leak capture keys either.
+    fn poll_events(&mut self) -> Vec<Event> {
+        let mut events: Vec<Event> = self.pump.poll_iter().collect();
+        // A menu callback can run the modal editor inside poll_iter. Only input from
+        // BEFORE it closed is stale; a fresh press may already be in this very same poll.
+        let (revision, closed_at_ns) = {
+            let controls = self.controls.borrow();
+            (controls.revision, controls.closed_at_ns)
+        };
+        if revision != self.controls_revision {
+            self.clear_input();
+            self.controls_revision = revision;
+            self.input_cutoff_ns = closed_at_ns;
+        }
+        events.retain(|ev| input_after_editor(ev, self.input_cutoff_ns));
+        events
+    }
+
+    fn clear_input(&mut self) {
+        self.keys.clear();
+        self.pads.clear();
+        self.held_over = 0;
     }
 
     fn handle(&mut self, ev: Event) {
@@ -520,12 +599,27 @@ impl Window {
                     Scancode::F11 => self.toggle_fullscreen(),
                     Scancode::F12 => self.bug_snapshot(),
                     Scancode::F if cmd_ctrl => self.toggle_fullscreen(),
-                    _ => self.keys |= key_bit(k),
+                    _ if !keymod.intersects(
+                        Mod::LGUIMOD
+                            | Mod::RGUIMOD
+                            | Mod::LCTRLMOD
+                            | Mod::RCTRLMOD
+                            | Mod::LALTMOD
+                            | Mod::RALTMOD,
+                    ) =>
+                    {
+                        self.keys.key(k, true)
+                    }
+                    _ => {}
                 }
             }
             Event::KeyUp {
                 scancode: Some(k), ..
-            } => self.keys &= !key_bit(k),
+            } => self.keys.key(k, false),
+            Event::Window {
+                win_event: sdl3::event::WindowEvent::FocusLost,
+                ..
+            } => self.clear_input(),
             Event::Window {
                 win_event: sdl3::event::WindowEvent::DisplayChanged(_),
                 ..
@@ -556,7 +650,8 @@ impl Window {
     }
 
     fn held_pad(&self) -> u32 {
-        self.pads.values().fold(self.keys, |a, p| a | p.bits())
+        let keys = self.keys.bits(&self.controls.borrow().bindings);
+        self.pads.values().fold(keys, |a, p| a | p.bits())
     }
 
     /// A hotkey changed a setting: keep it (that setting only: the others keep what the file
@@ -780,6 +875,53 @@ impl psyq::libetc::Host for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_press_after_editor_in_same_poll_is_not_swallowed() {
+        let key = |timestamp, down| {
+            if down {
+                Event::KeyDown {
+                    timestamp,
+                    window_id: 1,
+                    keycode: None,
+                    scancode: Some(Scancode::Z),
+                    keymod: Mod::empty(),
+                    repeat: false,
+                    which: 0,
+                    raw: 0,
+                }
+            } else {
+                Event::KeyUp {
+                    timestamp,
+                    window_id: 1,
+                    keycode: None,
+                    scancode: Some(Scancode::Z),
+                    keymod: Mod::empty(),
+                    repeat: false,
+                    which: 0,
+                    raw: 0,
+                }
+            }
+        };
+        let mut events = vec![key(99, true), key(100, false), key(101, true)];
+        events.retain(|e| input_after_editor(e, 100));
+        assert_eq!(events.len(), 1);
+        let mut keys = KeyboardState::default();
+        for event in events {
+            if let Event::KeyDown {
+                scancode: Some(k), ..
+            } = event
+            {
+                keys.key(k, true);
+            }
+        }
+        assert_eq!(keys.bits(&crate::controls::Bindings::default()), CROSS);
+        assert!(input_after_editor(&key(102, false), 100));
+        keys.key(Scancode::Z, false);
+        assert_eq!(keys.bits(&crate::controls::Bindings::default()), 0);
+        assert!(input_after_editor(&Event::Quit { timestamp: 99 }, 100));
+        assert!(input_after_editor(&key(0, true), 0));
+    }
 
     #[test]
     fn keys_map_to_libetc_bits() {

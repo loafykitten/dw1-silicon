@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Keyboard controls</title>
+<style>
+:root{color-scheme:light;font:14px -apple-system,BlinkMacSystemFont,sans-serif;color:#243c42;background:#f5f8f8;--accent:#058a9f;--line:#3e6271}
+*{box-sizing:border-box}body{margin:0;padding:20px 32px 14px;user-select:none}header{display:flex;align-items:flex-start;justify-content:space-between}h1{font-size:25px;letter-spacing:-.6px;margin:0 0 5px;font-weight:650}p{margin:0;color:#60757a;line-height:1.5}.pause{font-size:11px;letter-spacing:.8px;text-transform:uppercase;display:flex;align-items:center;gap:7px;padding-top:8px}.pause:before{content:"Ⅱ";color:var(--accent);font-weight:800;font-size:14px}.diagram{position:relative;width:100%;aspect-ratio:1100 / 610;margin-top:8px}svg{display:block;width:100%;height:100%}.body{fill:#f7f9fa;stroke:var(--line);stroke-width:2.4;stroke-linejoin:round}.button{fill:#fff;stroke:var(--line);stroke-width:1.9}.detail{fill:none;stroke:var(--line);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.leaders{fill:none;stroke:#9daeb5;stroke-width:1.1;stroke-linejoin:round}.well{stroke:#73909c;stroke-width:1.6}.symbol{stroke-width:1.6}.cable{stroke-width:2}.anchor{fill:var(--line)}.field{position:absolute;width:16%;transform:translateY(-50%);display:grid;grid-template-columns:1fr 94px;align-items:center;gap:9px}.field.left{left:0}.field.right{right:0;grid-template-columns:94px 1fr}.field.right label{grid-column:2;grid-row:1;text-align:right}.field.right input{grid-column:1;grid-row:1}label{font-size:12px;font-weight:600;white-space:nowrap;color:#486269}input{width:100%;height:35px;border:1px solid #becfd3;border-radius:7px;background:white;text-align:center;color:#263f46;font:600 13px -apple-system,BlinkMacSystemFont,sans-serif;padding:0 3px;cursor:pointer;box-shadow:0 1px 2px #18343e05}input:hover{border-color:var(--accent);background:#fafdfe}input:focus{outline:3px solid #0791a32e;border:1.5px solid var(--accent)}input.capturing{background:#e4f6f8;color:#00798c;font-size:11px}svg .active{stroke:#007c91;stroke-width:3.5;fill:#c9eef1}footer{border-top:1px solid #dce5e7;padding-top:14px;display:flex;align-items:center;gap:14px}.status{flex:1;font-size:12px;min-height:34px;display:flex;align-items:center;line-height:1.4;color:#537077}.status.error{color:#ac3e30}button{height:35px;border:1px solid #bccdd0;background:white;border-radius:7px;padding:0 15px;font:500 13px -apple-system,BlinkMacSystemFont,sans-serif;color:#34545d;cursor:pointer}button:hover{background:#edf4f5}button:focus-visible{outline:3px solid #0791a350;outline-offset:2px}button.primary{color:white;background:#087f94;border-color:#087f94;min-width:80px}.hint{font-size:11px;margin-top:8px;color:#73888e;line-height:1.5}
+</style></head><body>
+<header><div><h1>Keyboard controls</h1><p>Click a key, then press its replacement.</p></div><span class="pause">Game paused</span></header>
+<main class="diagram" aria-label="Controller keyboard mapping">
+<!-- Unbranded digital-controller geometry, redrawn to the supplied classic reference. -->
+<svg viewBox="0 0 1100 610" aria-hidden="true">
+<g transform="translate(275 105)">
+<!-- A broad, shallow shell and short grips, rather than elongated teardrop handles. -->
+<path class="body" d="M94 76 C116 65 150 62 177 84 H373 C400 62 434 65 456 76 C484 87 505 110 515 145 C518 158 520 172 523 188 L535 280 C542 322 523 350 499 350 C470 350 441 322 407 290 L370 254 H180 L143 290 C109 322 80 350 51 350 C27 350 8 322 15 280 L27 188 C30 172 32 158 35 145 C45 110 66 87 94 76 Z"/>
+<!-- Two distinct shoulder caps on each side. -->
+<path id="shape-l2" class="button" d="M95 42 L96 34 C103 22 155 22 162 34 L164 43 C142 35 117 35 95 42 Z"/>
+<path id="shape-l1" class="button" d="M87 65 L92 47 C110 35 147 35 166 47 L174 70 C147 58 113 58 87 65 Z"/>
+<path id="shape-r2" class="button" d="M455 42 L454 34 C447 22 395 22 388 34 L386 43 C408 35 433 35 455 42 Z"/>
+<path id="shape-r1" class="button" d="M463 65 L458 47 C440 35 403 35 384 47 L376 70 C403 58 437 58 463 65 Z"/>
+<path class="detail cable" d="M266 84 V15 H284 V84"/>
+<circle class="detail well" cx="127" cy="156" r="88"/>
+<circle class="detail well" cx="423" cy="156" r="88"/>
+<!-- Four separate D-pad segments, with the classic inward-facing bevels. -->
+<path id="shape-up" class="button" d="M113 111 Q113 106 118 106 H136 Q141 106 141 111 V135 L127 147 L113 135 Z"/>
+<path id="shape-down" class="button" d="M113 177 L127 165 L141 177 V201 Q141 206 136 206 H118 Q113 206 113 201 Z"/>
+<path id="shape-left" class="button" d="M77 142 Q72 142 72 147 V165 Q72 170 77 170 H101 L113 156 L101 142 Z"/>
+<path id="shape-right" class="button" d="M153 142 L141 156 L153 170 H177 Q182 170 182 165 V147 Q182 142 177 142 Z"/>
+<!-- Face buttons retain only universal geometric symbols; no branding. -->
+<circle id="shape-triangle" class="button" cx="423" cy="112" r="22"/>
+<path class="detail symbol triangle" d="M423 100 L435 122 H411 Z"/>
+<circle id="shape-circle" class="button" cx="467" cy="156" r="22"/>
+<circle class="detail symbol circle" cx="467" cy="156" r="13"/>
+<circle id="shape-square" class="button" cx="379" cy="156" r="22"/>
+<path class="detail symbol square" d="M369 146 H389 V166 H369 Z"/>
+<circle id="shape-cross" class="button" cx="423" cy="200" r="22"/>
+<path class="detail symbol cross" d="M413 190 L433 210 M433 190 L413 210"/>
+<rect id="shape-select" class="button" x="230" y="180" width="26" height="14" rx="4"/>
+<path id="shape-start" class="button" d="M294 179 L318 187 L294 195 Z"/>
+</g>
+<!-- Fine leader lines fan out from the actual button edges, not across their symbols. -->
+<g class="leaders">
+<path d="M176 60 H286 L401 137"/>
+<path d="M176 130 H295 L393 155"/>
+<path d="M176 224 H298 L388 221"/>
+<path d="M176 294 H299 L347 261"/>
+<path d="M176 364 H457 V275"/>
+<path d="M176 434 H291 L392 310"/>
+<path d="M176 548 H396 L518 300"/>
+<path d="M924 60 H814 L699 137"/>
+<path d="M924 130 H805 L707 155"/>
+<path d="M924 224 H814 L720 217"/>
+<path d="M924 294 H801 L764 261"/>
+<path d="M924 364 H654 V283"/>
+<path d="M924 434 H809 L710 324"/>
+<path d="M924 548 H704 L580 300"/>
+</g>
+</svg>
+</main>
+<footer><div id="status" class="status" role="status" aria-live="polite">Loading controls…</div><button id="reset" type="button">Restore defaults</button><button id="done" class="primary" type="button">Done</button></footer>
+<p class="hint">USA version: × confirms · △ goes back. One key per button · Esc cancels editing<br>⌘ / ⌃ / ⌥ combinations and F2–F5, F11, F12 remain reserved. Gamepad controls are unchanged.</p>
+<script>
+'use strict';
+const positions={l2:['left',60,'L2'],l1:['left',130,'L1'],up:['left',224,'Up ↑'],left:['left',294,'Left ←'],right:['left',364,'Right →'],down:['left',434,'Down ↓'],select:['left',548,'Select'],r2:['right',60,'R2'],r1:['right',130,'R1'],triangle:['right',224,'△ Triangle'],circle:['right',294,'○ Circle'],square:['right',364,'□ Square'],cross:['right',434,'× Cross'],start:['right',548,'Start']};
+let editing=null, latest=null;
+const send=m=>window.webkit.messageHandlers.controls.postMessage(JSON.stringify(m));
+const status=document.querySelector('#status');
+function stop(){if(editing){document.querySelector('#key-'+editing).classList.remove('capturing');document.querySelector('#shape-'+editing).classList.remove('active');editing=null;} if(latest)render(latest);}
+for(const [id,[side,y,label]] of Object.entries(positions)){
+ const f=document.createElement('div');f.className='field '+side;f.style.top=(y/610*100)+'%';
+ const l=document.createElement('label');l.htmlFor='key-'+id;l.textContent=label;
+ const i=document.createElement('input');i.id='key-'+id;i.dataset.button=id;i.readOnly=true;i.title='Click or press Return to change';i.value='…';i.setAttribute('aria-label',label+' keyboard key');
+ i.addEventListener('click',()=>{stop();editing=id;i.classList.add('capturing');i.value='Press a key';document.querySelector('#shape-'+id).classList.add('active');status.classList.remove('error');status.textContent='Press a new key for '+label+'. Esc to cancel.';});
+ i.addEventListener('blur',()=>{if(editing===id)stop();});
+ f.append(l,i);document.querySelector('.diagram').append(f);
+}
+function render(state){latest=state;for(const b of state.buttons){const i=document.querySelector('#key-'+b.id);if(i&&editing!==b.id)i.value=b.label;}status.textContent=state.status;status.classList.toggle('error',state.failed);}
+window.renderControls=render;
+document.addEventListener('keydown',e=>{
+ if(!editing){if(e.target.matches('input')&&(e.code==='Enter'||e.code==='Space')){e.preventDefault();e.target.click();return;}if(e.key==='Escape'){e.preventDefault();send({action:'done'});}return;}
+ // Never turn a system shortcut into a game binding.
+ if(e.metaKey||e.ctrlKey||e.altKey){e.preventDefault();status.classList.add('error');status.textContent='Command, Control and Option shortcuts are reserved.';return;}
+ e.preventDefault();e.stopPropagation();if(e.repeat)return;
+ if(e.code==='Escape'){stop();return;}
+ const button=editing;stop();send({action:'bind',button,code:e.code});
+},true);
+document.querySelector('#done').onclick=()=>{stop();send({action:'done'});};
+document.querySelector('#reset').onclick=()=>{stop();send({action:'reset'});};
+document.addEventListener('drop',e=>e.preventDefault());
+document.addEventListener('dragover',e=>e.preventDefault());
+send({action:'ready'});
+</script></body></html>

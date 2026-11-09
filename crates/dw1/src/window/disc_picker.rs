@@ -166,7 +166,7 @@ impl Window {
                         }
                         // what is still queued (the press that chose, say) is seen before the
                         // game's held-button mask is taken
-                        for ev in self.pump.poll_iter().collect::<Vec<_>>() {
+                        for ev in self.poll_events() {
                             self.handle(ev);
                         }
                         self.held_over = self.held_pad();
@@ -187,7 +187,7 @@ impl Window {
             }
             let mut chosen: Option<PathBuf> = None;
             let mut ask = false;
-            for ev in self.pump.poll_iter().collect::<Vec<_>>() {
+            for ev in self.poll_events() {
                 match ev {
                     Event::DropFile { ref filename, .. } => {
                         chosen = Some(PathBuf::from(filename));

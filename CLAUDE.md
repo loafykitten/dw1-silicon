@@ -6,6 +6,12 @@ written in Rust (DW2-PC is the reference). **Read `PLAN.md` before doing anythin
 it's the handoff, with the goal, ground rules, sources, architecture, oracle, phases
 and open questions.
 
+- **Proposed keyboard editor (2026-11-09):** Controls → Keyboard Mapping… opens a
+  logo-free controller diagram with single-key capture fields. The modal editor pauses the
+  host; preferences are separate from saves and headless input. See `docs/controls.md` for
+  tests, provenance and limitations. Player verification covers keyboard only; no physical
+  controller was available. This is an incoming feature, not new phase certification.
+
 - **Current status (2026-10-15, session 6):** Phases 1-4, 6 and 7 done; Phase 5
   (overlays) has battles, training and the Item Keeper certified; Phase 9's streams reached the
   rest without Ember's saves (debug room, downloaded saves, moved saves): forty-three replays

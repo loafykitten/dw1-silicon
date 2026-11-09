@@ -260,7 +260,7 @@ git -C decomp submodule update --init external/psyq_headers</code></pre>
 <h2 id="controls">Controls</h2>
 <p>A keyboard works out of the box, and so does any game controller macOS knows (PlayStation, Xbox, Switch Pro and others). Buttons go by position, so on any controller the bottom face button is <strong>Cross</strong>.</p>
 <table>
-  <thead><tr><th>PlayStation</th><th>Keyboard</th><th>Controller</th></tr></thead>
+  <thead><tr><th>PlayStation</th><th>Keyboard defaults</th><th>Controller</th></tr></thead>
   <tbody>
     <tr><td>D-pad</td><td>Arrow keys</td><td>D-pad or left stick</td></tr>
     <tr><td>Cross</td><td><kbd>Z</kbd></td><td>Bottom face button</td></tr>
@@ -273,6 +273,25 @@ git -C decomp submodule update --init external/psyq_headers</code></pre>
     <tr><td>L2 / R2</td><td><kbd>1</kbd> / <kbd>2</kbd></td><td>Triggers</td></tr>
   </tbody>
 </table>
+<h3>Change the keyboard mapping <span class="tag add">addition</span></h3>
+<p>Choose <strong>Controls → Keyboard Mapping…</strong> in the macOS menu bar while the
+  game is running. The game pauses while this window is open. Click a key field beside the
+  controller outline, then press the new key. Press <kbd>Esc</kbd> to cancel an edit.
+  Changes save immediately; click <strong>Done</strong> or close the window to resume,
+  with no restart needed.</p>
+<p>In this USA release, <strong>Cross confirms</strong> and <strong>Triangle goes back</strong>;
+  Circle is not the generic cancel button. The editor changes physical buttons, not game actions.</p>
+<p>There is one physical key per button, not a list of aliases. Assigning a key that another
+  button already uses swaps those two assignments. <strong>Restore defaults</strong> restores
+  the table above. Labels refer to US-layout physical key positions; other keyboard layouts
+  use the same positions. Command, Control and Option shortcuts, Escape, F2–F5, F11 and F12
+  are reserved. Function keys may require the Fn key on a Mac keyboard. This editor changes keyboard
+  bindings only, not physical controller mappings.</p>
+<p>Bindings are kept in <code>~/Library/Application Support/dw1-silicon/controls.json</code>,
+  separately from picture settings and saves. A save failure is shown in the editor and
+  leaves the previous mapping in effect. A malformed controls file is left untouched on
+  startup, with defaults in use and an explanation in the editor; restoring defaults repairs
+  it if the folder is writable.</p>
 <p>Closing the window or <kbd>Cmd</kbd>&nbsp;<kbd>Q</kbd> quits. The game saves only where it always did (the save machines and the like), so save before you quit.</p>
 </section>
 
