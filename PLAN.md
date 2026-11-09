@@ -7,6 +7,18 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-15, session 6): start here
 
+- **Draft native pause-loop contribution (2026-11-09):** a live combat freeze was traced to
+  cached PadRead input in the no-VSync pause wait. The pinned decomp proposes native-only
+  field waits in shared and VS pause loops, with 28 synthetic branch/scenario checks in
+  `tools/tests/pause_loop.py`. Live keyboard combat pause/resume was verified twice on the
+  local combined build; physical gamepads, live VS and original-PS1 pause timing are not
+  certified. This is an alternative to upstream dw1-silicon PR #1, not a new issue; no
+  Techsheet, keyboard-mapping or map-row changes are included. Clean workspace tests:
+  227 passed, 0 failed, 27 fixture-dependent ignored; release builds. Native code is in
+  loafykitten/dw_decomp draft #1. The draft gitmodules URL temporarily uses the authorized
+  contributor fork for reproducible checkout; restore upstream/repin after dependency merge.
+  See `docs/bugs.md`.
+
 - **Phase 8 (renderer and extras) is done** (Ember: "Looks good to me!", 2026-10-14;
   `docs/phase8-plan.md`, its Progress section
   has the commits). The window now shows the picture through wgpu on Metal (`crates/render`),
