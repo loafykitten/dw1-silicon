@@ -81,9 +81,14 @@ extern uint8_t dw1_tamer_collision_span[0x10800];
 #define DW1_MAIN_D_801A8B98 (dw1_tamer_collision_span + 0x7800)
 #define DW1_MAP_COLLISION_DATA (dw1_tamer_collision_span + 0xE000)
 /* A collision-grid index that stays inside the span (beyond it the PS1 read STDVS_CAMERA). */
+static inline int32_t dw1_collision_index_is_represented(int32_t i)
+{
+	return i >= -0xE000 && i < 0x2800;
+}
+
 static inline int32_t dw1_collision_index(int32_t i)
 {
-	if (i < -0xE000 || i >= 0x2800) {
+	if (!dw1_collision_index_is_represented(i)) {
 		dw1_native_fatal("a MAP_COLLISION_DATA index outside the PS1 span it shares with the tamer model");
 	}
 	return i;

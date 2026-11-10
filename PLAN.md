@@ -7,6 +7,19 @@ whole before starting, and don't re-ask Ember anything answered here. Keep the
 
 ## Where things stand (2026-10-15, session 6): start here
 
+- **Post-victory shadow contribution (2026-11-11):** the native collision guard can fire
+  while a defeated enemy retreats during command-menu dismissal. The companion decomp change
+  delays unrepresented shadow queries until projection and omits only proven invisible quads,
+  retaining strict collision bounds and all represented queries. This independent contribution
+  excludes keyboard, Techsheet, pause, map-row and textbox changes. See `docs/bugs.md` for the
+  modified-private-fixture reproduction, player acceptance versus clean native checks, and
+  limitations. Independent model review and original-PS1 certification are NOT complete;
+  submit as a draft, not merge-ready. The companion implementation must be accepted before
+  final integration. No disc-derived artifacts or binaries are published.
+  Published, player-authorised drafts (2026-11-11):
+  https://github.com/loafykitten/dw1-silicon/pull/7 and
+  https://github.com/loafykitten/dw_decomp/pull/3. Neither is merge-ready.
+
 - **Phase 8 (renderer and extras) is done** (Ember: "Looks good to me!", 2026-10-14;
   `docs/phase8-plan.md`, its Progress section
   has the commits). The window now shows the picture through wgpu on Metal (`crates/render`),
