@@ -4,6 +4,7 @@
 //!
 //! Keys (physical positions, so other layouts work): arrows = D-pad, Z = Cross, X = Circle,
 //! A = Square, S = Triangle, Enter = Start, right Shift = Select, Q/W = L1/R1, 1/2 = L2/R2.
+//! Sound > Volume… changes only host output gain, with separate sound preferences.
 //! Gamepads use SDL's standard layout (south = Cross, east = Circle, west = Square,
 //! north = Triangle), the D-pad or left stick for directions, the triggers for L2/R2.
 //! Closing the window or Cmd-Q exits 0. `DW1_WINDOW_LOG=1` logs frames presented and the
@@ -19,6 +20,7 @@
 //! `DW1_SPLASH_SHOT=<file.png>` saves it as a picture. Headless and replay runs never show it.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use render::{Fit, Picture, Renderer};
@@ -197,6 +199,22 @@ impl PadState {
     }
 }
 
+/// Never leak sound-panel input to the game, or discard a fresh post-close press.
+/// Window lifecycle/device events are retained even when their timestamps are older.
+fn input_after_panel(ev: &Event, cutoff: u64, panel_focused: bool) -> bool {
+    let input = matches!(
+        ev,
+        Event::KeyDown { .. }
+            | Event::KeyUp { .. }
+            | Event::MouseButtonDown { .. }
+            | Event::MouseButtonUp { .. }
+            | Event::GamepadButtonDown { .. }
+            | Event::GamepadButtonUp { .. }
+            | Event::GamepadAxisMotion { .. }
+    );
+    !input || (!panel_focused && (cutoff == 0 || ev.get_timestamp() > cutoff))
+}
+
 pub struct Window {
     /// Declared before `window`, so it goes first (it draws into the window's Metal layer).
     renderer: Renderer,
@@ -215,6 +233,9 @@ pub struct Window {
     gamepad_sys: sdl3::GamepadSubsystem,
     gamepads: Vec<Gamepad>,
     keys: u32,
+    sound_menu: crate::sound::macos::SoundMenu,
+    sound_revision: u64,
+    input_cutoff_ns: u64,
     /// Per gamepad, by joystick id.
     pads: BTreeMap<sdl3::joystick::JoystickId, PadState>,
     buf: Vec<u32>,
@@ -227,7 +248,7 @@ pub struct Window {
     /// reported until released.
     held_over: u32,
     /// The sound output (kept open; libspu pushes into it). None if there's no audio device.
-    _audio: Option<AudioStreamOwner>,
+    _audio: Option<Rc<AudioStreamOwner>>,
     /// The title says a save failed.
     save_failed_shown: bool,
     /// The display's refresh period (0 if unknown) and when a frame was last shown: on a
@@ -361,7 +382,7 @@ struct SinkStream(*mut sdl3::sys::audio::SDL_AudioStream);
 unsafe impl Send for SinkStream {}
 
 /// Opens the default playback device and points libspu's samples at it. DW1_MUTE=1 skips it.
-fn open_audio(sdl: &sdl3::Sdl) -> Option<AudioStreamOwner> {
+fn open_audio(sdl: &sdl3::Sdl) -> Option<Rc<AudioStreamOwner>> {
     if std::env::var("DW1_MUTE").is_ok_and(|v| !v.is_empty() && v != "0") {
         return None;
     }
@@ -402,7 +423,7 @@ fn open_audio(sdl: &sdl3::Sdl) -> Option<AudioStreamOwner> {
             );
         }
     }));
-    Some(stream)
+    Some(Rc::new(stream))
 }
 
 impl Drop for Window {
@@ -437,6 +458,14 @@ impl Window {
         let gamepad_sys = sdl.gamepad().map_err(|e| e.to_string())?;
         let pump = sdl.event_pump().map_err(|e| e.to_string())?;
         let audio = open_audio(&sdl);
+        let sound_menu = match crate::sound::macos::SoundMenu::install(audio.clone()) {
+            Ok(menu) => menu,
+            Err(e) => {
+                // The sink must not outlive this stream if construction fails.
+                psyq::libspu::clear_audio_sink();
+                return Err(e);
+            }
+        };
         let mut w = Window {
             renderer,
             window,
@@ -451,6 +480,9 @@ impl Window {
             gamepad_sys,
             gamepads: Vec::new(),
             keys: 0,
+            sound_menu,
+            sound_revision: 0,
+            input_cutoff_ns: 0,
             pads: BTreeMap::new(),
             buf: vec![0; 640 * 480],
             pacer: None,
@@ -474,6 +506,94 @@ impl Window {
         Ok(w)
     }
 
+    /// Disc/save-free UI smoke test. Silent unless DW1_PREVIEW_WAV explicitly selects music.
+    /// Uses the same output stream/gain as gameplay, not the emulated SPU. No test oscillator.
+    pub fn sound_preview(&mut self) {
+        self.sound_menu.open();
+        let mut pixels = Vec::new();
+        let mut phrase = std::env::var_os("DW1_PREVIEW_WAV")
+            .filter(|p| !p.is_empty())
+            .and_then(|path| {
+                match crate::sound::preview::Phrase::read(std::path::Path::new(&path)) {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        eprintln!("dw1: preview stays silent: {e}");
+                        None
+                    }
+                }
+            });
+        let mut queued_frames = 0u64;
+        let mut last_log = Instant::now();
+        loop {
+            self.events();
+            if let (Some(audio), Some(phrase)) = (&self._audio, &mut phrase) {
+                // Keep about 100 ms queued without tying the preview audio to rendering speed.
+                let queued = unsafe { sdl3::sys::audio::SDL_GetAudioStreamQueued(audio.raw()) };
+                if queued < AUDIO_HZ / 10 * 4 {
+                    let samples = phrase.next(882);
+                    queued_frames += 882;
+                    // SAFETY: output is retained throughout this call; SDL copies these samples.
+                    unsafe {
+                        sdl3::sys::audio::SDL_PutAudioStreamData(
+                            audio.raw(),
+                            samples.as_ptr().cast(),
+                            (samples.len() * 2) as i32,
+                        );
+                    }
+                }
+            }
+            let percent = self.sound_menu.percent();
+            let gain = self._audio.as_ref().map(|a| a.get_gain());
+            let gain_label = match gain {
+                Some(Ok(g)) => format!("{g:.2}"),
+                _ => "unavailable".into(),
+            };
+            let label = format!("Volume {percent}%   Output gain {gain_label}");
+            let lines = [
+                ("Sound volume preview", 1.5, 72., (235, 238, 245)),
+                (
+                    if phrase.is_some() {
+                        "Music loop. Sound > Volume..."
+                    } else {
+                        "Silent preview. Sound > Volume..."
+                    },
+                    1.,
+                    109.,
+                    (170, 205, 255),
+                ),
+                (label.as_str(), 1., 145., (170, 235, 220)),
+                (
+                    "No disc, game state or saves loaded",
+                    1.,
+                    199.,
+                    (140, 148, 168),
+                ),
+            ];
+            let (w, h) = self.window.size_in_pixels();
+            let (w, h) = self.renderer.drawable_size(w, h);
+            if w > 0 && h > 0 && splash::draw_lines(w, h, &lines, 1., &mut pixels).is_ok() {
+                Self::show(
+                    &mut self.renderer,
+                    &self.window,
+                    Some(Picture {
+                        pixels: &pixels,
+                        w,
+                        h,
+                    }),
+                    Fit::Exact,
+                    None,
+                );
+            }
+            if self.log && last_log.elapsed() > Duration::from_secs(1) {
+                eprintln!(
+                    "dw1: sound preview volume={percent} gain={gain:?} frames={queued_frames}"
+                );
+                last_log = Instant::now();
+            }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    }
+
     fn open_gamepad(&mut self, id: sdl3::joystick::JoystickId) {
         if let Ok(g) = self.gamepad_sys.open(id) {
             self.gamepads.push(g);
@@ -481,10 +601,27 @@ impl Window {
     }
 
     fn events(&mut self) {
-        let events: Vec<Event> = self.pump.poll_iter().collect();
-        for ev in events {
+        for ev in self.poll_events() {
             self.handle(ev);
         }
+    }
+
+    /// Shared by gameplay, splash, disc selection and the silent preview.
+    fn poll_events(&mut self) -> Vec<Event> {
+        let mut events: Vec<Event> = self.pump.poll_iter().collect();
+        // Cocoa callbacks run during the SDL poll. Discard pre-close input, but preserve
+        // a fresh press arriving later in this same poll, as well as lifecycle events.
+        let (revision, cutoff) = self.sound_menu.input_epoch();
+        if revision != self.sound_revision {
+            self.keys = 0;
+            self.pads.clear();
+            self.held_over = 0;
+            self.sound_revision = revision;
+            self.input_cutoff_ns = self.input_cutoff_ns.max(cutoff);
+        }
+        let focused = self.sound_menu.focused();
+        events.retain(|ev| input_after_panel(ev, self.input_cutoff_ns, focused));
+        events
     }
 
     fn handle(&mut self, ev: Event) {
@@ -556,6 +693,9 @@ impl Window {
     }
 
     fn held_pad(&self) -> u32 {
+        if self.sound_menu.focused() {
+            return 0;
+        }
         self.pads.values().fold(self.keys, |a, p| a | p.bits())
     }
 
@@ -780,6 +920,36 @@ impl psyq::libetc::Host for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sound_panel_input_filter_preserves_fresh_presses_and_lifecycle_events() {
+        let key = |timestamp| Event::KeyDown {
+            timestamp,
+            window_id: 1,
+            keycode: None,
+            scancode: Some(Scancode::Z),
+            keymod: Mod::empty(),
+            repeat: false,
+            which: 0,
+            raw: 0,
+        };
+        for timestamp in [99, 100] {
+            assert!(!input_after_panel(&key(timestamp), 100, false));
+        }
+        assert!(input_after_panel(&key(101), 100, false));
+        assert!(input_after_panel(&key(0), 0, false));
+        assert!(!input_after_panel(&key(101), 100, true));
+        assert!(!input_after_panel(&key(0), 0, true));
+        assert!(input_after_panel(&Event::Quit { timestamp: 99 }, 100, true));
+        assert!(input_after_panel(
+            &Event::GamepadRemoved {
+                timestamp: 99,
+                which: 1.into()
+            },
+            100,
+            true
+        ));
+    }
 
     #[test]
     fn keys_map_to_libetc_bits() {

@@ -38,6 +38,14 @@ The first start asks for your disc image. **[The guide](docs/guide.html)** (open
 covers installing the tools, controls, the picture settings, saves and moving them to and from
 DuckStation, and what to do when something goes wrong.
 
+## Sound volume
+
+Choose **Sound → Volume…** in the macOS menu bar. Drag the slider to change game volume
+immediately, or click the small speaker to mute/restore it. The setting is remembered
+between runs without changing macOS system volume. **The game keeps running while this
+panel is open**, so pause first if you want care time to stop. See [sound settings and
+validation limits](docs/sound.md).
+
 ## You need your own copy of the game
 
 This repository contains no game data: no disc image, no assets, no text, no music. The

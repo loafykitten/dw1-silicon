@@ -13,6 +13,7 @@ mod pc_text;
 mod replay;
 mod saves;
 mod settings;
+mod sound;
 mod window;
 
 /// The disc for headless runs and the card commands: `DW1_DISC`, else
@@ -423,6 +424,10 @@ fn main() {
     } else {
         match window::Window::new() {
             Ok(mut w) => {
+                if args == ["--sound-preview"] {
+                    w.sound_preview();
+                    return;
+                }
                 if let Some(log) = crashed_before {
                     applog::report_earlier_crash(&log);
                 }
