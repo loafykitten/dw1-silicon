@@ -5,6 +5,7 @@
 // Keep the psyq symbols the C needs in the link.
 use psyq as _;
 
+mod collision;
 pub mod overlays;
 
 #[allow(

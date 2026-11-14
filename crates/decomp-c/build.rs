@@ -64,6 +64,7 @@ const BOUND_HEADERS: &[&str] = &[
     "kernel.h",
     "dw/params.h",
     "dw/model.h",
+    "dw/main.h",
     "dw/entity.h",
     "dw/script.h",
     "dw/item.h",
@@ -447,6 +448,7 @@ fn generate_bindings(cpp_args: &[String], out: &Path) {
         .allowlist_type("PartnerEntity")
         .allowlist_type("CombatData")
         .allowlist_type("PositionData")
+        .allowlist_type("StdVsCamera")
         .allowlist_type("ScriptState")
         .allowlist_type("Inventory")
         .allowlist_type("MATRIX")

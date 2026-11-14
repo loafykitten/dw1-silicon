@@ -89,6 +89,21 @@ static inline int32_t dw1_collision_index(int32_t i)
 	return i;
 }
 
+/* Read-only exception backed by a named PS1 field, NOT an extension of the array.
+ * US MAP_COLLISION_DATA = 0x801AF398; STDVS_CAMERA = 0x801B1B98. Its GsVIEW2 is
+ * 36 PS1 bytes, then coord.flg is four bytes. Native pointers widen GsVIEW2 to 40:
+ * Rust uses generated native fields and returns the requested little-endian byte.
+ * Keep every other unmodelled neighbour and ALL raw array accesses strictly guarded. */
+#define DW1_COLLISION_CAMERA_FLAG_INDEX 0x2824
+uint8_t dw1_collision_camera_flag_byte(int32_t byte_index);
+static inline uint8_t dw1_collision_byte(int32_t i)
+{
+	if (i >= DW1_COLLISION_CAMERA_FLAG_INDEX && i < DW1_COLLISION_CAMERA_FLAG_INDEX + 4) {
+		return dw1_collision_camera_flag_byte(i - DW1_COLLISION_CAMERA_FLAG_INDEX);
+	}
+	return DW1_MAP_COLLISION_DATA[dw1_collision_index(i)];
+}
+
 /* How wide the US game's drawString draws ASCII `str` (the decomp's font.c). */
 int32_t dw1_text_width(char *str);
 
